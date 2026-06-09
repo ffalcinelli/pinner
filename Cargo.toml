@@ -14,7 +14,7 @@ categories = ["command-line-utilities", "development-tools"]
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 regex = "1.10"
@@ -25,8 +25,8 @@ thiserror = "1.0"
 anyhow = "1.0"
 tree-sitter = "0.20"
 tree-sitter-yaml = "0.0.1"
-reqwest-middleware = "0.2"
-reqwest-retry = "0.3"
+reqwest-middleware = "0.5"
+reqwest-retry = "0.9"
 futures = "0.3"
 similar = "2.4"
 ignore = "0.4"
