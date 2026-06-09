@@ -33,17 +33,13 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets --all-features
 
-      - name: Install cargo-audit
-        uses: actions-rs/cargo@ae10961054e4aa8b4aa7dffede299aaf087aa33b # v1.0.1
+      - name: Install tools
+        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
         with:
-          command: install
-          args: cargo-audit
+          tool: cargo-audit,cargo-tarpaulin
 
       - name: Run cargo-audit
         run: cargo audit
 
       - name: Run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@60f0b12e5beec09ccca51758913f82d01889151c # v0.1.0
-        with:
-          version: '0.22.0'
-          args: '--out Xml'
+        run: cargo tarpaulin --out Xml
