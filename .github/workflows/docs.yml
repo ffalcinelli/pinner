@@ -37,7 +37,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          RUSTDOCFLAGS="--html-in-header docs-header.html" cargo doc --no-deps --all-features
+          RUSTDOCFLAGS="--html-in-header docs/docs-header.html" cargo doc --no-deps --all-features
 
       - name: Prepare deployment
         run: |
