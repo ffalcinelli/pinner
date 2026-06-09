@@ -1,7 +1,9 @@
 # Pinner 🧪
 
 [![CI](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml/badge.svg)](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub release](https://img.shields.io/github/v/release/ffalcinelli/pinner)](https://github.com/ffalcinelli/pinner/releases)
 
 A high-performance Rust CLI utility to **hash-pin GitHub Actions** in your workflow files. Secure your CI/CD supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
 
@@ -28,7 +30,7 @@ Just as the Pinner reaction acts as a catalyst to transform a volatile compound 
 
 ```bash
 # Clone the repository
-git clone https://github.com/fabiofalcinelli/pinner.git
+git clone https://github.com/ffalcinelli/pinner.git
 cd pinner
 
 # Build and install
