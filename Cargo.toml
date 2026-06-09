@@ -1,0 +1,26 @@
+[package]
+name = "pinner"
+version = "0.1.0"
+edition = "2021"
+description = "A CLI utility to hash-pin GitHub Actions"
+authors = ["Fabio Falcinelli"]
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+regex = "1.10"
+async-trait = "0.1"
+mockall = "0.12"
+colored = "2.1"
+
+[dev-dependencies]
+cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"] }
+tempfile = "3.10"
+mockito = "1.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
