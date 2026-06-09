@@ -1,14 +1,36 @@
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use futures::future::join_all;
+use ignore::WalkBuilder;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use serde::Deserialize;
+use similar::{ChangeTag, TextDiff};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use thiserror::Error;
+use tree_sitter::{Node, Parser as TSParser};
 
 #[cfg(test)]
 use mockall::automock;
+
+#[derive(Error, Debug)]
+pub enum PinnerError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("API error: {0}")]
+    Api(String),
+    #[error("Parse error: {0}")]
+    Parse(String),
+    #[error("Directory not found: {0}")]
+    DirectoryNotFound(String),
+    #[error("Ignore error: {0}")]
+    Ignore(#[from] ignore::Error),
+}
 
 #[derive(Parser)]
 pub struct Cli {
@@ -20,6 +42,9 @@ pub struct Cli {
     /// Suppress all console output
     #[arg(short, long, global = true)]
     pub quiet: bool,
+    /// Print diff without modifying files
+    #[arg(short, long, global = true)]
+    pub dry_run: bool,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -29,12 +54,12 @@ pub enum Commands {
     Set { action: String, hash: String },
 }
 
-pub async fn run<G: GithubProvider>(
+pub async fn run<G: GithubProvider + 'static>(
     cli: Cli,
     github: G,
     workflows_dir: &Path,
-) -> Result<(), String> {
-    let ops = Operations::new(github, cli.yes, cli.quiet);
+) -> Result<(), PinnerError> {
+    let ops = Operations::new(Arc::new(github), cli.yes, cli.quiet, cli.dry_run);
     match cli.command {
         Commands::Pin => ops.pin(workflows_dir).await,
         Commands::Upgrade => ops.upgrade(workflows_dir).await,
@@ -55,12 +80,12 @@ struct ReleaseResponse {
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub trait GithubProvider: Send + Sync {
-    async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, String>;
-    async fn get_latest_release(&self, action: &str) -> Result<String, String>;
+    async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, PinnerError>;
+    async fn get_latest_release(&self, action: &str) -> Result<String, PinnerError>;
 }
 
 pub struct ReqwestGithubProvider {
-    client: reqwest::Client,
+    client: ClientWithMiddleware,
     base_url: String,
 }
 
@@ -80,89 +105,114 @@ impl ReqwestGithubProvider {
                 h.insert(AUTHORIZATION, auth);
             }
         }
-        let client = reqwest::Client::builder()
+        let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
             .build()
             .unwrap();
+
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+        let client = ClientBuilder::new(reqwest_client)
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build();
+
         Self { client, base_url }
     }
 }
 
 #[async_trait]
 impl GithubProvider for ReqwestGithubProvider {
-    async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, String> {
+    async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, PinnerError> {
         let url = format!("{}/repos/{}/commits/{}", self.base_url, action, tag);
         let resp = self
             .client
             .get(&url)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| PinnerError::Api(e.to_string()))?;
         if resp.status().is_success() {
-            let res: RefResponse = resp.json().await.map_err(|e| e.to_string())?;
+            let res: RefResponse = resp
+                .json()
+                .await
+                .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(res.sha)
         } else {
-            Err(format!(
+            Err(PinnerError::Api(format!(
                 "HTTP {}: Could not resolve ref '{}' for {}",
                 resp.status(),
                 tag,
                 action
-            ))
+            )))
         }
     }
 
-    async fn get_latest_release(&self, action: &str) -> Result<String, String> {
+    async fn get_latest_release(&self, action: &str) -> Result<String, PinnerError> {
         let url = format!("{}/repos/{}/releases/latest", self.base_url, action);
         let resp = self
             .client
             .get(&url)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| PinnerError::Api(e.to_string()))?;
         if resp.status().is_success() {
-            let rel: ReleaseResponse = resp.json().await.map_err(|e| e.to_string())?;
+            let rel: ReleaseResponse = resp
+                .json()
+                .await
+                .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(rel.tag_name)
         } else if resp.status().as_u16() == 404 {
             Ok("main".to_string())
         } else {
-            Err(format!(
+            Err(PinnerError::Api(format!(
                 "HTTP {}: Could not fetch latest release for {}",
                 resp.status(),
                 action
-            ))
+            )))
         }
     }
 }
 
 pub struct Operations<G: GithubProvider> {
-    github: G,
-    regex: Regex,
+    github: Arc<G>,
     yes: bool,
     quiet: bool,
+    dry_run: bool,
 }
-impl<G: GithubProvider> Operations<G> {
-    pub fn new(github: G, yes: bool, quiet: bool) -> Self {
+
+struct UpdateTask {
+    path: PathBuf,
+    start: usize,
+    end: usize,
+    action: String,
+    current_tag: Option<String>,
+}
+
+struct UpdateResult {
+    task: UpdateTask,
+    new_sha: String,
+    new_tag: Option<String>,
+}
+
+impl<G: GithubProvider + 'static> Operations<G> {
+    pub fn new(github: Arc<G>, yes: bool, quiet: bool, dry_run: bool) -> Self {
         Self {
             github,
             yes,
             quiet,
-            regex: Regex::new(r"(?m)^(.*?uses:\s*([^@\s#\n]+))(?:@([a-zA-Z0-9.\-_/]+))?(.*?)$")
-                .unwrap(),
+            dry_run,
         }
     }
 
-    pub async fn pin(&self, dir: &Path) -> Result<(), String> {
-        self.process(dir, |a, v| {
-            let (a, v) = (a.to_string(), v.map(|s| s.to_string()));
+    pub async fn pin(&self, dir: &Path) -> Result<(), PinnerError> {
+        let github = self.github.clone();
+        self.process(dir, move |action, tag| {
+            let (a, t) = (action.to_string(), tag.map(|s| s.to_string()));
+            let github = github.clone();
             async move {
-                if let Some(ver) = v {
+                if let Some(ver) = t {
                     if ver.len() != 40 {
-                        return self
-                            .github
-                            .get_commit_sha(&a, &ver)
-                            .await
-                            .ok()
-                            .map(|s| (s, Some(ver)));
+                        if let Ok(sha) = github.get_commit_sha(&a, &ver).await {
+                            return Some((sha, Some(ver)));
+                        }
                     }
                 }
                 None
@@ -171,7 +221,7 @@ impl<G: GithubProvider> Operations<G> {
         .await
     }
 
-    pub async fn set(&self, dir: &Path, action: &str, hash: &str) -> Result<(), String> {
+    pub async fn set(&self, dir: &Path, action: &str, hash: &str) -> Result<(), PinnerError> {
         let (a, h) = (action.to_string(), hash.to_string());
         self.process(dir, move |act, _| {
             let (a, h, act_owned) = (a.clone(), h.clone(), act.to_string());
@@ -186,12 +236,14 @@ impl<G: GithubProvider> Operations<G> {
         .await
     }
 
-    pub async fn upgrade(&self, dir: &Path) -> Result<(), String> {
-        self.process(dir, |a, _| {
+    pub async fn upgrade(&self, dir: &Path) -> Result<(), PinnerError> {
+        let github = self.github.clone();
+        self.process(dir, move |a, _| {
             let a = a.to_string();
+            let github = github.clone();
             async move {
-                if let Ok(tag) = self.github.get_latest_release(&a).await {
-                    if let Ok(sha) = self.github.get_commit_sha(&a, &tag).await {
+                if let Ok(tag) = github.get_latest_release(&a).await {
+                    if let Ok(sha) = github.get_commit_sha(&a, &tag).await {
                         return Some((sha, Some(tag)));
                     }
                 }
@@ -201,56 +253,131 @@ impl<G: GithubProvider> Operations<G> {
         .await
     }
 
-    async fn process<F, Fut>(&self, dir: &Path, f: F) -> Result<(), String>
+    async fn process<F, Fut>(&self, dir: &Path, f: F) -> Result<(), PinnerError>
     where
-        F: Fn(&str, Option<&str>) -> Fut,
-        Fut: std::future::Future<Output = Option<(String, Option<String>)>>,
+        F: Fn(&str, Option<&str>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<(String, Option<String>)>> + Send,
     {
         if !dir.exists() {
-            return Err(format!("Directory not found: {}", dir.display()));
+            return Err(PinnerError::DirectoryNotFound(dir.display().to_string()));
         }
+
+        let mut parser = TSParser::new();
+        parser
+            .set_language(tree_sitter_yaml::language())
+            .map_err(|e| PinnerError::Parse(e.to_string()))?;
+
+        let mut tasks = Vec::new();
+
+        for entry in WalkBuilder::new(dir).build() {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
+                let content = fs::read_to_string(path)?;
+                let tree = parser.parse(&content, None).ok_or_else(|| {
+                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                })?;
+
+                let mut uses_nodes = Vec::new();
+                self.find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
+
+                for (start, end, val) in uses_nodes {
+                    let parts: Vec<&str> = val.split('@').collect();
+                    let action = parts[0];
+                    let tag = parts.get(1).copied();
+                    tasks.push(UpdateTask {
+                        path: path.to_path_buf(),
+                        start,
+                        end,
+                        action: action.to_string(),
+                        current_tag: tag.map(|s| s.to_string()),
+                    });
+                }
+            }
+        }
+
+        let f = std::sync::Arc::new(f);
+        let mut futs = Vec::new();
+        for task in tasks {
+            let f_clone = f.clone();
+            futs.push(async move {
+                if let Some((sha, tag)) = f_clone(&task.action, task.current_tag.as_deref()).await {
+                    Some(UpdateResult {
+                        task,
+                        new_sha: sha,
+                        new_tag: tag,
+                    })
+                } else {
+                    None
+                }
+            });
+        }
+
+        let results: Vec<UpdateResult> = join_all(futs).await.into_iter().flatten().collect();
+
+        // Group results by file
+        let mut file_results: std::collections::HashMap<PathBuf, Vec<UpdateResult>> =
+            std::collections::HashMap::new();
+        for res in results {
+            file_results
+                .entry(res.task.path.clone())
+                .or_default()
+                .push(res);
+        }
+
         let comment_regex =
             Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*").unwrap();
-        for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-                let mut new = content.clone();
-                let mut changes = Vec::new();
-                for cap in self.regex.captures_iter(&content) {
-                    if let Some((sha, tag)) = f(&cap[2], cap.get(3).map(|m| m.as_str())).await {
-                        let _old_v = cap.get(3).map(|m| m.as_str()).unwrap_or("");
-                        let suffix = &cap[4];
 
-                        // Intelligent comment replacement:
-                        let mut final_suffix = suffix.trim_start().to_string();
-                        // If it starts with "# v" or "# main" or "# <numbers>", strip that specific part.
-                        if let Some(mat) = comment_regex.find(&final_suffix) {
-                            final_suffix = final_suffix[mat.end()..].trim_start().to_string();
-                            if final_suffix.starts_with('#') {
-                                final_suffix = final_suffix[1..].trim_start().to_string();
-                            }
-                        }
+        for (path, mut updates) in file_results {
+            let content = fs::read_to_string(&path)?;
+            let mut new_content = content.clone();
+            let mut changes = Vec::new();
 
-                        let new_comment = if let Some(t) = tag {
-                            format!(" # {}", t)
-                        } else {
-                            "".to_string()
-                        };
-                        let extra_suffix = if final_suffix.is_empty() {
-                            "".to_string()
-                        } else {
-                            format!(" # {}", final_suffix)
-                        };
-                        let new_line =
-                            format!("{}@{}{}{}", &cap[1], sha, new_comment, extra_suffix);
+            // Sort updates from back to front to preserve offsets
+            updates.sort_by_key(|a| std::cmp::Reverse(a.task.start));
 
-                        changes.push((cap[0].to_string(), new_line.to_string()));
-                        new = new.replace(&cap[0], &new_line);
+            for res in updates {
+                let old_full = &content[res.task.start..res.task.end];
+
+                let line_end = content[res.task.end..]
+                    .find('\n')
+                    .map(|pos| res.task.end + pos)
+                    .unwrap_or(content.len());
+                let suffix = &content[res.task.end..line_end];
+
+                let mut final_suffix = suffix.trim_start().to_string();
+                if let Some(mat) = comment_regex.find(&final_suffix) {
+                    final_suffix = final_suffix[mat.end()..].trim_start().to_string();
+                    if final_suffix.starts_with('#') {
+                        final_suffix = final_suffix[1..].trim_start().to_string();
                     }
                 }
-                if !changes.is_empty() && !self.quiet {
-                    println!("\n{} {}", "File:".bold(), path.display().to_string().cyan());
+
+                let new_comment = if let Some(t) = res.new_tag {
+                    format!(" # {}", t)
+                } else {
+                    "".to_string()
+                };
+                let extra_suffix = if final_suffix.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" # {}", final_suffix)
+                };
+
+                let new_val = format!(
+                    "{}@{}{}{}",
+                    res.task.action, res.new_sha, new_comment, extra_suffix
+                );
+
+                changes.push((old_full.to_string(), new_val.clone()));
+                new_content.replace_range(res.task.start..line_end, &new_val);
+            }
+
+            if !changes.is_empty() && !self.quiet {
+                println!("\n{} {}", "File:".bold(), path.display().to_string().cyan());
+                if self.dry_run {
+                    self.print_diff(&content, &new_content);
+                } else {
                     for (old, new_ln) in &changes {
                         println!("  {} {}", "-".red(), old.trim().dimmed());
                         println!("  {} {}", "+".green(), new_ln.trim().yellow());
@@ -271,17 +398,77 @@ impl<G: GithubProvider> Operations<G> {
                         }
                     }
                     if should_write {
-                        fs::write(path, new).map_err(|e| e.to_string())?;
+                        fs::write(&path, new_content)?;
                         println!("{}", "✔ Updated successfully".green());
                     } else {
                         println!("{}", "✘ Skipped".yellow());
                     }
-                } else if !changes.is_empty() && self.yes {
-                    fs::write(path, new).map_err(|e| e.to_string())?;
                 }
+            } else if !changes.is_empty() && self.yes {
+                fs::write(&path, new_content)?;
             }
         }
+
         Ok(())
+    }
+
+    fn print_diff(&self, old: &str, new: &str) {
+        let diff = TextDiff::from_lines(old, new);
+        for change in diff.iter_all_changes() {
+            let sign = match change.tag() {
+                ChangeTag::Delete => "-".red(),
+                ChangeTag::Insert => "+".green(),
+                ChangeTag::Equal => " ".normal(),
+            };
+            print!("{}{}", sign, change);
+        }
+    }
+
+    fn find_uses_nodes(
+        &self,
+        node: Node,
+        content: &[u8],
+        results: &mut Vec<(usize, usize, String)>,
+    ) {
+        if node.kind() == "block_mapping_pair" {
+            let mut cursor = node.walk();
+            let mut key = None;
+            let mut val = None;
+            for child in node.children(&mut cursor) {
+                if child.kind() == "flow_node" || child.kind() == "plain_scalar" {
+                    let text = child.utf8_text(content).unwrap_or("");
+                    if text == "uses" {
+                        key = Some(child);
+                    } else if key.is_some() {
+                        val = Some(child);
+                        break;
+                    }
+                } else if child.kind() == "block_node" && key.is_some() {
+                    val = Some(child);
+                    break;
+                }
+            }
+            if let (Some(_), Some(v)) = (key, val) {
+                let mut v_node = v;
+                while v_node.child_count() > 0 && v_node.kind() != "plain_scalar" {
+                    if let Some(c) = v_node.child(0) {
+                        v_node = c;
+                    } else {
+                        break;
+                    }
+                }
+
+                results.push((
+                    v_node.start_byte(),
+                    v_node.end_byte(),
+                    v_node.utf8_text(content).unwrap_or("").to_string(),
+                ));
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.find_uses_nodes(child, content, results);
+        }
     }
 }
 
@@ -329,7 +516,7 @@ mod tests {
         fs::write(wd.join("f.yml"), "uses: o/r@v1").unwrap();
         fs::write(wd.join("untagged.yml"), "uses: actions/checkout").unwrap();
 
-        let ops = Operations::new(mock, true, false);
+        let ops = Operations::new(Arc::new(mock), true, false, false);
         ops.pin(&wd).await.unwrap();
         assert!(fs::read_to_string(wd.join("f.yml"))
             .unwrap()
@@ -342,7 +529,7 @@ mod tests {
         mock2
             .expect_get_commit_sha()
             .returning(|_, _| Ok("692973e3d937129bcbf40652eb9f2f61becf3332".into()));
-        let ops2 = Operations::new(mock2, true, false);
+        let ops2 = Operations::new(Arc::new(mock2), true, false, false);
         ops2.upgrade(&wd).await.unwrap();
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
@@ -356,6 +543,7 @@ mod tests {
                 command: Commands::Pin,
                 yes: true,
                 quiet: true,
+                dry_run: false,
             },
             mock3,
             &wd,
@@ -366,7 +554,8 @@ mod tests {
             Cli {
                 command: Commands::Pin,
                 yes: true,
-                quiet: true
+                quiet: true,
+                dry_run: false,
             },
             MockGithubProvider::new(),
             Path::new("/n")

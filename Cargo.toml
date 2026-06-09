@@ -16,6 +16,15 @@ regex = "1.10"
 async-trait = "0.1"
 mockall = "0.12"
 colored = "2.1"
+thiserror = "1.0"
+anyhow = "1.0"
+tree-sitter = "0.20"
+tree-sitter-yaml = "0.0.1"
+reqwest-middleware = "0.2"
+reqwest-retry = "0.3"
+futures = "0.3"
+similar = "2.4"
+ignore = "0.4"
 
 [dev-dependencies]
 cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"] }
