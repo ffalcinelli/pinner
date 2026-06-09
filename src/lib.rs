@@ -620,7 +620,7 @@ mod tests {
         .unwrap();
 
         let ops = Operations::new(Arc::new(mock), true, false, false);
-        ops.pin(&[wd.clone()]).await.unwrap();
+        ops.pin(std::slice::from_ref(&wd)).await.unwrap();
 
         assert!(fs::read_to_string(wd.join("f.yml"))
             .unwrap()
@@ -642,7 +642,7 @@ mod tests {
             .expect_get_commit_sha()
             .returning(|_, _| Ok("692973e3d937129bcbf40652eb9f2f61becf3332".into()));
         let ops2 = Operations::new(Arc::new(mock2), true, false, false);
-        ops2.upgrade(&[wd.clone()]).await.unwrap();
+        ops2.upgrade(std::slice::from_ref(&wd)).await.unwrap();
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
 
@@ -713,7 +713,9 @@ mod tests {
         fs::write(&f, "uses: o/r@v1").unwrap();
 
         let ops = Operations::new(Arc::new(mock), true, true, false);
-        ops.set(&[f.clone()], "o/r", "newhash").await.unwrap();
+        ops.set(std::slice::from_ref(&f), "o/r", "newhash")
+            .await
+            .unwrap();
 
         assert!(fs::read_to_string(&f).unwrap().contains("o/r@newhash"));
     }
@@ -728,7 +730,7 @@ mod tests {
         fs::write(&f, "uses: o/r@v1").unwrap();
 
         let ops = Operations::new(Arc::new(mock), true, false, true);
-        ops.pin(&[f.clone()]).await.unwrap();
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
         assert_eq!(fs::read_to_string(&f).unwrap(), "uses: o/r@v1");
     }
@@ -743,7 +745,7 @@ mod tests {
         fs::write(&f, "uses: o/r@v1").unwrap();
 
         let ops = Operations::new(Arc::new(mock), true, true, false);
-        ops.pin(&[f.clone()]).await.unwrap();
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
         assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
     }
