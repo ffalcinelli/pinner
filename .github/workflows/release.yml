@@ -4,13 +4,44 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build-release:
-    runs-on: ubuntu-latest
+    name: Release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            asset_name: pinner-linux-amd64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            asset_name: pinner-linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            asset_name: pinner-macos-amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset_name: pinner-macos-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_name: pinner-windows-amd64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            asset_name: pinner-windows-arm64
+          - target: x86_64-unknown-freebsd
+            os: ubuntu-latest
+            asset_name: pinner-freebsd-amd64
+          - target: aarch64-unknown-freebsd
+            os: ubuntu-latest
+            asset_name: pinner-freebsd-arm64
+
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       
@@ -18,15 +49,13 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
-      
-      - name: Build Release
-        run: cargo build --release
-        
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
+          targets: ${{ matrix.target }}
+
+      - name: Build and upload binaries
+        uses: taiki-e/upload-rust-binary-action@43e59392e20b3491f074a38f4d962078335f6064 # v2.31.0
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/release/pinner
-          asset_name: pinner-linux-amd64
-          tag: ${{ github.ref }}
-          overwrite: true
+          bin: pinner
+          target: ${{ matrix.target }}
+          archive: $bin-${{ matrix.target }}
+          asset: ${{ matrix.asset_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
