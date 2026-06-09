@@ -52,7 +52,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build and upload binaries
-        uses: taiki-e/upload-rust-binary-action@43e59392e20b3491f074a38f4d962078335f6064 # v2.31.0
+        uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: pinner
           target: ${{ matrix.target }}
