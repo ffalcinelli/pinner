@@ -1,6 +1,6 @@
 # Pinner 🧪
 
-[![CI](https://github.com/fabiofalcinelli/pinner/actions/workflows/ci.yml/badge.svg)](https://github.com/fabiofalcinelli/pinner/actions/workflows/ci.yml)
+[![CI](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml/badge.svg)](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A high-performance Rust CLI utility to **hash-pin GitHub Actions** in your workflow files. Secure your CI/CD supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
