@@ -31,7 +31,8 @@ Just as the Pinner reaction acts as a catalyst to transform a volatile compound 
 - **Safe Replacement**: Uses Regex-based parsing to preserve your YAML comments and formatting perfectly.
 - **Tag Preservation**: Automatically appends the original tag as a comment for readability (e.g., `@<hash> # v2`).
 - **GitHub API Integration**: Automatically fetches the correct commit SHA for any tag or branch.
-- **Batch Processing**: Scans your entire `.github/workflows/` directory in one go.
+- **Batch Processing**: Scans your entire `.github/workflows/` directory by default.
+- **Targeted Updates**: Specify exactly which workflow files or directories to process with the `--workflow` flag.
 
 ## Installation 🛠️
 
@@ -57,14 +58,27 @@ pinner pin
 *Input:* `- uses: actions/checkout@v3`  
 *Output:* `- uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v3`
 
-### 2. Set a specific action hash
+### 2. Specify specific workflows
+You can target specific files or directories using the `--workflow` (or `-w`) flag.
+```bash
+# Pin actions in a single file
+pinner pin -w .github/workflows/ci.yml
+
+# Pin actions in multiple specific files
+pinner pin -w .github/workflows/ci.yml -w .github/workflows/release.yml
+
+# Pin actions in a custom directory
+pinner pin -w my-custom-workflows/
+```
+
+### 3. Set a specific action hash
 Forcibly updates a specific action across all workflows.
 ```bash
 pinner set actions/checkout df4cb1c069e1874edd31b4311f1884172cec0e10
 ```
 
-### 3. Upgrade to latest
-Re-pins all actions to the latest commit on their `main` branch.
+### 4. Upgrade to latest
+Re-pins all actions to the latest commit on their `main` branch (or the latest release tag if available).
 ```bash
 pinner upgrade
 ```
@@ -73,6 +87,18 @@ pinner upgrade
 - `--yes` (`-y`): Automatically confirm all replacements.
 - `--dry-run`: Print diff without modifying files.
 - `--quiet` (`-q`): Suppress all console output.
+- `--workflow` (`-w`): Workflow files or directories to process.
+
+## Rate Limiting & Authentication 🔑
+
+Pinner uses the GitHub API to fetch commit SHAs. To avoid hitting rate limits (especially in CI or large projects), you should provide a GitHub token via the `GITHUB_TOKEN` environment variable.
+
+```bash
+export GITHUB_TOKEN=ghp_your_token_here
+pinner pin
+```
+
+The token only needs `read-only` access to public repositories (or `repo` scope for private ones).
 
 ## Development 👩‍💻
 
@@ -82,6 +108,10 @@ This project is built with Rust and follows clean code principles.
 - **Lints**: `cargo clippy`
 - **Formatting**: `cargo fmt`
 - **Coverage**: `cargo tarpaulin`
+
+## Contributing 🤝
+
+Contributions are welcome! Please feel free to submit a Pull Request or open an issue for any bugs or feature requests.
 
 ## License 📄
 

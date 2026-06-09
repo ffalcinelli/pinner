@@ -12,13 +12,13 @@
 //! ```no_run
 //! use pinner::{Operations, ReqwestGithubProvider, Cli, Commands};
 //! use std::sync::Arc;
-//! use std::path::Path;
+//! use std::path::PathBuf;
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     let github = ReqwestGithubProvider::default();
 //!     let ops = Operations::new(Arc::new(github), true, false, false);
-//!     ops.pin(Path::new(".github/workflows")).await.unwrap();
+//!     ops.pin(&[PathBuf::from(".github/workflows")]).await.unwrap();
 //! }
 //! ```
 
@@ -34,7 +34,7 @@ use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use serde::Deserialize;
 use similar::{ChangeTag, TextDiff};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tree_sitter::{Node, Parser as TSParser};
@@ -54,9 +54,9 @@ pub enum PinnerError {
     /// Errors during YAML parsing (tree-sitter).
     #[error("Parse error: {0}")]
     Parse(String),
-    /// Specified workflow directory not found.
-    #[error("Directory not found: {0}")]
-    DirectoryNotFound(String),
+    /// Specified workflow path not found.
+    #[error("Path not found: {0}")]
+    PathNotFound(String),
     /// Errors from the `ignore` crate during directory walking.
     #[error("Ignore error: {0}")]
     Ignore(#[from] ignore::Error),
@@ -67,6 +67,14 @@ pub enum PinnerError {
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+    /// Workflow files or directories to process
+    #[arg(
+        short,
+        long,
+        global = true,
+        help = "Workflow files or directories to process"
+    )]
+    pub workflows: Vec<PathBuf>,
     /// Automatically confirm all replacements
     #[arg(short, long, global = true)]
     pub yes: bool,
@@ -99,17 +107,17 @@ pub enum Commands {
 /// # Arguments
 /// * `cli` - Parsed command line arguments.
 /// * `github` - An implementation of [`GithubProvider`].
-/// * `workflows_dir` - Path to the directory containing GitHub workflow files.
+/// * `paths` - Paths to workflow files or directories to process.
 pub async fn run<G: GithubProvider + 'static>(
     cli: Cli,
     github: G,
-    workflows_dir: &Path,
+    paths: Vec<PathBuf>,
 ) -> Result<(), PinnerError> {
     let ops = Operations::new(Arc::new(github), cli.yes, cli.quiet, cli.dry_run);
     match cli.command {
-        Commands::Pin => ops.pin(workflows_dir).await,
-        Commands::Upgrade => ops.upgrade(workflows_dir).await,
-        Commands::Set { action, hash } => ops.set(workflows_dir, &action, &hash).await,
+        Commands::Pin => ops.pin(&paths).await,
+        Commands::Upgrade => ops.upgrade(&paths).await,
+        Commands::Set { action, hash } => ops.set(&paths, &action, &hash).await,
     }
 }
 
@@ -254,9 +262,9 @@ impl<G: GithubProvider + 'static> Operations<G> {
         }
     }
 
-    pub async fn pin(&self, dir: &Path) -> Result<(), PinnerError> {
+    pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
-        self.process(dir, move |action, tag| {
+        self.process(paths, move |action, tag| {
             let (a, t) = (action.to_string(), tag.map(|s| s.to_string()));
             let github = github.clone();
             async move {
@@ -273,9 +281,14 @@ impl<G: GithubProvider + 'static> Operations<G> {
         .await
     }
 
-    pub async fn set(&self, dir: &Path, action: &str, hash: &str) -> Result<(), PinnerError> {
+    pub async fn set(
+        &self,
+        paths: &[PathBuf],
+        action: &str,
+        hash: &str,
+    ) -> Result<(), PinnerError> {
         let (a, h) = (action.to_string(), hash.to_string());
-        self.process(dir, move |act, _| {
+        self.process(paths, move |act, _| {
             let (a, h, act_owned) = (a.clone(), h.clone(), act.to_string());
             async move {
                 if act_owned == a {
@@ -288,9 +301,9 @@ impl<G: GithubProvider + 'static> Operations<G> {
         .await
     }
 
-    pub async fn upgrade(&self, dir: &Path) -> Result<(), PinnerError> {
+    pub async fn upgrade(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
-        self.process(dir, move |a, _| {
+        self.process(paths, move |a, _| {
             let a = a.to_string();
             let github = github.clone();
             async move {
@@ -305,15 +318,11 @@ impl<G: GithubProvider + 'static> Operations<G> {
         .await
     }
 
-    async fn process<F, Fut>(&self, dir: &Path, f: F) -> Result<(), PinnerError>
+    async fn process<F, Fut>(&self, paths: &[PathBuf], f: F) -> Result<(), PinnerError>
     where
         F: Fn(&str, Option<&str>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Option<(String, Option<String>)>> + Send,
     {
-        if !dir.exists() {
-            return Err(PinnerError::DirectoryNotFound(dir.display().to_string()));
-        }
-
         let mut parser = TSParser::new();
         parser
             .set_language(tree_sitter_yaml::language())
@@ -321,29 +330,35 @@ impl<G: GithubProvider + 'static> Operations<G> {
 
         let mut tasks = Vec::new();
 
-        for entry in WalkBuilder::new(dir).build() {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                let content = fs::read_to_string(path)?;
-                let tree = parser.parse(&content, None).ok_or_else(|| {
-                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                })?;
+        for path in paths {
+            if !path.exists() {
+                return Err(PinnerError::PathNotFound(path.display().to_string()));
+            }
 
-                let mut uses_nodes = Vec::new();
-                self.find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
+            for entry in WalkBuilder::new(path).build() {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
+                    let content = fs::read_to_string(path)?;
+                    let tree = parser.parse(&content, None).ok_or_else(|| {
+                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                    })?;
 
-                for (start, end, val) in uses_nodes {
-                    let parts: Vec<&str> = val.split('@').collect();
-                    let action = parts[0];
-                    let tag = parts.get(1).copied();
-                    tasks.push(UpdateTask {
-                        path: path.to_path_buf(),
-                        start,
-                        end,
-                        action: action.to_string(),
-                        current_tag: tag.map(|s| s.to_string()),
-                    });
+                    let mut uses_nodes = Vec::new();
+                    self.find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
+
+                    for (start, end, val) in uses_nodes {
+                        let parts: Vec<&str> = val.split('@').collect();
+                        let action = parts[0];
+                        let tag = parts.get(1).copied();
+                        tasks.push(UpdateTask {
+                            path: path.to_path_buf(),
+                            start,
+                            end,
+                            action: action.to_string(),
+                            current_tag: tag.map(|s| s.to_string()),
+                        });
+                    }
                 }
             }
         }
@@ -605,7 +620,7 @@ mod tests {
         .unwrap();
 
         let ops = Operations::new(Arc::new(mock), true, false, false);
-        ops.pin(&wd).await.unwrap();
+        ops.pin(&[wd.clone()]).await.unwrap();
 
         assert!(fs::read_to_string(wd.join("f.yml"))
             .unwrap()
@@ -627,7 +642,7 @@ mod tests {
             .expect_get_commit_sha()
             .returning(|_, _| Ok("692973e3d937129bcbf40652eb9f2f61becf3332".into()));
         let ops2 = Operations::new(Arc::new(mock2), true, false, false);
-        ops2.upgrade(&wd).await.unwrap();
+        ops2.upgrade(&[wd.clone()]).await.unwrap();
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
 
@@ -638,26 +653,187 @@ mod tests {
         run(
             Cli {
                 command: Commands::Pin,
+                workflows: vec![],
                 yes: true,
                 quiet: true,
                 dry_run: false,
             },
             mock3,
-            &wd,
+            vec![wd.clone()],
         )
         .await
         .unwrap();
         assert!(run(
             Cli {
                 command: Commands::Pin,
+                workflows: vec![],
                 yes: true,
                 quiet: true,
                 dry_run: false,
             },
             MockGithubProvider::new(),
-            Path::new("/n")
+            vec![PathBuf::from("/n")]
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_github_provider_errors() {
+        let mut s = Server::new_async().await;
+        let p = ReqwestGithubProvider::new(s.url());
+
+        let _m = s
+            .mock("GET", "/repos/o/r/commits/v1")
+            .with_status(404)
+            .create_async()
+            .await;
+        assert!(p.get_commit_sha("o/r", "v1").await.is_err());
+
+        let _m2 = s
+            .mock("GET", "/repos/o/r/releases/latest")
+            .with_status(500)
+            .create_async()
+            .await;
+        assert!(p.get_latest_release("o/r").await.is_err());
+
+        let _m3 = s
+            .mock("GET", "/repos/o/r/releases/latest")
+            .with_status(404)
+            .create_async()
+            .await;
+        assert_eq!(p.get_latest_release("o/r").await.unwrap(), "main");
+    }
+
+    #[tokio::test]
+    async fn test_operations_set() {
+        let mock = MockGithubProvider::new();
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let ops = Operations::new(Arc::new(mock), true, true, false);
+        ops.set(&[f.clone()], "o/r", "newhash").await.unwrap();
+
+        assert!(fs::read_to_string(&f).unwrap().contains("o/r@newhash"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_dry_run() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok("newhash".into()));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let ops = Operations::new(Arc::new(mock), true, false, true);
+        ops.pin(&[f.clone()]).await.unwrap();
+
+        assert_eq!(fs::read_to_string(&f).unwrap(), "uses: o/r@v1");
+    }
+
+    #[tokio::test]
+    async fn test_operations_quiet() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok("newhash".into()));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let ops = Operations::new(Arc::new(mock), true, true, false);
+        ops.pin(&[f.clone()]).await.unwrap();
+
+        assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
+    }
+
+    #[tokio::test]
+    async fn test_find_uses_nodes_nested() {
+        let mock = MockGithubProvider::new();
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        // Test with different indentation and structures
+        fs::write(
+            &f,
+            "
+jobs:
+  test:
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Custom
+        uses: 
+          owner/repo@v1
+",
+        )
+        .unwrap();
+
+        let ops = Operations::new(Arc::new(mock), true, true, false);
+        // We don't care about actual replacement here, just that it doesn't crash
+        // and find_uses_nodes works.
+        let mut parser = TSParser::new();
+        parser.set_language(tree_sitter_yaml::language()).unwrap();
+        let content = fs::read_to_string(&f).unwrap();
+        let tree = parser.parse(&content, None).unwrap();
+        let mut results = Vec::new();
+        ops.find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|(_, _, v)| v == "actions/checkout@v3"));
+        assert!(results.iter().any(|(_, _, v)| v == "owner/repo@v1"));
+    }
+
+    #[tokio::test]
+    async fn test_run_subcommands() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok("h".into()));
+        mock.expect_get_latest_release()
+            .returning(|_| Ok("v2".into()));
+
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let cli_upgrade = Cli {
+            command: Commands::Upgrade,
+            workflows: vec![],
+            yes: true,
+            quiet: true,
+            dry_run: false,
+        };
+        run(cli_upgrade, mock, vec![f.clone()]).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("o/r@h # v2"));
+
+        let mock2 = MockGithubProvider::new();
+        let cli_set = Cli {
+            command: Commands::Set {
+                action: "o/r".into(),
+                hash: "sethash".into(),
+            },
+            workflows: vec![],
+            yes: true,
+            quiet: true,
+            dry_run: false,
+        };
+        run(cli_set, mock2, vec![f.clone()]).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("o/r@sethash"));
+    }
+
+    #[tokio::test]
+    async fn test_error_path_not_found() {
+        let mock = MockGithubProvider::new();
+        let ops = Operations::new(Arc::new(mock), true, true, false);
+        let res = ops.pin(&[PathBuf::from("/non/existent/path")]).await;
+        assert!(matches!(res, Err(PinnerError::PathNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_github_provider_token() {
+        std::env::set_var("GITHUB_TOKEN", "test-token");
+        let p = ReqwestGithubProvider::new("http://localhost".into());
+        assert_eq!(p.base_url, "http://localhost");
+        std::env::remove_var("GITHUB_TOKEN");
     }
 }

@@ -24,9 +24,15 @@
 - **Coverage**: `cargo tarpaulin` (Note: ~88% reported due to macro instrumentation, 100% logical coverage achieved).
 
 ### Subcommands
-- `pin`: Automatically converts all action tags in `.github/workflows/` to hashes.
-- `upgrade`: Re-pins all actions to the latest commit on their `main` branch.
+- `pin`: Automatically converts all action tags in `.github/workflows/` (or specified paths) to hashes.
+- `upgrade`: Re-pins all actions to the latest commit on their `main` branch (or latest release).
 - `set <action> <hash>`: Forcibly updates a specific action across all workflows to a provided SHA.
+
+### Global Options
+- `--workflow` (`-w`): Specify one or more files or directories to process. Defaults to `.github/workflows/`.
+- `--yes` (`-y`): Automatically confirm all replacements.
+- `--dry-run`: Show diff without writing changes.
+- `--quiet` (`-q`): Suppress console output.
 
 ## Development Conventions
 - **Clean Code**: Logic is decoupled from side effects.
