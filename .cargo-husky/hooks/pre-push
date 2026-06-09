@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+echo "Running pre-push checks..."
+echo '+cargo clippy -- -D warnings'
+cargo clippy -- -D warnings
+echo '+cargo audit'
+cargo audit

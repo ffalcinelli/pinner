@@ -23,6 +23,12 @@
 - **Lint**: `cargo clippy`
 - **Coverage**: `cargo tarpaulin` (Note: ~88% reported due to macro instrumentation, 100% logical coverage achieved).
 
+## Git Hooks
+- **Managed by**: `cargo-husky`
+- **Pre-commit**: Runs `cargo fmt` to ensure consistent formatting.
+- **Pre-push**: Runs `cargo clippy` and `cargo audit` to ensure code quality and security before pushing.
+- **Customization**: Hooks are defined in `.cargo-husky/hooks/`.
+
 ### Subcommands
 - `pin`: Automatically converts all action tags in `.github/workflows/` (or specified paths) to hashes.
 - `upgrade`: Re-pins all actions to the latest commit on their `main` branch (or latest release).
