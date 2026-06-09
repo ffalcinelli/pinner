@@ -5,8 +5,14 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub release](https://img.shields.io/github/v/release/ffalcinelli/pinner)](https://github.com/ffalcinelli/pinner/releases)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://ffalcinelli.github.io/pinner/latest/pinner/index.html)
 
 A high-performance Rust CLI utility to **hash-pin GitHub Actions** in your workflow files. Secure your CI/CD supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
+
+## Documentation 📚
+
+The full documentation for the project is available at:
+[https://ffalcinelli.github.io/pinner/](https://ffalcinelli.github.io/pinner/)
 
 ## Why Pin? 🔒
 
@@ -30,11 +36,14 @@ Just as the Pinner reaction acts as a catalyst to transform a volatile compound 
 ## Installation 🛠️
 
 ```bash
-# Clone the repository
+# Install via cargo
+cargo install --git https://github.com/ffalcinelli/pinner.git
+```
+
+Alternatively, from source:
+```bash
 git clone https://github.com/ffalcinelli/pinner.git
 cd pinner
-
-# Build and install
 cargo install --path .
 ```
 
@@ -60,13 +69,19 @@ Re-pins all actions to the latest commit on their `main` branch.
 pinner upgrade
 ```
 
+### Common Flags
+- `--yes` (`-y`): Automatically confirm all replacements.
+- `--dry-run`: Print diff without modifying files.
+- `--quiet` (`-q`): Suppress all console output.
+
 ## Development 👩‍💻
 
 This project is built with Rust and follows clean code principles.
 
-- **Tests**: `cargo test` (includes unit and integration tests with 95%+ logical coverage).
-- **Hooks**: Managed by `cargo-husky` (runs `fmt` and `clippy` on commit).
-- **CI**: GitHub Actions workflow runs on every push.
+- **Tests**: `cargo test`
+- **Lints**: `cargo clippy`
+- **Formatting**: `cargo fmt`
+- **Coverage**: `cargo tarpaulin`
 
 ## License 📄
 

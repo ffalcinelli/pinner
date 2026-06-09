@@ -1,3 +1,27 @@
+//! # Pinner Library
+//!
+//! `pinner` is a library for hash-pinning GitHub Actions in workflow files.
+//! It provides tools to scan YAML workflows and replace mutable tags with immutable commit SHAs.
+//!
+//! ## Core Components
+//! - [`Operations`]: The main orchestrator for pinning, upgrading, and setting action hashes.
+//! - [`GithubProvider`]: A trait for fetching commit SHAs and latest releases from GitHub.
+//! - [`ReqwestGithubProvider`]: The default implementation of [`GithubProvider`] using `reqwest`.
+//!
+//! ## Example
+//! ```no_run
+//! use pinner::{Operations, ReqwestGithubProvider, Cli, Commands};
+//! use std::sync::Arc;
+//! use std::path::Path;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let github = ReqwestGithubProvider::default();
+//!     let ops = Operations::new(Arc::new(github), true, false, false);
+//!     ops.pin(Path::new(".github/workflows")).await.unwrap();
+//! }
+//! ```
+
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -18,20 +42,27 @@ use tree_sitter::{Node, Parser as TSParser};
 #[cfg(test)]
 use mockall::automock;
 
+/// Custom error type for Pinner operations.
 #[derive(Error, Debug)]
 pub enum PinnerError {
+    /// IO-related errors (file reading, writing, etc.).
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// Errors returned by the GitHub API or HTTP client.
     #[error("API error: {0}")]
     Api(String),
+    /// Errors during YAML parsing (tree-sitter).
     #[error("Parse error: {0}")]
     Parse(String),
+    /// Specified workflow directory not found.
     #[error("Directory not found: {0}")]
     DirectoryNotFound(String),
+    /// Errors from the `ignore` crate during directory walking.
     #[error("Ignore error: {0}")]
     Ignore(#[from] ignore::Error),
 }
 
+/// Command line arguments structure.
 #[derive(Parser)]
 pub struct Cli {
     #[command(subcommand)]
@@ -47,13 +78,28 @@ pub struct Cli {
     pub dry_run: bool,
 }
 
+/// Subcommands for the Pinner CLI.
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum Commands {
+    /// Pin all actions to their current commit SHAs.
     Pin,
+    /// Upgrade all actions to their latest releases.
     Upgrade,
-    Set { action: String, hash: String },
+    /// Set a specific action to a specific commit SHA.
+    Set {
+        /// Action name (e.g., actions/checkout)
+        action: String,
+        /// Commit SHA-1 hash
+        hash: String,
+    },
 }
 
+/// Runs the Pinner CLI logic.
+///
+/// # Arguments
+/// * `cli` - Parsed command line arguments.
+/// * `github` - An implementation of [`GithubProvider`].
+/// * `workflows_dir` - Path to the directory containing GitHub workflow files.
 pub async fn run<G: GithubProvider + 'static>(
     cli: Cli,
     github: G,
@@ -77,13 +123,17 @@ struct ReleaseResponse {
     tag_name: String,
 }
 
+/// Trait for interacting with the GitHub API.
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub trait GithubProvider: Send + Sync {
+    /// Fetches the commit SHA for a given action and tag/branch.
     async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, PinnerError>;
+    /// Fetches the latest release tag for a given action.
     async fn get_latest_release(&self, action: &str) -> Result<String, PinnerError>;
 }
 
+/// Default implementation of [`GithubProvider`] using `reqwest`.
 pub struct ReqwestGithubProvider {
     client: ClientWithMiddleware,
     base_url: String,
@@ -97,6 +147,7 @@ impl Default for ReqwestGithubProvider {
 }
 
 impl ReqwestGithubProvider {
+    /// Creates a new [`ReqwestGithubProvider`] with the specified base URL.
     pub fn new(base_url: String) -> Self {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
@@ -171,6 +222,7 @@ impl GithubProvider for ReqwestGithubProvider {
     }
 }
 
+/// Orchestrator for pinning operations.
 pub struct Operations<G: GithubProvider> {
     github: Arc<G>,
     yes: bool,
@@ -337,12 +389,11 @@ impl<G: GithubProvider + 'static> Operations<G> {
             updates.sort_by_key(|a| std::cmp::Reverse(a.task.start));
 
             for res in updates {
-                let old_full = &content[res.task.start..res.task.end];
-
                 let line_end = content[res.task.end..]
                     .find('\n')
                     .map(|pos| res.task.end + pos)
                     .unwrap_or(content.len());
+                let old_val_with_suffix = &content[res.task.start..line_end];
                 let suffix = &content[res.task.end..line_end];
 
                 let mut final_suffix = suffix.trim_start().to_string();
@@ -360,6 +411,8 @@ impl<G: GithubProvider + 'static> Operations<G> {
                 };
                 let extra_suffix = if final_suffix.is_empty() {
                     "".to_string()
+                } else if final_suffix.starts_with('#') {
+                    format!(" {}", final_suffix)
                 } else {
                     format!(" # {}", final_suffix)
                 };
@@ -369,7 +422,11 @@ impl<G: GithubProvider + 'static> Operations<G> {
                     res.task.action, res.new_sha, new_comment, extra_suffix
                 );
 
-                changes.push((old_full.to_string(), new_val.clone()));
+                if old_val_with_suffix == new_val {
+                    continue;
+                }
+
+                changes.push((old_val_with_suffix.to_string(), new_val.clone()));
                 new_content.replace_range(res.task.start..line_end, &new_val);
             }
 
@@ -379,8 +436,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
                     self.print_diff(&content, &new_content);
                 } else {
                     for (old, new_ln) in &changes {
-                        println!("  {} {}", "-".red(), old.trim().dimmed());
-                        println!("  {} {}", "+".green(), new_ln.trim().yellow());
+                        self.print_inline_diff(old, new_ln);
                     }
                     let mut should_write = self.yes;
                     if !should_write {
@@ -422,6 +478,32 @@ impl<G: GithubProvider + 'static> Operations<G> {
             };
             print!("{}{}", sign, change);
         }
+    }
+
+    fn print_inline_diff(&self, old: &str, new: &str) {
+        let old_trimmed = old.trim();
+        let new_trimmed = new.trim();
+        let diff = TextDiff::from_words(old_trimmed, new_trimmed);
+
+        print!("  {} ", "-".red());
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                ChangeTag::Delete => print!("{}", change.value().red()),
+                ChangeTag::Equal => print!("{}", change.value().dimmed()),
+                ChangeTag::Insert => {}
+            }
+        }
+        println!();
+
+        print!("  {} ", "+".green());
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                ChangeTag::Insert => print!("{}", change.value().green().bold()),
+                ChangeTag::Equal => print!("{}", change.value().yellow()),
+                ChangeTag::Delete => {}
+            }
+        }
+        println!();
     }
 
     fn find_uses_nodes(
@@ -515,12 +597,27 @@ mod tests {
         fs::create_dir_all(&wd).unwrap();
         fs::write(wd.join("f.yml"), "uses: o/r@v1").unwrap();
         fs::write(wd.join("untagged.yml"), "uses: actions/checkout").unwrap();
+        fs::write(wd.join("with_comment.yml"), "uses: o/r@v1 # keep me").unwrap();
+        fs::write(
+            wd.join("already_pinned.yml"),
+            "uses: o/r@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1",
+        )
+        .unwrap();
 
         let ops = Operations::new(Arc::new(mock), true, false, false);
         ops.pin(&wd).await.unwrap();
+
         assert!(fs::read_to_string(wd.join("f.yml"))
             .unwrap()
             .contains("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1"));
+
+        let with_comment = fs::read_to_string(wd.join("with_comment.yml")).unwrap();
+        assert!(with_comment.contains("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1 # keep me"));
+
+        let already_pinned = fs::read_to_string(wd.join("already_pinned.yml")).unwrap();
+        assert!(already_pinned.contains("uses: o/r@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1"));
+        // Check that it didn't add double comments or mess up
+        assert!(!already_pinned.contains("# v1 # v1"));
 
         let mut mock2 = MockGithubProvider::new();
         mock2

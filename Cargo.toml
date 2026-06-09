@@ -5,6 +5,11 @@ edition = "2021"
 description = "A CLI utility to hash-pin GitHub Actions"
 authors = ["Fabio Falcinelli"]
 license = "MIT"
+repository = "https://github.com/ffalcinelli/pinner"
+documentation = "https://ffalcinelli.github.io/pinner/latest/pinner/index.html"
+readme = "README.md"
+keywords = ["github-actions", "security", "pinning", "hash", "workflow"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
