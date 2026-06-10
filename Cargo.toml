@@ -1,8 +1,8 @@
 [package]
 name = "pinner"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
-description = "A CLI utility to hash-pin GitHub Actions"
+description = "Secure GitHub Actions workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments."
 authors = ["Fabio Falcinelli"]
 license = "MIT"
 repository = "https://github.com/ffalcinelli/pinner"
