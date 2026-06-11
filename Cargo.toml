@@ -1,6 +1,6 @@
 [package]
 name = "pinner"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "Secure GitHub Actions workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments."
 authors = ["Fabio Falcinelli"]
@@ -12,11 +12,16 @@ keywords = ["github-actions", "security", "pinning", "hash", "workflow"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+serde_json = "1.0"
+moka = { version = "0.12", features = ["future"] }
+indicatif = "0.17"
+toml = "0.8"
+dirs = "5.0"
 regex = "1.10"
 async-trait = "0.1"
 mockall = "0.12"
