@@ -36,8 +36,22 @@ Just as the Pinner reaction acts as a catalyst to transform a volatile compound 
 
 ## Installation 🛠️
 
+### One-line installation (Recommended)
+
+**macOS/Linux:**
 ```bash
-# Install via cargo (recommended)
+curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"
+```
+
+### From source
+
+```bash
+# Install via cargo
 cargo install pinner
 
 # Alternatively, install via cargo-git
