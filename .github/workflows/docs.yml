@@ -41,8 +41,6 @@ jobs:
 
       - name: Prepare deployment
         run: |
-          mkdir -p target/deploy
-          
           # Determine version
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
@@ -50,22 +48,30 @@ jobs:
             VERSION="latest"
           fi
           
-          # Initialize target/deploy with existing gh-pages content if possible
-          git checkout gh-pages || git checkout -b gh-pages
-          cp -r . target/deploy_tmp || true
-          git checkout $GITHUB_SHA
+          # Store the newly built docs temporarily
+          mkdir -p /tmp/new_doc
+          cp -r target/doc/* /tmp/new_doc/
           
-          if [ -d "target/deploy_tmp" ]; then
-            cp -r target/deploy_tmp/* target/deploy/ || true
-            rm -rf target/deploy_tmp
+          # Configure Git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Fetch and checkout gh-pages branch
+          git fetch origin gh-pages || true
+          if git ls-remote --exit-code --heads origin gh-pages; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf .
           fi
           
           # Copy new docs to versioned directory
-          mkdir -p target/deploy/$VERSION
-          cp -r target/doc/* target/deploy/$VERSION/
+          mkdir -p $VERSION
+          rm -rf $VERSION/*
+          cp -r /tmp/new_doc/* $VERSION/
           
           # Create root redirect to latest
-          cat <<EOF > target/deploy/index.html
+          cat <<EOF > index.html
           <!DOCTYPE html>
           <html>
             <head>
@@ -78,15 +84,22 @@ jobs:
           EOF
           
           # Update versions.json
-          # Get all directories in target/deploy that match latest or v*
-          cd target/deploy
+          # Get all directories that match latest or v*
           VERSIONS=$(ls -d latest v* 2>/dev/null | sort -V -r | jq -R . | jq -s .)
           # Ensure 'latest' is first
           if echo "$VERSIONS" | jq -e '. | contains(["latest"])' > /dev/null; then
              VERSIONS=$(echo "$VERSIONS" | jq '["latest"] + (. - ["latest"])')
           fi
           echo "$VERSIONS" > versions.json
-          cd ../..
+          
+          # Commit and push back to gh-pages branch
+          git add .
+          git commit -m "Deploy documentation for $VERSION" || true
+          git push origin gh-pages
+          
+          # Prepare artifact for upload (exclude .git)
+          mkdir -p /tmp/deploy
+          rsync -a --exclude='.git' . /tmp/deploy/
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
@@ -94,7 +107,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: 'target/deploy'
+          path: '/tmp/deploy'
 
       - name: Deploy to GitHub Pages
         id: deployment
