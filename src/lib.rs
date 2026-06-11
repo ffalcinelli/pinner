@@ -62,8 +62,8 @@ pub enum PinnerError {
     Ignore(#[from] ignore::Error),
 }
 
-/// Command line arguments structure.
 #[derive(Parser)]
+#[command(version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
