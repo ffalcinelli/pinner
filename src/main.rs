@@ -14,7 +14,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Initialize the default GitHub provider
-    let github = ReqwestGithubProvider::default();
+    let github =
+        ReqwestGithubProvider::new("https://api.github.com".to_string(), cli.token.clone());
 
     // Determine the workflows directory to process
     let workflows_to_process = if cli.workflows.is_empty() {

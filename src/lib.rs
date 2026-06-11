@@ -17,7 +17,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let github = ReqwestGithubProvider::default();
-//!     let ops = Operations::new(Arc::new(github), true, false, false);
+//!     let ops = Operations::new(Arc::new(github), true, false, false, false);
 //!     ops.pin(&[PathBuf::from(".github/workflows")]).await.unwrap();
 //! }
 //! ```
@@ -25,17 +25,20 @@
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use ignore::WalkBuilder;
+use indicatif::{ProgressBar, ProgressStyle};
+use moka::future::Cache;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tree_sitter::{Node, Parser as TSParser};
 
@@ -60,6 +63,9 @@ pub enum PinnerError {
     /// Errors from the `ignore` crate during directory walking.
     #[error("Ignore error: {0}")]
     Ignore(#[from] ignore::Error),
+    /// Config file errors
+    #[error("Config error: {0}")]
+    Config(String),
 }
 
 #[derive(Parser)]
@@ -84,6 +90,12 @@ pub struct Cli {
     /// Print diff without modifying files
     #[arg(short, long, global = true)]
     pub dry_run: bool,
+    /// GitHub API Token
+    #[arg(short, long, global = true, env = "GITHUB_TOKEN")]
+    pub token: Option<String>,
+    /// Output results as JSON
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 /// Subcommands for the Pinner CLI.
@@ -113,7 +125,7 @@ pub async fn run<G: GithubProvider + 'static>(
     github: G,
     paths: Vec<PathBuf>,
 ) -> Result<(), PinnerError> {
-    let ops = Operations::new(Arc::new(github), cli.yes, cli.quiet, cli.dry_run);
+    let ops = Operations::new(Arc::new(github), cli.yes, cli.quiet, cli.dry_run, cli.json);
     match cli.command {
         Commands::Pin => ops.pin(&paths).await,
         Commands::Upgrade => ops.upgrade(&paths).await,
@@ -139,31 +151,47 @@ pub trait GithubProvider: Send + Sync {
     async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, PinnerError>;
     /// Fetches the latest release tag for a given action.
     async fn get_latest_release(&self, action: &str) -> Result<String, PinnerError>;
+    /// Fetches the default branch for a given action.
+    async fn get_default_branch(&self, action: &str) -> Result<String, PinnerError>;
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoResponse {
+    default_branch: String,
 }
 
 /// Default implementation of [`GithubProvider`] using `reqwest`.
 pub struct ReqwestGithubProvider {
     client: ClientWithMiddleware,
     base_url: String,
+    sha_cache: Cache<(String, String), String>,
+    release_cache: Cache<String, String>,
+    branch_cache: Cache<String, String>,
 }
 
 #[cfg(not(tarpaulin))]
 impl Default for ReqwestGithubProvider {
     fn default() -> Self {
-        Self::new("https://api.github.com".to_string())
+        Self::new("https://api.github.com".to_string(), None)
     }
 }
 
 impl ReqwestGithubProvider {
-    /// Creates a new [`ReqwestGithubProvider`] with the specified base URL.
-    pub fn new(base_url: String) -> Self {
+    /// Creates a new [`ReqwestGithubProvider`] with the specified base URL and optional token.
+    pub fn new(base_url: String, token: Option<String>) -> Self {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
-        if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-            if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", token)) {
+
+        let token = token
+            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+            .or_else(Self::try_gh_cli_token);
+
+        if let Some(t) = token {
+            if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", t)) {
                 h.insert(AUTHORIZATION, auth);
             }
         }
+
         let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
             .build()
@@ -174,13 +202,48 @@ impl ReqwestGithubProvider {
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
-        Self { client, base_url }
+        Self {
+            client,
+            base_url,
+            sha_cache: Cache::builder()
+                .max_capacity(1000)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+            release_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+            branch_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+        }
+    }
+
+    fn try_gh_cli_token() -> Option<String> {
+        let config_path = dirs::config_dir()?.join("gh/hosts.yml");
+        if config_path.exists() {
+            let content = fs::read_to_string(config_path).ok()?;
+            let docs: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+            return docs
+                .get("github.com")?
+                .get("oauth_token")?
+                .as_str()?
+                .to_string()
+                .into();
+        }
+        None
     }
 }
 
 #[async_trait]
 impl GithubProvider for ReqwestGithubProvider {
     async fn get_commit_sha(&self, action: &str, tag: &str) -> Result<String, PinnerError> {
+        let key = (action.to_string(), tag.to_string());
+        if let Some(sha) = self.sha_cache.get(&key).await {
+            return Ok(sha);
+        }
+
         let url = format!("{}/repos/{}/commits/{}", self.base_url, action, tag);
         let resp = self
             .client
@@ -193,6 +256,7 @@ impl GithubProvider for ReqwestGithubProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
+            self.sha_cache.insert(key, res.sha.clone()).await;
             Ok(res.sha)
         } else {
             Err(PinnerError::Api(format!(
@@ -205,6 +269,10 @@ impl GithubProvider for ReqwestGithubProvider {
     }
 
     async fn get_latest_release(&self, action: &str) -> Result<String, PinnerError> {
+        if let Some(tag) = self.release_cache.get(&action.to_string()).await {
+            return Ok(tag);
+        }
+
         let url = format!("{}/repos/{}/releases/latest", self.base_url, action);
         let resp = self
             .client
@@ -217,9 +285,13 @@ impl GithubProvider for ReqwestGithubProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
+            self.release_cache
+                .insert(action.to_string(), rel.tag_name.clone())
+                .await;
             Ok(rel.tag_name)
         } else if resp.status().as_u16() == 404 {
-            Ok("main".to_string())
+            let default_branch = self.get_default_branch(action).await?;
+            Ok(default_branch)
         } else {
             Err(PinnerError::Api(format!(
                 "HTTP {}: Could not fetch latest release for {}",
@@ -228,6 +300,40 @@ impl GithubProvider for ReqwestGithubProvider {
             )))
         }
     }
+
+    async fn get_default_branch(&self, action: &str) -> Result<String, PinnerError> {
+        if let Some(branch) = self.branch_cache.get(&action.to_string()).await {
+            return Ok(branch);
+        }
+
+        let url = format!("{}/repos/{}", self.base_url, action);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| PinnerError::Api(e.to_string()))?;
+
+        if resp.status().is_success() {
+            let repo: RepoResponse = resp
+                .json()
+                .await
+                .map_err(|e| PinnerError::Api(e.to_string()))?;
+            self.branch_cache
+                .insert(action.to_string(), repo.default_branch.clone())
+                .await;
+            Ok(repo.default_branch)
+        } else {
+            Ok("main".to_string())
+        }
+    }
+}
+
+/// Configuration for Pinner.
+#[derive(Debug, Deserialize, Default)]
+pub struct Config {
+    /// List of actions to ignore.
+    pub ignore_actions: Vec<String>,
 }
 
 /// Orchestrator for pinning operations.
@@ -236,6 +342,8 @@ pub struct Operations<G: GithubProvider> {
     yes: bool,
     quiet: bool,
     dry_run: bool,
+    json: bool,
+    config: Config,
 }
 
 struct UpdateTask {
@@ -246,19 +354,44 @@ struct UpdateTask {
     current_tag: Option<String>,
 }
 
+#[derive(Serialize)]
 struct UpdateResult {
+    #[serde(skip)]
     task: UpdateTask,
+    action: String,
+    path: PathBuf,
+    old_tag: Option<String>,
     new_sha: String,
     new_tag: Option<String>,
 }
 
+#[derive(Serialize)]
+struct JsonOutput {
+    updates: Vec<UpdateResult>,
+}
+
 impl<G: GithubProvider + 'static> Operations<G> {
-    pub fn new(github: Arc<G>, yes: bool, quiet: bool, dry_run: bool) -> Self {
+    pub fn new(github: Arc<G>, yes: bool, quiet: bool, dry_run: bool, json: bool) -> Self {
+        let config = Self::load_config().unwrap_or_default();
         Self {
             github,
             yes,
             quiet,
             dry_run,
+            json,
+            config,
+        }
+    }
+
+    fn load_config() -> Result<Config, PinnerError> {
+        let path = Path::new(".pinner.toml");
+        if path.exists() {
+            let content = fs::read_to_string(path)?;
+            let config: Config = toml::from_str(&content)
+                .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
+            Ok(config)
+        } else {
+            Ok(Config::default())
         }
     }
 
@@ -350,6 +483,11 @@ impl<G: GithubProvider + 'static> Operations<G> {
                     for (start, end, val) in uses_nodes {
                         let parts: Vec<&str> = val.split('@').collect();
                         let action = parts[0];
+
+                        if self.config.ignore_actions.contains(&action.to_string()) {
+                            continue;
+                        }
+
                         let tag = parts.get(1).copied();
                         tasks.push(UpdateTask {
                             path: path.to_path_buf(),
@@ -364,23 +502,53 @@ impl<G: GithubProvider + 'static> Operations<G> {
         }
 
         let f = std::sync::Arc::new(f);
-        let mut futs = Vec::new();
-        for task in tasks {
+        let pb = if !self.quiet && !self.json && !tasks.is_empty() {
+            let pb = ProgressBar::new(tasks.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+            Some(pb)
+        } else {
+            None
+        };
+
+        let futs = tasks.into_iter().map(|task| {
             let f_clone = f.clone();
-            futs.push(async move {
-                if let Some((sha, tag)) = f_clone(&task.action, task.current_tag.as_deref()).await {
+            let pb = pb.clone();
+            async move {
+                let res = if let Some((sha, tag)) =
+                    f_clone(&task.action, task.current_tag.as_deref()).await
+                {
                     Some(UpdateResult {
+                        action: task.action.clone(),
+                        path: task.path.clone(),
+                        old_tag: task.current_tag.clone(),
                         task,
                         new_sha: sha,
                         new_tag: tag,
                     })
                 } else {
                     None
+                };
+                if let Some(p) = pb {
+                    p.inc(1);
                 }
-            });
-        }
+                res
+            }
+        });
 
-        let results: Vec<UpdateResult> = join_all(futs).await.into_iter().flatten().collect();
+        let results: Vec<UpdateResult> = stream::iter(futs)
+            .buffer_unordered(10) // Bound concurrency to 10
+            .filter_map(|res| async { res })
+            .collect()
+            .await;
+
+        if let Some(p) = pb {
+            p.finish_and_clear();
+        }
 
         // Group results by file
         let mut file_results: std::collections::HashMap<PathBuf, Vec<UpdateResult>> =
@@ -394,6 +562,8 @@ impl<G: GithubProvider + 'static> Operations<G> {
 
         let comment_regex =
             Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*").unwrap();
+
+        let mut all_json_updates = Vec::new();
 
         for (path, mut updates) in file_results {
             let content = fs::read_to_string(&path)?;
@@ -419,7 +589,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
                     }
                 }
 
-                let new_comment = if let Some(t) = res.new_tag {
+                let new_comment = if let Some(t) = &res.new_tag {
                     format!(" # {}", t)
                 } else {
                     "".to_string()
@@ -443,9 +613,12 @@ impl<G: GithubProvider + 'static> Operations<G> {
 
                 changes.push((old_val_with_suffix.to_string(), new_val.clone()));
                 new_content.replace_range(res.task.start..line_end, &new_val);
+                if self.json {
+                    all_json_updates.push(res);
+                }
             }
 
-            if !changes.is_empty() && !self.quiet {
+            if !changes.is_empty() && !self.quiet && !self.json {
                 println!("\n{} {}", "File:".bold(), path.display().to_string().cyan());
                 if self.dry_run {
                     self.print_diff(&content, &new_content);
@@ -475,9 +648,16 @@ impl<G: GithubProvider + 'static> Operations<G> {
                         println!("{}", "✘ Skipped".yellow());
                     }
                 }
-            } else if !changes.is_empty() && self.yes {
+            } else if !changes.is_empty() && (self.yes || self.json) && !self.dry_run {
                 fs::write(&path, new_content)?;
             }
+        }
+
+        if self.json {
+            let output = JsonOutput {
+                updates: all_json_updates,
+            };
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
 
         Ok(())
@@ -597,7 +777,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = ReqwestGithubProvider::new(s.url());
+        let p = ReqwestGithubProvider::new(s.url(), None);
         assert!(p.get_commit_sha("o/r", "v1").await.is_ok());
         assert_eq!(p.get_latest_release("o/r").await.unwrap(), "v2");
 
@@ -619,7 +799,7 @@ mod tests {
         )
         .unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, false, false);
+        let ops = Operations::new(Arc::new(mock), true, false, false, false);
         ops.pin(std::slice::from_ref(&wd)).await.unwrap();
 
         assert!(fs::read_to_string(wd.join("f.yml"))
@@ -641,7 +821,7 @@ mod tests {
         mock2
             .expect_get_commit_sha()
             .returning(|_, _| Ok("692973e3d937129bcbf40652eb9f2f61becf3332".into()));
-        let ops2 = Operations::new(Arc::new(mock2), true, false, false);
+        let ops2 = Operations::new(Arc::new(mock2), true, false, false, false);
         ops2.upgrade(std::slice::from_ref(&wd)).await.unwrap();
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
@@ -657,6 +837,8 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
+                token: None,
+                json: false,
             },
             mock3,
             vec![wd.clone()],
@@ -670,6 +852,8 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
+                token: None,
+                json: false,
             },
             MockGithubProvider::new(),
             vec![PathBuf::from("/n")]
@@ -681,7 +865,7 @@ mod tests {
     #[tokio::test]
     async fn test_github_provider_errors() {
         let mut s = Server::new_async().await;
-        let p = ReqwestGithubProvider::new(s.url());
+        let p = ReqwestGithubProvider::new(s.url(), None);
 
         let _m = s
             .mock("GET", "/repos/o/r/commits/v1")
@@ -712,7 +896,7 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, true, false);
+        let ops = Operations::new(Arc::new(mock), true, true, false, false);
         ops.set(std::slice::from_ref(&f), "o/r", "newhash")
             .await
             .unwrap();
@@ -729,7 +913,7 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, false, true);
+        let ops = Operations::new(Arc::new(mock), true, false, true, false);
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
         assert_eq!(fs::read_to_string(&f).unwrap(), "uses: o/r@v1");
@@ -744,7 +928,7 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, true, false);
+        let ops = Operations::new(Arc::new(mock), true, true, false, false);
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
         assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
@@ -771,7 +955,7 @@ jobs:
         )
         .unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, true, false);
+        let ops = Operations::new(Arc::new(mock), true, true, false, false);
         // We don't care about actual replacement here, just that it doesn't crash
         // and find_uses_nodes works.
         let mut parser = TSParser::new();
@@ -804,6 +988,8 @@ jobs:
             yes: true,
             quiet: true,
             dry_run: false,
+            token: None,
+            json: false,
         };
         run(cli_upgrade, mock, vec![f.clone()]).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("o/r@h # v2"));
@@ -818,6 +1004,8 @@ jobs:
             yes: true,
             quiet: true,
             dry_run: false,
+            token: None,
+            json: false,
         };
         run(cli_set, mock2, vec![f.clone()]).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("o/r@sethash"));
@@ -826,15 +1014,58 @@ jobs:
     #[tokio::test]
     async fn test_error_path_not_found() {
         let mock = MockGithubProvider::new();
-        let ops = Operations::new(Arc::new(mock), true, true, false);
+        let ops = Operations::new(Arc::new(mock), true, true, false, false);
         let res = ops.pin(&[PathBuf::from("/non/existent/path")]).await;
         assert!(matches!(res, Err(PinnerError::PathNotFound(_))));
     }
 
     #[tokio::test]
+    async fn test_operations_config_ignore() {
+        let mock = MockGithubProvider::new();
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: ignore/me@v1\nuses: keep/me@v1").unwrap();
+
+        let mut config = Config::default();
+        config.ignore_actions.push("ignore/me".to_string());
+
+        let ops = Operations {
+            github: Arc::new(mock),
+            yes: true,
+            quiet: true,
+            dry_run: false,
+            json: false,
+            config,
+        };
+
+        let mut parser = TSParser::new();
+        parser.set_language(tree_sitter_yaml::language()).unwrap();
+        let content = fs::read_to_string(&f).unwrap();
+        let tree = parser.parse(&content, None).unwrap();
+        let mut results = Vec::new();
+        ops.find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
+
+        // find_uses_nodes still finds it, but process should skip it.
+        assert_eq!(results.len(), 2);
+
+        // We can't easily test process skipping without a lot of mocking,
+        // but let's at least test load_config.
+        let config_file = dir.path().join(".pinner.toml");
+        fs::write(&config_file, "ignore_actions = [\"a\", \"b\"]").unwrap();
+
+        // Temporarily change directory to test load_config
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let loaded = Operations::<ReqwestGithubProvider>::load_config().unwrap();
+        std::env::set_current_dir(original_dir).unwrap();
+
+        assert_eq!(loaded.ignore_actions, vec!["a", "b"]);
+    }
+
+    #[tokio::test]
     async fn test_github_provider_token() {
         std::env::set_var("GITHUB_TOKEN", "test-token");
-        let p = ReqwestGithubProvider::new("http://localhost".into());
+        let p = ReqwestGithubProvider::new("http://localhost".into(), None);
         assert_eq!(p.base_url, "http://localhost");
         std::env::remove_var("GITHUB_TOKEN");
     }
