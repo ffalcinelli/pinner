@@ -510,7 +510,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-                    .unwrap()
+                    .expect("Failed to parse progress bar template")
                     .progress_chars("#>-"),
             );
             Some(pb)
