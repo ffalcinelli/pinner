@@ -510,7 +510,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-                    .unwrap()
+                    .expect("Failed to parse progress bar template")
                     .progress_chars("#>-"),
             );
             Some(pb)
@@ -637,7 +637,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
                             "Apply changes to".bold(),
                             path.display().to_string().cyan()
                         );
-                        std::io::stdout().flush().unwrap();
+                        let _ = std::io::stdout().flush();
                         let mut input = String::new();
                         if std::io::stdin().read_line(&mut input).is_ok() {
                             let input = input.trim().to_lowercase();
@@ -876,6 +876,24 @@ mod tests {
             .create_async()
             .await;
         assert!(p.get_commit_sha("o/r", "v1").await.is_err());
+
+        let _m_500 = s
+            .mock("GET", "/repos/o/r/commits/v500")
+            .with_status(500)
+            .create_async()
+            .await;
+        assert!(p.get_commit_sha("o/r", "v500").await.is_err());
+
+        let _m_bad_json = s
+            .mock("GET", "/repos/o/r/commits/vbad")
+            .with_status(200)
+            .with_body("not valid json")
+            .create_async()
+            .await;
+        assert!(p.get_commit_sha("o/r", "vbad").await.is_err());
+
+        let p_bad_url = ReqwestGithubProvider::new("http://127.0.0.1:0".to_string(), None);
+        assert!(p_bad_url.get_commit_sha("o/r", "v1").await.is_err());
 
         let _m2 = s
             .mock("GET", "/repos/o/r/releases/latest")
