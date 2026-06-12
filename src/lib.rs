@@ -484,7 +484,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
                         let parts: Vec<&str> = val.split('@').collect();
                         let action = parts[0];
 
-                        if self.config.ignore_actions.contains(&action.to_string()) {
+                        if self.config.ignore_actions.iter().any(|a| a == action) {
                             continue;
                         }
 
