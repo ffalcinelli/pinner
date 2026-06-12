@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use thiserror::Error;
 use tree_sitter::{Node, Parser as TSParser};
@@ -544,8 +544,9 @@ impl<G: GithubProvider + 'static> Operations<G> {
                 .push(res);
         }
 
-        let comment_regex =
-            Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*").unwrap();
+        static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*").unwrap()
+        });
 
         let mut all_json_updates = Vec::new();
 
@@ -568,7 +569,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
                 let suffix = &content[res.task.end..line_end];
 
                 let mut final_suffix = suffix.trim_start().to_string();
-                if let Some(mat) = comment_regex.find(&final_suffix) {
+                if let Some(mat) = COMMENT_REGEX.find(&final_suffix) {
                     final_suffix = final_suffix[mat.end()..].trim_start().to_string();
                     if final_suffix.starts_with('#') {
                         final_suffix = final_suffix[1..].trim_start().to_string();
