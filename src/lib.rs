@@ -195,7 +195,7 @@ impl ReqwestGithubProvider {
         let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
             .build()
-            .unwrap();
+            .expect("Failed to build reqwest client");
 
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest_client)
