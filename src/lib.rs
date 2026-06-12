@@ -182,9 +182,7 @@ impl ReqwestGithubProvider {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
 
-        let token = token
-            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-            .or_else(Self::try_gh_cli_token);
+        let token = token.or_else(|| std::env::var("GITHUB_TOKEN").ok());
 
         if let Some(t) = token {
             if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", t)) {
@@ -218,21 +216,6 @@ impl ReqwestGithubProvider {
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
         }
-    }
-
-    fn try_gh_cli_token() -> Option<String> {
-        let config_path = dirs::config_dir()?.join("gh/hosts.yml");
-        if config_path.exists() {
-            let content = fs::read_to_string(config_path).ok()?;
-            let docs: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
-            return docs
-                .get("github.com")?
-                .get("oauth_token")?
-                .as_str()?
-                .to_string()
-                .into();
-        }
-        None
     }
 }
 
