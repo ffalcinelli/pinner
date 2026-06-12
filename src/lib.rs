@@ -444,6 +444,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
             .map_err(|e| PinnerError::Parse(e.to_string()))?;
 
         let mut tasks = Vec::new();
+        let mut file_contents = std::collections::HashMap::new();
 
         for path in paths {
             if !path.exists() {
@@ -461,6 +462,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
 
                     let mut uses_nodes = Vec::new();
                     self.find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
+                    file_contents.insert(path.to_path_buf(), content);
 
                     for (start, end, val) in uses_nodes {
                         let parts: Vec<&str> = val.split('@').collect();
@@ -548,7 +550,9 @@ impl<G: GithubProvider + 'static> Operations<G> {
         let mut all_json_updates = Vec::new();
 
         for (path, mut updates) in file_results {
-            let content = fs::read_to_string(&path)?;
+            let content = file_contents
+                .get(&path)
+                .expect("File content should have been read during parsing");
             let mut new_content = content.clone();
             let mut changes = Vec::new();
 
@@ -603,7 +607,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
             if !changes.is_empty() && !self.quiet && !self.json {
                 println!("\n{} {}", "File:".bold(), path.display().to_string().cyan());
                 if self.dry_run {
-                    self.print_diff(&content, &new_content);
+                    self.print_diff(content, &new_content);
                 } else {
                     for (old, new_ln) in &changes {
                         self.print_inline_diff(old, new_ln);
