@@ -156,19 +156,19 @@
             <!-- Install Commands -->
             <div class="relative max-w-2xl mx-auto">
                 <div id="cmd-linux" class="terminal rounded-lg p-1 flex items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
-                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base truncate">curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
+                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base flex-1 break-all">curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
                     <button onclick="copyCmd('curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh', this)" class="px-6 py-4 hover:bg-sky-400/10 rounded-md transition-all text-gray-400 hover:text-sky-400 flex-shrink-0 group">
                         <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                     </button>
                 </div>
                 <div id="cmd-windows" class="terminal rounded-lg p-1 hidden items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
-                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base truncate">powershell -c "irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
+                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base flex-1 break-all">powershell -c "irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
                     <button onclick="copyCmd('powershell -c \"irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex\"', this)" class="px-6 py-4 hover:bg-sky-400/10 rounded-md transition-all text-gray-400 hover:text-sky-400 flex-shrink-0 group">
                         <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                     </button>
                 </div>
                 <div id="cmd-cargo" class="terminal rounded-lg p-1 hidden items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
-                    <code class="px-6 py-4 font-mono text-emerald-400 text-sm md:text-base truncate">cargo install pinner</code>
+                    <code class="px-6 py-4 font-mono text-emerald-400 text-sm md:text-base flex-1 break-all">cargo install pinner</code>
                     <button onclick="copyCmd('cargo install pinner', this)" class="px-6 py-4 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
                         <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                     </button>
