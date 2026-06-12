@@ -22,6 +22,14 @@
             background-color: #010409;
             border: 1px solid #30363d;
         }
+        .tab-active {
+            border-bottom: 2px solid #38bdf8;
+            color: #f0f9ff;
+        }
+        .origin-quote {
+            border-left: 2px solid #38bdf8;
+            background: linear-gradient(90deg, rgba(56, 189, 248, 0.05) 0%, rgba(13, 17, 23, 0) 100%);
+        }
     </style>
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
@@ -31,7 +39,7 @@
             <i class="fas fa-thumbtack text-sky-400 text-2xl"></i>
             <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
         </div>
-        <div class="flex items-center space-x-6">
+        <div class="flex items-center space-x-6 text-sm font-medium">
             <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
             <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors"><i class="fas fa-book mr-2"></i>API Docs</a>
         </div>
@@ -43,9 +51,28 @@
             <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
                 Secure your GitHub Actions with <span class="text-sky-400">Pinner</span>
             </h1>
-            <p class="text-xl md:text-2xl text-gray-400 mb-10 max-w-2xl mx-auto">
+            <p class="text-xl md:text-2xl text-gray-400 mb-8 max-w-2xl mx-auto">
                 Automatically pin mutable tags to immutable SHA-1 hashes to prevent supply chain attacks.
             </p>
+            
+            <div class="max-w-2xl mx-auto mb-16 origin-quote py-6 px-8 text-left border-l-4 border-sky-500/30 rounded-r-2xl bg-sky-500/[0.02]">
+                <div class="flex items-start space-x-6">
+                    <div class="flex-shrink-0 mt-1">
+                        <i class="fas fa-flask text-sky-400/60 text-3xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-white font-bold mb-2 flex items-center">
+                            The Pinner Reaction <span class="ml-3 px-2 py-0.5 bg-sky-500/10 text-sky-400 text-[10px] rounded uppercase tracking-widest">Etymology</span>
+                        </h3>
+                        <p class="text-gray-400 text-sm leading-relaxed mb-4">
+                            In organic chemistry, the <span class="text-sky-300 font-medium">Pinner reaction</span> involves the acid-catalyzed conversion of a reactive nitrile into a highly stable salt.
+                        </p>
+                        <p class="text-gray-300 italic text-base leading-relaxed border-t border-gray-800 pt-4">
+                            "Just as the reaction transforms a volatile compound into a stable, fixed salt, this CLI transforms floating tags into secure, immutable commit SHAs."
+                        </p>
+                    </div>
+                </div>
+            </div>
             
             <div class="flex flex-col md:flex-row items-center justify-center gap-4 mb-16">
                 <a href="https://docs.rs/pinner" class="w-full md:w-auto px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white font-bold rounded-lg transition-all transform hover:scale-105 shadow-lg shadow-sky-500/20">
@@ -57,19 +84,21 @@
             </div>
 
             <!-- Terminal Mockup -->
-            <div class="terminal rounded-xl overflow-hidden shadow-2xl text-left">
-                <div class="bg-gray-800 px-4 py-2 flex items-center space-x-2">
-                    <div class="w-3 h-3 bg-red-500 rounded-full"></div>
-                    <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                    <div class="w-3 h-3 bg-green-500 rounded-full"></div>
-                    <span class="text-xs text-gray-400 ml-2 font-mono">bash — pinner</span>
+            <div class="terminal rounded-xl overflow-hidden shadow-2xl text-left border border-gray-800">
+                <div class="bg-gray-800/50 px-4 py-2 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-3 h-3 bg-red-500/80 rounded-full"></div>
+                        <div class="w-3 h-3 bg-yellow-500/80 rounded-full"></div>
+                        <div class="w-3 h-3 bg-green-500/80 rounded-full"></div>
+                    </div>
+                    <span class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Terminal</span>
                 </div>
                 <div class="p-6 font-mono text-sm md:text-base leading-relaxed">
                     <p class="mb-2 text-gray-500">$ pinner pin</p>
-                    <p class="mb-2 text-green-400">Searching for workflows in .github/workflows/...</p>
+                    <p class="mb-2 text-emerald-400">Searching for workflows in .github/workflows/...</p>
                     <p class="mb-2 text-white"><span class="text-sky-400">actions/checkout@v3</span> -> <span class="text-sky-400">actions/checkout@df4cb1c0...</span> <span class="text-gray-500"># v3</span></p>
                     <p class="mb-2 text-white"><span class="text-sky-400">dtolnay/rust-toolchain@master</span> -> <span class="text-sky-400">dtolnay/rust-toolchain@e97e2d8c...</span> <span class="text-gray-500"># master</span></p>
-                    <p class="text-green-400 font-bold">Successfully pinned 12 actions across 3 files!</p>
+                    <p class="text-emerald-400 font-bold mt-4">Successfully pinned 12 actions across 3 files!</p>
                 </div>
             </div>
         </div>
@@ -103,19 +132,108 @@
     </section>
 
     <!-- Installation -->
-    <section class="py-24 text-center px-8">
-        <h2 class="text-3xl font-bold text-white mb-12">Install Pinner</h2>
-        <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-1">
-            <code class="px-6 py-3 font-mono text-sky-400">cargo install pinner</code>
-            <button onclick="navigator.clipboard.writeText('cargo install pinner')" class="px-6 py-3 hover:bg-gray-800 rounded-md transition-colors text-gray-400">
-                <i class="far fa-copy"></i>
-            </button>
+    <section class="py-24 bg-gray-900/30 border-y border-gray-800/50">
+        <div class="max-w-4xl mx-auto px-8 text-center">
+            <h2 class="text-3xl font-bold text-white mb-12 flex items-center justify-center">
+                <i class="fas fa-download text-sky-400 mr-4"></i> Install Pinner
+            </h2>
+            
+            <!-- OS Tabs -->
+            <div class="flex justify-center mb-8">
+                <div class="inline-flex p-1 bg-gray-800/50 border border-gray-700 rounded-xl space-x-1">
+                    <button onclick="switchTab('linux')" id="tab-linux" class="flex items-center px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all rounded-lg tab-active">
+                        <i class="fab fa-linux mr-2"></i><i class="fab fa-apple mr-2 text-gray-500"></i> Linux / macOS
+                    </button>
+                    <button onclick="switchTab('windows')" id="tab-windows" class="flex items-center px-6 py-2.5 text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-gray-300 transition-all rounded-lg">
+                        <i class="fab fa-windows mr-2"></i> Windows
+                    </button>
+                    <button onclick="switchTab('cargo')" id="tab-cargo" class="flex items-center px-6 py-2.5 text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-gray-300 transition-all rounded-lg">
+                        <i class="fas fa-box-open mr-2"></i> Cargo
+                    </button>
+                </div>
+            </div>
+
+            <!-- Install Commands -->
+            <div class="relative max-w-2xl mx-auto">
+                <div id="cmd-linux" class="terminal rounded-lg p-1 flex items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
+                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base truncate">curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
+                    <button onclick="copyCmd('curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh', this)" class="px-6 py-4 hover:bg-sky-400/10 rounded-md transition-all text-gray-400 hover:text-sky-400 flex-shrink-0 group">
+                        <i class="far fa-copy group-active:scale-90 transition-transform"></i>
+                    </button>
+                </div>
+                <div id="cmd-windows" class="terminal rounded-lg p-1 hidden items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
+                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base truncate">powershell -c "irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
+                    <button onclick="copyCmd('powershell -c \"irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex\"', this)" class="px-6 py-4 hover:bg-sky-400/10 rounded-md transition-all text-gray-400 hover:text-sky-400 flex-shrink-0 group">
+                        <i class="far fa-copy group-active:scale-90 transition-transform"></i>
+                    </button>
+                </div>
+                <div id="cmd-cargo" class="terminal rounded-lg p-1 hidden items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
+                    <code class="px-6 py-4 font-mono text-emerald-400 text-sm md:text-base truncate">cargo install pinner</code>
+                    <button onclick="copyCmd('cargo install pinner', this)" class="px-6 py-4 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
+                        <i class="far fa-copy group-active:scale-90 transition-transform"></i>
+                    </button>
+                </div>
+                <!-- Tooltip Feedback -->
+                <div id="copy-feedback" class="absolute -top-12 left-1/2 -translate-x-1/2 px-4 py-2 bg-sky-500 text-white text-xs font-bold rounded shadow-lg opacity-0 pointer-events-none transition-all duration-300">
+                    Copied to clipboard!
+                </div>
+            </div>
+            <p class="mt-8 text-sm text-gray-500 font-medium">One-line installation for instant workflow security.</p>
         </div>
     </section>
 
     <!-- Footer -->
-    <footer class="py-12 border-t border-gray-800 text-center text-gray-500">
-        <p>&copy; 2026 Fabio Falcinelli. Released under the MIT License.</p>
+    <footer class="py-16 text-center text-gray-500">
+        <div class="flex items-center justify-center space-x-4 mb-6">
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-white transition-colors"><i class="fab fa-github text-xl"></i></a>
+            <div class="h-4 w-px bg-gray-800"></div>
+            <a href="https://docs.rs/pinner" class="hover:text-white transition-colors text-sm font-bold uppercase tracking-tighter">Docs.rs</a>
+        </div>
+        <p class="text-xs">&copy; 2026 Fabio Falcinelli. Released under the MIT License.</p>
     </footer>
+
+    <script>
+        function switchTab(os) {
+            // Update tabs
+            ['linux', 'windows', 'cargo'].forEach(id => {
+                const tab = document.getElementById('tab-' + id);
+                const cmd = document.getElementById('cmd-' + id);
+                if (id === os) {
+                    tab.classList.add('tab-active', 'bg-sky-500/10', 'text-sky-400');
+                    tab.classList.remove('text-gray-500');
+                    cmd.classList.remove('hidden');
+                    cmd.classList.add('flex');
+                } else {
+                    tab.classList.remove('tab-active', 'bg-sky-500/10', 'text-sky-400');
+                    tab.classList.add('text-gray-500');
+                    cmd.classList.add('hidden');
+                    cmd.classList.remove('flex');
+                }
+            });
+        }
+
+        function copyCmd(text, btn) {
+            navigator.clipboard.writeText(text);
+            
+            const feedback = document.getElementById('copy-feedback');
+            feedback.classList.remove('opacity-0');
+            feedback.classList.add('opacity-100');
+            
+            setTimeout(() => {
+                feedback.classList.remove('opacity-100');
+                feedback.classList.add('opacity-0');
+            }, 2000);
+        }
+
+        // Auto-detect OS
+        window.onload = () => {
+            const platform = window.navigator.platform.toLowerCase();
+            if (platform.includes('win')) {
+                switchTab('windows');
+            } else {
+                switchTab('linux');
+            }
+        };
+    </script>
 </body>
 </html>
