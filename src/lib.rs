@@ -656,7 +656,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
             let output = JsonOutput {
                 updates: all_json_updates,
             };
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            println!("{}", serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output"));
         }
 
         Ok(())
