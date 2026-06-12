@@ -5,14 +5,14 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub release](https://img.shields.io/github/v/release/ffalcinelli/pinner)](https://github.com/ffalcinelli/pinner/releases)
-[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://ffalcinelli.github.io/pinner/latest/pinner/index.html)
+[![Docs.rs](https://docs.rs/pinner/badge.svg)](https://docs.rs/pinner)
 
 A high-performance Rust CLI utility to **hash-pin GitHub Actions** in your workflow files. Secure your CI/CD supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
 
 ## Documentation 📚
 
 The full documentation for the project is available at:
-[https://ffalcinelli.github.io/pinner/](https://ffalcinelli.github.io/pinner/)
+[https://docs.rs/pinner](https://docs.rs/pinner)
 
 ## Why Pin? 🔒
 
