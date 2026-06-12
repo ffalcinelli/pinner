@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use tempfile::tempdir;
 
-fn create_test_files(dir: &PathBuf, num_files: usize, uses_per_file: usize) {
+fn create_test_files(dir: &Path, num_files: usize, uses_per_file: usize) {
     for i in 0..num_files {
         let mut content = String::new();
         for j in 0..uses_per_file {
