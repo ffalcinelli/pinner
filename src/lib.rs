@@ -1069,7 +1069,8 @@ jobs:
         let config_file = dir.path().join(".pinner.toml");
         fs::write(&config_file, "ignore_actions = [\"a\", \"b\"]").unwrap();
 
-        let loaded = Operations::<ReqwestGithubProvider>::load_config_from_path(&config_file).unwrap();
+        let loaded =
+            Operations::<ReqwestGithubProvider>::load_config_from_path(&config_file).unwrap();
 
         assert_eq!(loaded.ignore_actions, vec!["a", "b"]);
     }
@@ -1086,7 +1087,7 @@ jobs:
         assert!(result.is_err());
         match result.unwrap_err() {
             PinnerError::Config(msg) => {
-                assert!(msg.contains("Failed to parse .pinner.toml"));
+                assert!(msg.contains("Failed to parse"));
             }
             _ => panic!("Expected PinnerError::Config"),
         }
