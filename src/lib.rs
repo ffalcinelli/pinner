@@ -887,6 +887,19 @@ mod tests {
             .create_async()
             .await;
         assert_eq!(p.get_latest_release("o/r").await.unwrap(), "main");
+
+        let _m4 = s
+            .mock("GET", "/repos/o/r2/releases/latest")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _m5 = s
+            .mock("GET", "/repos/o/r2")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"develop"}"#)
+            .create_async()
+            .await;
+        assert_eq!(p.get_latest_release("o/r2").await.unwrap(), "develop");
     }
 
     #[tokio::test]
