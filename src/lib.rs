@@ -384,7 +384,10 @@ impl<G: GithubProvider + 'static> Operations<G> {
     }
 
     fn load_config() -> Result<Config, PinnerError> {
-        let path = Path::new(".pinner.toml");
+        Self::load_config_from_path(Path::new(".pinner.toml"))
+    }
+
+    fn load_config_from_path(path: &Path) -> Result<Config, PinnerError> {
         if path.exists() {
             let content = fs::read_to_string(path)?;
             let config: Config = toml::from_str(&content)
@@ -1066,13 +1069,27 @@ jobs:
         let config_file = dir.path().join(".pinner.toml");
         fs::write(&config_file, "ignore_actions = [\"a\", \"b\"]").unwrap();
 
-        // Temporarily change directory to test load_config
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let loaded = Operations::<ReqwestGithubProvider>::load_config().unwrap();
-        std::env::set_current_dir(original_dir).unwrap();
+        let loaded = Operations::<ReqwestGithubProvider>::load_config_from_path(&config_file).unwrap();
 
         assert_eq!(loaded.ignore_actions, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_load_config_invalid_toml() {
+        let dir = tempdir().unwrap();
+        let config_file = dir.path().join(".pinner.toml");
+        // Write invalid TOML (missing closing bracket)
+        fs::write(&config_file, "ignore_actions = [\"a\", \"b\"").unwrap();
+
+        let result = Operations::<ReqwestGithubProvider>::load_config_from_path(&config_file);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PinnerError::Config(msg) => {
+                assert!(msg.contains("Failed to parse .pinner.toml"));
+            }
+            _ => panic!("Expected PinnerError::Config"),
+        }
     }
 
     #[tokio::test]
