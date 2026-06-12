@@ -182,9 +182,7 @@ impl ReqwestGithubProvider {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
 
-        let token = token
-            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-            .or_else(Self::try_gh_cli_token);
+        let token = token.or_else(|| std::env::var("GITHUB_TOKEN").ok());
 
         if let Some(t) = token {
             if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", t)) {
@@ -195,7 +193,7 @@ impl ReqwestGithubProvider {
         let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
             .build()
-            .unwrap();
+            .expect("Failed to build reqwest client");
 
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest_client)
@@ -218,21 +216,6 @@ impl ReqwestGithubProvider {
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
         }
-    }
-
-    fn try_gh_cli_token() -> Option<String> {
-        let config_path = dirs::config_dir()?.join("gh/hosts.yml");
-        if config_path.exists() {
-            let content = fs::read_to_string(config_path).ok()?;
-            let docs: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
-            return docs
-                .get("github.com")?
-                .get("oauth_token")?
-                .as_str()?
-                .to_string()
-                .into();
-        }
-        None
     }
 }
 
@@ -388,14 +371,10 @@ impl<G: GithubProvider + 'static> Operations<G> {
     }
 
     fn load_config_from_path(path: &Path) -> Result<Config, PinnerError> {
-        if path.exists() {
-            let content = fs::read_to_string(path)?;
-            let config: Config = toml::from_str(&content)
-                .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
-            Ok(config)
-        } else {
-            Ok(Config::default())
-        }
+        let content = fs::read_to_string(path).unwrap_or_default();
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
+        Ok(config)
     }
 
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
@@ -660,7 +639,10 @@ impl<G: GithubProvider + 'static> Operations<G> {
             let output = JsonOutput {
                 updates: all_json_updates,
             };
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output")
+            );
         }
 
         Ok(())
@@ -863,6 +845,22 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_operations_json() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok("newhash".into()));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        // `json=true` triggers the code path that uses `serde_json::to_string_pretty`
+        let ops = Operations::new(Arc::new(mock), true, false, false, true);
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
     }
 
     #[tokio::test]
