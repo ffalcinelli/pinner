@@ -637,7 +637,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
                             "Apply changes to".bold(),
                             path.display().to_string().cyan()
                         );
-                        std::io::stdout().flush().unwrap();
+                        let _ = std::io::stdout().flush();
                         let mut input = String::new();
                         if std::io::stdin().read_line(&mut input).is_ok() {
                             let input = input.trim().to_lowercase();
