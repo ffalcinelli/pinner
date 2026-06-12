@@ -656,7 +656,10 @@ impl<G: GithubProvider + 'static> Operations<G> {
             let output = JsonOutput {
                 updates: all_json_updates,
             };
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output")
+            );
         }
 
         Ok(())
@@ -859,6 +862,22 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_operations_json() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok("newhash".into()));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        // `json=true` triggers the code path that uses `serde_json::to_string_pretty`
+        let ops = Operations::new(Arc::new(mock), true, false, false, true);
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
     }
 
     #[tokio::test]
