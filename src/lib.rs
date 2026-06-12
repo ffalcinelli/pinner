@@ -388,14 +388,10 @@ impl<G: GithubProvider + 'static> Operations<G> {
     }
 
     fn load_config_from_path(path: &Path) -> Result<Config, PinnerError> {
-        if path.exists() {
-            let content = fs::read_to_string(path)?;
-            let config: Config = toml::from_str(&content)
-                .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
-            Ok(config)
-        } else {
-            Ok(Config::default())
-        }
+        let content = fs::read_to_string(path).unwrap_or_default();
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
+        Ok(config)
     }
 
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
