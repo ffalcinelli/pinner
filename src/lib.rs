@@ -865,6 +865,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_operations_json() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok("newhash".into()));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        // `json=true` triggers the code path that uses `serde_json::to_string_pretty`
+        let ops = Operations::new(Arc::new(mock), true, false, false, true);
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
+    }
+
+    #[tokio::test]
     async fn test_github_provider_errors() {
         let mut s = Server::new_async().await;
         let p = ReqwestGithubProvider::new(s.url(), None);
