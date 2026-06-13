@@ -113,7 +113,7 @@ jobs:
   verify-pinning:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
       - name: Install Pinner
         run: curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
       - name: Verify Pinning

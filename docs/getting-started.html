@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Getting Started with Pinner - Secure Your GitHub Actions</title>
+    <title>Getting Started with Pinner - Secure Your CI/CD Workflows</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -73,7 +73,7 @@
             <div class="space-y-6">
                 <div class="card p-6 rounded-xl">
                     <h3 class="text-lg font-bold text-white mb-4">Shell (macOS & Linux)</h3>
-                    <div class="terminal p-4 rounded-lg font-mono text-sm text-sky-400 flex justify-between items-center">
+                    <div class="terminal p-4 rounded-lg font-mono text-sm text-emerald-400 flex justify-between items-center">
                         <code>curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
                         <i class="far fa-copy text-gray-500 cursor-pointer hover:text-sky-400 transition-colors"></i>
                     </div>
@@ -81,8 +81,8 @@
 
                 <div class="card p-6 rounded-xl">
                     <h3 class="text-lg font-bold text-white mb-4">PowerShell (Windows)</h3>
-                    <div class="terminal p-4 rounded-lg font-mono text-sm text-sky-400 flex justify-between items-center">
-                        <code>powershell -c "irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
+                    <div class="terminal p-4 rounded-lg font-mono text-sm text-emerald-400 flex justify-between items-center">
+                        <code>powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
                         <i class="far fa-copy text-gray-500 cursor-pointer hover:text-sky-400 transition-colors"></i>
                     </div>
                 </div>
@@ -143,7 +143,7 @@ jobs:
   verify-pinning:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
       - name: Install Pinner
         run: curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
       - name: Verify Pinning

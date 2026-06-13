@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pinner - Secure Your GitHub Actions Workflows</title>
+    <title>Pinner - Secure Your CI/CD Workflows</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -37,8 +37,10 @@
     <!-- Navbar -->
     <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
         <div class="flex items-center space-x-2">
-            <i class="fas fa-thumbtack text-sky-400 text-2xl"></i>
-            <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
+            <a href="index.html" class="flex items-center space-x-2 group">
+                <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
+                <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
+            </a>
         </div>
         <div class="flex items-center space-x-6 text-sm font-medium">
             <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
@@ -50,7 +52,7 @@
     <section class="relative pt-20 pb-32 hero-gradient">
         <div class="max-w-4xl mx-auto text-center px-4">
             <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
-                Secure your GitHub Actions with <span class="text-sky-400">Pinner</span>
+                Secure your CI/CD workflows with <span class="text-sky-400">Pinner</span>
             </h1>
             <p class="text-xl md:text-2xl text-gray-400 mb-8 max-w-2xl mx-auto">
                 Automatically pin mutable tags to immutable SHA-1 hashes to prevent supply chain attacks.
@@ -147,7 +149,7 @@
             <div class="flex justify-center mb-8">
                 <div class="flex flex-col sm:flex-row w-full sm:w-auto p-1 bg-gray-800/50 border border-gray-700 rounded-xl space-y-1 sm:space-y-0 sm:space-x-1">
                     <button onclick="switchTab('linux')" id="tab-linux" class="flex items-center justify-center w-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest transition-all rounded-lg tab-active">
-                        <i class="fab fa-linux mr-2"></i><i class="fab fa-apple mr-2 text-gray-500"></i> Linux / macOS
+                        <i class="fab fa-linux mr-2"></i><i class="fab fa-apple mr-2"></i> Linux / macOS
                     </button>
                     <button onclick="switchTab('windows')" id="tab-windows" class="flex items-center justify-center w-full px-6 py-2.5 text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-gray-300 transition-all rounded-lg">
                         <i class="fab fa-windows mr-2"></i> Windows
@@ -161,14 +163,14 @@
             <!-- Install Commands -->
             <div class="relative max-w-2xl mx-auto">
                 <div id="cmd-linux" class="terminal rounded-lg p-1 flex items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
-                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base flex-1 break-all">curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
-                    <button onclick="copyCmd('curl -sSL https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh', this)" class="px-6 py-4 hover:bg-sky-400/10 rounded-md transition-all text-gray-400 hover:text-sky-400 flex-shrink-0 group">
+                    <code class="px-6 py-4 font-mono text-emerald-400 text-sm md:text-base flex-1 break-all">curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
+                    <button onclick="copyCmd('curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh', this)" class="px-6 py-4 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
                         <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                     </button>
                 </div>
                 <div id="cmd-windows" class="terminal rounded-lg p-1 hidden items-center justify-between bg-black/40 border-gray-700/50 shadow-xl">
-                    <code class="px-6 py-4 font-mono text-sky-400 text-sm md:text-base flex-1 break-all">powershell -c "irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
-                    <button onclick="copyCmd('powershell -c \"irmo https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex\"', this)" class="px-6 py-4 hover:bg-sky-400/10 rounded-md transition-all text-gray-400 hover:text-sky-400 flex-shrink-0 group">
+                    <code class="px-6 py-4 font-mono text-emerald-400 text-sm md:text-base flex-1 break-all">powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
+                    <button onclick="copyCmd('powershell -ExecutionPolicy ByPass -c \"irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex\"', this)" class="px-6 py-4 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
                         <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                     </button>
                 </div>
