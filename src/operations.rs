@@ -178,17 +178,15 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                     if a.0.starts_with("docker://") || k == "image" {
                         if !ver.starts_with("sha256:") {
                             let image = a.0.trim_start_matches("docker://");
-                            if let Ok(digest) = registry.resolve_digest(image, &ver).await {
-                                return Some((DependencyRef::from(digest), Some(ver)));
-                            }
+                            let digest = registry.resolve_digest(image, &ver).await?;
+                            return Ok(Some((DependencyRef::from(digest), Some(ver))));
                         }
                     } else if ver.len() != 40 {
-                        if let Ok(sha) = github.get_commit_sha(&a, &ver, &k).await {
-                            return Some((sha, Some(ver)));
-                        }
+                        let sha = github.get_commit_sha(&a, &ver, &k).await?;
+                        return Ok(Some((sha, Some(ver))));
                     }
                 }
-                None
+                Ok(None)
             }
         })
         .await
@@ -206,9 +204,9 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             let (a, h, act_owned) = (a.clone(), h.clone(), act.clone());
             async move {
                 if act_owned == a {
-                    Some((h, None))
+                    Ok(Some((h, None)))
                 } else {
-                    None
+                    Ok(None)
                 }
             }
         })
@@ -230,31 +228,28 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 if a.0.starts_with("docker://") || k == "image" {
                     let image = a.0.trim_start_matches("docker://");
                     if let Some(ver) = &current_tag {
-                        if let Ok(digest) = registry.resolve_digest(image, ver).await {
-                            return Some((DependencyRef::from(digest), Some(ver.clone())));
-                        }
+                        let digest = registry.resolve_digest(image, ver).await?;
+                        return Ok(Some((DependencyRef::from(digest), Some(ver.clone()))));
                     } else {
                         // Fallback to latest tag for images if no tag specified
-                        if let Ok(digest) = registry.resolve_digest(image, "latest").await {
-                            return Some((DependencyRef::from(digest), Some("latest".to_string())));
-                        }
+                        let digest = registry.resolve_digest(image, "latest").await?;
+                        return Ok(Some((
+                            DependencyRef::from(digest),
+                            Some("latest".to_string()),
+                        )));
                     }
-                    return None;
                 }
 
                 if strategy == UpgradeStrategy::Commit {
-                    if let Ok(branch) = github.get_default_branch(&a, &k).await {
-                        if let Ok(sha) = github.get_commit_sha(&a, &branch.0, &k).await {
-                            return Some((sha, Some(branch.0)));
-                        }
-                    }
-                    return None;
+                    let branch = github.get_default_branch(&a, &k).await?;
+                    let sha = github.get_commit_sha(&a, &branch.0, &k).await?;
+                    return Ok(Some((sha, Some(branch.0))));
                 }
 
                 let latest_tag = if strategy == UpgradeStrategy::Latest {
-                    github.get_latest_release(&a, &k).await.ok()
+                    Some(github.get_latest_release(&a, &k).await?)
                 } else {
-                    let tags = github.list_tags(&a, &k).await.unwrap_or_default();
+                    let tags = github.list_tags(&a, &k).await?;
                     let current_tag = current_tag.as_deref().unwrap_or("");
                     let current_version =
                         semver::Version::parse(current_tag.trim_start_matches('v')).ok();
@@ -287,11 +282,13 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 };
 
                 if let Some(tag) = latest_tag {
-                    if let Ok(sha) = github.get_commit_sha(&a, &tag, &k).await {
-                        return Some((sha, Some(tag)));
+                    if Some(&tag) != current_tag.as_ref() {
+                        let sha = github.get_commit_sha(&a, &tag, &k).await?;
+                        return Ok(Some((sha, Some(tag))));
                     }
                 }
-                None
+
+                Ok(None)
             }
         })
         .await
@@ -447,10 +444,16 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         Ok((tasks, file_contents))
     }
 
-    async fn execute_updates<F, Fut>(&self, tasks: Vec<UpdateTask>, f: Arc<F>) -> Vec<UpdateResult>
+    async fn execute_updates<F, Fut>(
+        &self,
+        tasks: Vec<UpdateTask>,
+        f: Arc<F>,
+    ) -> Result<Vec<UpdateResult>, PinnerError>
     where
         F: Fn(&DependencyName, Option<&str>, &str) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Option<(DependencyRef, Option<String>)>> + Send,
+        Fut: std::future::Future<
+                Output = Result<Option<(DependencyRef, Option<String>)>, PinnerError>,
+            > + Send,
     {
         let pb = if !self.quiet && !self.json && !tasks.is_empty() {
             let pb = ProgressBar::new(tasks.len() as u64);
@@ -469,19 +472,18 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             let f_clone = f.clone();
             let pb = pb.clone();
             async move {
-                let res = if let Some((sha, tag)) =
-                    f_clone(&task.action, task.current_tag.as_deref(), &task.key).await
+                let res = match f_clone(&task.action, task.current_tag.as_deref(), &task.key).await
                 {
-                    Some(UpdateResult {
+                    Ok(Some((sha, tag))) => Ok(Some(UpdateResult {
                         action: task.action.clone(),
                         path: task.path.clone(),
                         old_tag: task.current_tag.clone(),
                         task,
                         new_sha: sha,
                         new_tag: tag,
-                    })
-                } else {
-                    None
+                    })),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(e),
                 };
                 if let Some(p) = pb {
                     p.inc(1);
@@ -490,16 +492,23 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             }
         });
 
-        let results: Vec<UpdateResult> = stream::iter(futs)
+        let results: Vec<Result<UpdateResult, PinnerError>> = stream::iter(futs)
             .buffer_unordered(self.config.concurrency)
-            .filter_map(|res| async { res })
+            .filter_map(|res| async {
+                match res {
+                    Ok(Some(r)) => Some(Ok(r)),
+                    Ok(None) => None,
+                    Err(e) => Some(Err(e)),
+                }
+            })
             .collect()
             .await;
 
         if let Some(p) = pb {
             p.finish_and_clear();
         }
-        results
+
+        results.into_iter().collect()
     }
 
     fn apply_changes(
@@ -662,10 +671,12 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     async fn process<F, Fut>(&self, paths: &[PathBuf], f: F) -> Result<(), PinnerError>
     where
         F: Fn(&DependencyName, Option<&str>, &str) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Option<(DependencyRef, Option<String>)>> + Send,
+        Fut: std::future::Future<
+                Output = Result<Option<(DependencyRef, Option<String>)>, PinnerError>,
+            > + Send,
     {
         let (tasks, file_contents) = self.collect_tasks(paths).await?;
-        let results = self.execute_updates(tasks, Arc::new(f)).await;
+        let results = self.execute_updates(tasks, Arc::new(f)).await?;
         self.apply_changes(results, file_contents)
     }
 
