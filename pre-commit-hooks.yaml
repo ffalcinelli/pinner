@@ -1,0 +1,15 @@
+- id: pinner-verify
+  name: pinner-verify
+  description: Verify that all GitHub Actions are pinned to a commit SHA.
+  entry: pinner verify
+  language: rust
+  files: ^\.github/workflows/.*\.ya?ml$
+  pass_filenames: false
+
+- id: pinner-pin
+  name: pinner-pin
+  description: Automatically pin GitHub Actions to commit SHAs.
+  entry: pinner pin --yes
+  language: rust
+  files: ^\.github/workflows/.*\.ya?ml$
+  pass_filenames: false

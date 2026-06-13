@@ -97,9 +97,13 @@
                 <div class="p-6 font-mono text-sm md:text-base leading-relaxed">
                     <p class="mb-2 text-gray-500">$ pinner pin</p>
                     <p class="mb-2 text-emerald-400">Searching for workflows in .github/workflows/...</p>
-                    <p class="mb-2 text-white"><span class="text-sky-400">actions/checkout@v3</span> -> <span class="text-sky-400">actions/checkout@df4cb1c0...</span> <span class="text-gray-500"># v3</span></p>
+                    <p class="mb-2 text-white"><span class="text-sky-400">actions/checkout@v4</span> -> <span class="text-sky-400">actions/checkout@8f4b7f84...</span> <span class="text-gray-500"># v4</span></p>
                     <p class="mb-2 text-white"><span class="text-sky-400">dtolnay/rust-toolchain@master</span> -> <span class="text-sky-400">dtolnay/rust-toolchain@e97e2d8c...</span> <span class="text-gray-500"># master</span></p>
-                    <p class="text-emerald-400 font-bold mt-4">Successfully pinned 12 actions across 3 files!</p>
+                    <p class="text-emerald-400 font-bold mt-4 mb-6">Successfully pinned 12 actions across 3 files!</p>
+                    
+                    <p class="mb-2 text-gray-500">$ pinner verify</p>
+                    <p class="mb-2 text-emerald-400">Verifying action pinning...</p>
+                    <p class="text-emerald-400 font-bold">All actions are correctly pinned! ✅</p>
                 </div>
             </div>
         </div>
@@ -113,21 +117,21 @@
                     <i class="fas fa-bolt text-sky-400 text-xl"></i>
                 </div>
                 <h3 class="text-xl font-bold text-white mb-4">High Performance</h3>
-                <p class="text-gray-400 leading-relaxed">Built with Rust for maximum speed. Scan and pin hundreds of actions in milliseconds.</p>
+                <p class="text-gray-400 leading-relaxed">Built with Rust and `tree-sitter` for maximum speed and precision. Scan hundreds of actions in milliseconds.</p>
             </div>
             <div class="card p-8 rounded-2xl">
                 <div class="w-12 h-12 bg-emerald-500/10 rounded-lg flex items-center justify-center mb-6">
                     <i class="fas fa-shield-halved text-emerald-400 text-xl"></i>
                 </div>
                 <h3 class="text-xl font-bold text-white mb-4">Secure by Design</h3>
-                <p class="text-gray-400 leading-relaxed">Protects your CI/CD against tag-moving attacks by switching to immutable SHAs.</p>
+                <p class="text-gray-400 leading-relaxed">Protects your CI/CD against tag-moving attacks. Native support for `verify` mode in your CI pipelines.</p>
             </div>
             <div class="card p-8 rounded-2xl">
                 <div class="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-6">
-                    <i class="fas fa-code text-purple-400 text-xl"></i>
+                    <i class="fas fa-sliders text-purple-400 text-xl"></i>
                 </div>
-                <h3 class="text-xl font-bold text-white mb-4">Surgical Updates</h3>
-                <p class="text-gray-400 leading-relaxed">Uses Regex-based replacement to preserve your YAML comments, indentation, and formatting.</p>
+                <h3 class="text-xl font-bold text-white mb-4">Enterprise Ready</h3>
+                <p class="text-gray-400 leading-relaxed">Configurable via `.pinner.toml`. Supports GitHub Enterprise with custom API URLs and tokens.</p>
             </div>
         </div>
     </section>
