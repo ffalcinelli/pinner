@@ -1,8 +1,8 @@
 [package]
 name = "pinner"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
-description = "Secure GitHub Actions workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments."
+description = "Secure CI/CD workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments. Supports GitHub, GitLab, Bitbucket, Forgejo, and Docker image pinning."
 authors = ["Fabio Falcinelli"]
 license = "MIT"
 repository = "https://github.com/ffalcinelli/pinner"
