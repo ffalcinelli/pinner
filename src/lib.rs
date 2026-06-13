@@ -712,7 +712,7 @@ include:
             },
         );
 
-        ops.pin(&[f.clone()]).await.unwrap();
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
         let updated = fs::read_to_string(&f).unwrap();
         println!("Updated content: {}", updated);

@@ -845,7 +845,7 @@ mod tests {
             },
         );
 
-        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        let (tasks, file_contents) = ops.collect_tasks(std::slice::from_ref(&f)).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].action.to_string(), "o/r");
         assert!(file_contents.contains_key(&f));
@@ -883,7 +883,7 @@ mod tests {
             },
         );
 
-        let res = ops.verify(&[f.clone()]).await;
+        let res = ops.verify(std::slice::from_ref(&f)).await;
         assert!(res.is_err()); // Should fail because @v3 is not a SHA
 
         fs::write(
@@ -891,7 +891,7 @@ mod tests {
             "uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
         )
         .unwrap();
-        let res = ops.verify(&[f.clone()]).await;
+        let res = ops.verify(std::slice::from_ref(&f)).await;
         assert!(res.is_ok());
 
         // Test docker pinned
@@ -900,7 +900,7 @@ mod tests {
             "image: alpine@sha256:1234567890123456789012345678901234567890123456789012345678901234",
         )
         .unwrap();
-        let res = ops.verify(&[f.clone()]).await;
+        let res = ops.verify(std::slice::from_ref(&f)).await;
         assert!(res.is_ok());
     }
 
@@ -923,7 +923,7 @@ mod tests {
             },
         );
 
-        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        let (tasks, file_contents) = ops.collect_tasks(std::slice::from_ref(&f)).await.unwrap();
         let res = UpdateResult {
             action: DependencyName::from("o/r"),
             path: f.clone(),
@@ -957,7 +957,7 @@ mod tests {
             },
         );
 
-        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        let (tasks, file_contents) = ops.collect_tasks(std::slice::from_ref(&f)).await.unwrap();
         let res = UpdateResult {
             action: DependencyName::from("o/r"),
             path: f.clone(),
@@ -993,7 +993,7 @@ mod tests {
             },
         );
 
-        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        let (tasks, file_contents) = ops.collect_tasks(std::slice::from_ref(&f)).await.unwrap();
         assert_eq!(tasks.len(), 1);
         let task = tasks.into_iter().next().unwrap();
 
