@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started with Pinner - Secure Your CI/CD Workflows</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+        .hero-gradient {
+            background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.05) 0%, rgba(13, 17, 23, 0) 50%);
+        }
+        .card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+        }
+        .terminal {
+            background-color: #010409;
+            border: 1px solid #30363d;
+        }
+        pre {
+            background-color: #010409 !important;
+            border: 1px solid #30363d;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body class="font-sans antialiased overflow-x-hidden">
+    <!-- Navbar -->
+    <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+        <div class="flex items-center space-x-2">
+            <a href="index.html" class="flex items-center space-x-2 group">
+                <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
+                <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
+            </a>
+        </div>
+        <div class="flex items-center space-x-6 text-sm font-medium">
+            <a href="index.html" class="hover:text-sky-400 transition-colors">Home</a>
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
+        </div>
+    </nav>
+
+    <!-- Header Section -->
+    <section class="relative pt-16 pb-12 hero-gradient border-b border-gray-800/50">
+        <div class="max-w-4xl mx-auto px-4">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-white mb-6">
+                Getting <span class="text-sky-400">Started</span>
+            </h1>
+            <p class="text-xl text-gray-400">
+                Secure your CI/CD pipelines in minutes with this comprehensive guide to Pinner.
+            </p>
+        </div>
+    </section>
+
+    <!-- Content -->
+    <main class="max-w-4xl mx-auto px-4 py-16">
+        <!-- Step 1: Installation -->
+        <div class="mb-16">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">1</span>
+                Installation
+            </h2>
+            
+            <p class="text-gray-400 mb-6">Choose the installation method that best fits your environment.</p>
+            
+            <div class="space-y-6">
+                <div class="card p-6 rounded-xl">
+                    <h3 class="text-lg font-bold text-white mb-4">Shell (macOS & Linux)</h3>
+                    <div class="terminal p-4 rounded-lg font-mono text-sm text-emerald-400 flex justify-between items-center">
+                        <code>curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
+                        <i class="far fa-copy text-gray-500 cursor-pointer hover:text-sky-400 transition-colors"></i>
+                    </div>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <h3 class="text-lg font-bold text-white mb-4">PowerShell (Windows)</h3>
+                    <div class="terminal p-4 rounded-lg font-mono text-sm text-emerald-400 flex justify-between items-center">
+                        <code>powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
+                        <i class="far fa-copy text-gray-500 cursor-pointer hover:text-sky-400 transition-colors"></i>
+                    </div>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <h3 class="text-lg font-bold text-white mb-4">Cargo (Rust)</h3>
+                    <div class="terminal p-4 rounded-lg font-mono text-sm text-emerald-400 flex justify-between items-center">
+                        <code>cargo install pinner</code>
+                        <i class="far fa-copy text-gray-500 cursor-pointer hover:text-sky-400 transition-colors"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: First Run -->
+        <div class="mb-16">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">2</span>
+                Pin Your First Workflow
+            </h2>
+            
+            <p class="text-gray-400 mb-6">
+                Navigate to your repository and run the <code class="text-sky-300">pin</code> command. 
+                By default, Pinner looks for files in <code class="text-gray-300">.github/workflows/</code>.
+            </p>
+
+            <div class="terminal rounded-xl overflow-hidden border border-gray-800">
+                <div class="p-6 font-mono text-sm md:text-base leading-relaxed">
+                    <p class="mb-2 text-gray-500">$ pinner pin</p>
+                    <p class="mb-2 text-emerald-400">Searching for workflows in .github/workflows/...</p>
+                    <p class="mb-2 text-white">Found 2 workflow files.</p>
+                    <p class="mb-2 text-white"><span class="text-sky-400">actions/checkout@v4</span> -> <span class="text-sky-400">actions/checkout@8f4b7f84...</span> <span class="text-gray-500"># v4</span></p>
+                    <p class="text-emerald-400 font-bold mt-4">Successfully pinned 3 actions! ✅</p>
+                </div>
+            </div>
+
+            <p class="text-gray-400 mt-6 italic">
+                <i class="fas fa-info-circle mr-2 text-sky-400"></i> Tip: Use <code class="text-sky-300">--dry-run</code> to see changes without writing to files.
+            </p>
+        </div>
+
+        <!-- Step 3: Verification -->
+        <div class="mb-16">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">3</span>
+                Verify in CI
+            </h2>
+            
+            <p class="text-gray-400 mb-6">
+                Prevent unpinned actions from being merged into your codebase by adding Pinner to your CI pipeline.
+            </p>
+
+            <div class="card p-6 rounded-xl">
+                <pre class="text-xs md:text-sm text-gray-300"><code>name: Pinning Check
+on: [pull_request]
+
+jobs:
+  verify-pinning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
+      - name: Install Pinner
+        run: curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
+      - name: Verify Pinning
+        run: pinner verify</code></pre>
+            </div>
+        </div>
+
+        <!-- Next Steps -->
+        <div class="p-8 bg-sky-500/5 border border-sky-500/10 rounded-2xl">
+            <h2 class="text-xl font-bold text-white mb-4">Next Steps</h2>
+            <ul class="space-y-4">
+                <li class="flex items-start">
+                    <i class="fas fa-check-circle text-sky-400 mt-1 mr-3"></i>
+                    <span class="text-gray-400">
+                        <strong class="text-white">Learn about Upgrades:</strong> Use <code class="text-sky-300">pinner upgrade</code> to move to newer versions.
+                        <p class="mt-2 text-xs text-amber-400/80 bg-amber-400/5 p-2 rounded border border-amber-400/10">
+                            <i class="fas fa-exclamation-triangle mr-1"></i> 
+                            <strong>Security Note:</strong> Automatic upgrades can undermine your security. Use <code>upgrade</code> as an intentional step followed by a review to ensure you are only running vetted code.
+                        </p>
+                    </span>
+                </li>
+                <li class="flex items-start">
+                    <i class="fas fa-check-circle text-sky-400 mt-1 mr-3"></i>
+                    <span class="text-gray-400"><strong class="text-white">Configuration:</strong> Create a <code class="text-gray-300">.pinner.toml</code> file to ignore specific actions or use a custom GitHub Enterprise URL.</span>
+                </li>
+                <li class="flex items-start">
+                    <i class="fas fa-check-circle text-sky-400 mt-1 mr-3"></i>
+                    <span class="text-gray-400"><strong class="text-white">API Reference:</strong> Check out the <a href="https://docs.rs/pinner" class="text-sky-400 hover:underline">Rust API documentation</a> for library usage.</span>
+                </li>
+            </ul>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="py-16 text-center text-gray-500 border-t border-gray-800">
+        <p class="text-xs">&copy; 2026 Fabio Falcinelli. Released under the MIT License.</p>
+    </footer>
+</body>
+</html>

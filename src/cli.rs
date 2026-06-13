@@ -1,34 +1,32 @@
+//! CLI argument parsing and command definitions.
+//!
+//! This module uses `clap` to define the command-line interface for Pinner.
+//! It includes the main [`Cli`] struct and the [`Commands`] enum for subcommands.
+
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-/// Strategy for upgrading actions.
-///
-/// # Example
-///
-/// ```
-/// use pinner::cli::UpgradeStrategy;
-///
-/// let strategy = UpgradeStrategy::Latest;
-/// assert_eq!(strategy, UpgradeStrategy::Latest);
-/// ```
+/// Strategy for upgrading actions to newer versions.
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum UpgradeStrategy {
-    /// Upgrade to the latest available version
+    /// Upgrade to the latest available version (default).
     Latest,
-    /// Upgrade only within the current major version
+    /// Upgrade only within the current major version (e.g., v1.x.x -> v1.y.y).
     Major,
-    /// Upgrade only within the current minor version
+    /// Upgrade only within the current minor version (e.g., v1.1.x -> v1.1.y).
     Minor,
-    /// Upgrade to the latest commit on the default branch
+    /// Upgrade to the latest commit on the default branch.
     Commit,
 }
 
+/// The main command-line interface for Pinner.
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
+    /// Subcommand to execute.
     #[command(subcommand)]
     pub command: Commands,
-    /// Workflow files or directories to process
+    /// Workflow files or directories to process.
     #[arg(
         short,
         long,
@@ -36,30 +34,77 @@ pub struct Cli {
         help = "Workflow files or directories to process"
     )]
     pub workflows: Vec<PathBuf>,
-    /// Automatically confirm all replacements
+    /// Automatically confirm all replacements without prompting.
     #[arg(short, long, global = true)]
     pub yes: bool,
-    /// Suppress all console output
+    /// Suppress all console output except for critical errors.
     #[arg(short, long, global = true)]
     pub quiet: bool,
-    /// Print verbose output
+    /// Print verbose output for debugging.
     #[arg(short, long, global = true)]
     pub verbose: bool,
-    /// Print diff without modifying files
+    /// Print what would be changed without actually modifying any files.
     #[arg(short, long, global = true)]
     pub dry_run: bool,
-    /// GitHub API Token
-    #[arg(short, long, global = true, env = "GITHUB_TOKEN")]
-    pub token: Option<String>,
-    /// Output results as JSON
+    /// GitHub API Token for authentication.
+    #[arg(long, global = true, env = "GITHUB_TOKEN")]
+    pub github_token: Option<String>,
+    /// Bitbucket API Token for authentication.
+    #[arg(long, global = true, env = "BITBUCKET_TOKEN")]
+    pub bitbucket_token: Option<String>,
+    /// GitLab API Token for authentication.
+    #[arg(long, global = true, env = "GITLAB_TOKEN")]
+    pub gitlab_token: Option<String>,
+    /// Forgejo/Gitea API Token for authentication.
+    #[arg(long, global = true, env = "FORGEJO_TOKEN")]
+    pub forgejo_token: Option<String>,
+    /// Output results in JSON format.
     #[arg(long, global = true)]
     pub json: bool,
-    /// GitHub API URL (for GitHub Enterprise)
-    #[arg(long, global = true, env = "GITHUB_URL")]
-    pub github_url: Option<String>,
-    /// Upgrade strategy (only for upgrade command)
+    /// Base URL for the GitHub API (defaults to public GitHub).
+    #[arg(
+        long,
+        global = true,
+        env = "GITHUB_URL",
+        default_value = "https://api.github.com"
+    )]
+    pub github_url: String,
+    /// Base URL for the Bitbucket API.
+    #[arg(
+        long,
+        global = true,
+        env = "BITBUCKET_URL",
+        default_value = "https://api.bitbucket.org/2.0"
+    )]
+    pub bitbucket_url: String,
+    /// Base URL for the GitLab API.
+    #[arg(
+        long,
+        global = true,
+        env = "GITLAB_URL",
+        default_value = "https://gitlab.com"
+    )]
+    pub gitlab_url: String,
+    /// Base URL for the Forgejo/Gitea API.
+    #[arg(
+        long,
+        global = true,
+        env = "FORGEJO_URL",
+        default_value = "https://codeberg.org"
+    )]
+    pub forgejo_url: String,
+    /// Strategy to use when upgrading actions.
     #[arg(long, global = true, default_value = "latest")]
     pub upgrade_strategy: UpgradeStrategy,
+    /// Number of concurrent API requests to make.
+    #[arg(long, global = true)]
+    pub concurrency: Option<usize>,
+    /// Username for OCI registry authentication.
+    #[arg(long, global = true, env = "OCI_USERNAME")]
+    pub oci_username: Option<String>,
+    /// Password for OCI registry authentication.
+    #[arg(long, global = true, env = "OCI_PASSWORD")]
+    pub oci_password: Option<String>,
 }
 
 impl Cli {
@@ -161,7 +206,7 @@ mod tests {
     fn test_cli_token_env() {
         std::env::set_var("GITHUB_TOKEN", "test_token");
         let cli = Cli::try_parse_from(["pinner", "pin"]).unwrap();
-        assert_eq!(cli.token, Some("test_token".to_string()));
+        assert_eq!(cli.github_token, Some("test_token".to_string()));
         std::env::remove_var("GITHUB_TOKEN");
     }
 }

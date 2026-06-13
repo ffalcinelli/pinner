@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5] - 2026-06-13
+
+### Changed
+- Modernized landing page and documentation to reflect multi-forge support.
+- Grouped CLI options into configuration structs to address architectural concerns.
+- Synchronized installation commands across all platforms for better reliability.
+
 ## [0.0.4] - 2026-06-13
 
 ### Added
@@ -20,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated from Regex-based parsing to `tree-sitter-yaml` for surgical precision and better comment/formatting preservation.
 - Improved progress reporting with multi-threaded execution.
 - Enhanced CLI with more descriptive help and global flags.
+- Refactored core logic to support multiple git forges (GitHub, GitLab, Bitbucket, Forgejo).
+- Deduplicated HTTP client and improved error handling across all repository providers.
+- Increased overall test coverage to >90%.
 
 ## [0.0.3] - 2026-06-10
 
