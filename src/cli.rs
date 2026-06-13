@@ -1,5 +1,17 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
+pub enum UpgradeStrategy {
+    /// Upgrade to the latest available version
+    Latest,
+    /// Upgrade only within the current major version
+    Major,
+    /// Upgrade only within the current minor version
+    Minor,
+    /// Upgrade to the latest commit on the default branch
+    Commit,
+}
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -20,6 +32,9 @@ pub struct Cli {
     /// Suppress all console output
     #[arg(short, long, global = true)]
     pub quiet: bool,
+    /// Print verbose output
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
     /// Print diff without modifying files
     #[arg(short, long, global = true)]
     pub dry_run: bool,
@@ -29,6 +44,12 @@ pub struct Cli {
     /// Output results as JSON
     #[arg(long, global = true)]
     pub json: bool,
+    /// GitHub API URL (for GitHub Enterprise)
+    #[arg(long, global = true, env = "GITHUB_URL")]
+    pub github_url: Option<String>,
+    /// Upgrade strategy (only for upgrade command)
+    #[arg(long, global = true, default_value = "latest")]
+    pub upgrade_strategy: UpgradeStrategy,
 }
 
 impl Cli {
@@ -45,6 +66,8 @@ pub enum Commands {
     Pin,
     /// Upgrade all actions to their latest releases.
     Upgrade,
+    /// Verify that all actions are pinned to commit SHAs.
+    Verify,
     /// Set a specific action to a specific commit SHA.
     Set {
         /// Action name (e.g., actions/checkout)
@@ -52,8 +75,12 @@ pub enum Commands {
         /// Commit SHA-1 hash
         hash: String,
     },
+    /// Generate shell completions.
+    GenerateCompletion {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
+    },
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +96,11 @@ mod tests {
         assert!(!cli.json);
     }
 
+    #[test]
+    fn test_cli_verify() {
+        let cli = Cli::try_parse_from(&["pinner", "verify"]).unwrap();
+        assert_eq!(cli.command, Commands::Verify);
+    }
     #[test]
     fn test_cli_flags() {
         let cli =
@@ -115,6 +147,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_cli_token_env() {
         std::env::set_var("GITHUB_TOKEN", "test_token");
         let cli = Cli::try_parse_from(&["pinner", "pin"]).unwrap();

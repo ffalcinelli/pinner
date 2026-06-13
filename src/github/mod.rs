@@ -92,6 +92,8 @@ pub trait GithubProvider: Send + Sync {
     ) -> Result<CommitSha, PinnerError>;
     /// Fetches the latest release tag for a given action.
     async fn get_latest_release(&self, action: &ActionName) -> Result<String, PinnerError>;
+    /// Fetches all tags for a given action.
+    async fn list_tags(&self, action: &ActionName) -> Result<Vec<String>, PinnerError>;
     /// Fetches the default branch for a given action.
     async fn get_default_branch(&self, action: &ActionName) -> Result<BranchName, PinnerError>;
 }
@@ -231,6 +233,31 @@ impl GithubProvider for ReqwestGithubProvider {
         }
     }
 
+    async fn list_tags(&self, action: &ActionName) -> Result<Vec<String>, PinnerError> {
+        #[derive(Deserialize)]
+        struct Tag {
+            name: String,
+        }
+
+        let url = format!("{}/repos/{}/tags", self.base_url, action);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| PinnerError::Api(e.to_string()))?;
+
+        if resp.status().is_success() {
+            let tags: Vec<Tag> = resp
+                .json()
+                .await
+                .map_err(|e| PinnerError::Api(e.to_string()))?;
+            Ok(tags.into_iter().map(|t| t.name).collect())
+        } else {
+            Err(self.handle_api_error(resp.status(), action))
+        }
+    }
+
     async fn get_default_branch(&self, action: &ActionName) -> Result<BranchName, PinnerError> {
         if let Some(branch) = self.branch_cache.get(action).await {
             return Ok(branch);
@@ -295,8 +322,81 @@ mod tests {
         let err = provider.handle_api_error(StatusCode::TOO_MANY_REQUESTS, &action);
         assert!(format!("{}", err).contains("rate limit exceeded"));
 
+        let err = provider.handle_api_error(StatusCode::NOT_FOUND, &action);
+        assert!(format!("{}", err).contains("HTTP 404"));
+        assert!(format!("{}", err).contains("o/r"));
+
         let err = provider.handle_api_error(StatusCode::INTERNAL_SERVER_ERROR, &action);
         assert!(format!("{}", err).contains("HTTP 500"));
+    }
+
+    #[tokio::test]
+    async fn test_list_tags_success() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/o/r/tags")
+            .with_status(200)
+            .with_body(r#"[{"name":"v1.0.0"},{"name":"v1.1.0"}]"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let tags = provider.list_tags(&ActionName::from("o/r")).await.unwrap();
+        assert_eq!(tags, vec!["v1.0.0".to_string(), "v1.1.0".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_list_tags_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/o/r/tags")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let res = provider.list_tags(&ActionName::from("o/r")).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_release_404_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/repos/o/r/releases/latest")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/repos/o/r")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"main"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let tag = provider
+            .get_latest_release(&ActionName::from("o/r"))
+            .await
+            .unwrap();
+        assert_eq!(tag, "main");
+    }
+
+    #[tokio::test]
+    async fn test_get_default_branch_fail_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/o/r")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let branch = provider
+            .get_default_branch(&ActionName::from("o/r"))
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "main");
     }
 
     #[test]
@@ -315,6 +415,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_token_injection() {
         std::env::set_var("GITHUB_TOKEN", "env_token");
         let _provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);

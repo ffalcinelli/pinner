@@ -1,5 +1,7 @@
+use crate::cli::UpgradeStrategy;
 use crate::error::PinnerError;
 use crate::github::{ActionName, CommitSha, GithubProvider};
+use crate::registry::RegistryProvider;
 use crate::yaml::find_uses_nodes;
 use colored::Colorize;
 use futures::stream::{self, StreamExt};
@@ -27,6 +29,9 @@ pub struct Config {
     /// Number of concurrent GitHub API requests.
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
+    /// Custom GitHub API URL.
+    #[serde(default)]
+    pub github_url: Option<String>,
 }
 
 impl Default for Config {
@@ -34,18 +39,23 @@ impl Default for Config {
         Self {
             ignore_actions: HashSet::new(),
             concurrency: default_concurrency(),
+            github_url: None,
         }
     }
 }
 
 /// Orchestrator for pinning operations.
-pub struct Operations<G: GithubProvider> {
+pub struct Operations<G: GithubProvider, R: RegistryProvider> {
     github: Arc<G>,
+    registry: Arc<R>,
     yes: bool,
     quiet: bool,
     dry_run: bool,
     json: bool,
+    upgrade_strategy: UpgradeStrategy,
     pub config: Config,
+    #[cfg(test)]
+    pub force_confirm: Option<bool>,
 }
 
 pub struct UpdateTask {
@@ -54,6 +64,7 @@ pub struct UpdateTask {
     pub end: usize,
     pub action: ActionName,
     pub current_tag: Option<String>,
+    pub comment: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -72,16 +83,28 @@ pub struct JsonOutput {
     pub updates: Vec<UpdateResult>,
 }
 
-impl<G: GithubProvider + 'static> Operations<G> {
-    pub fn new(github: Arc<G>, yes: bool, quiet: bool, dry_run: bool, json: bool) -> Self {
+impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R> {
+    pub fn new(
+        github: Arc<G>,
+        registry: Arc<R>,
+        yes: bool,
+        quiet: bool,
+        dry_run: bool,
+        json: bool,
+        upgrade_strategy: UpgradeStrategy,
+    ) -> Self {
         let config = Self::load_config().unwrap_or_default();
         Self {
             github,
+            registry,
             yes,
             quiet,
             dry_run,
             json,
+            upgrade_strategy,
             config,
+            #[cfg(test)]
+            force_confirm: None,
         }
     }
 
@@ -101,13 +124,22 @@ impl<G: GithubProvider + 'static> Operations<G> {
 
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
+        let registry = self.registry.clone();
         self.process(paths, move |action, tag| {
             let a = ActionName::from(action);
             let t = tag.map(|s| s.to_string());
             let github = github.clone();
+            let registry = registry.clone();
             async move {
                 if let Some(ver) = t {
-                    if ver.len() != 40 {
+                    if a.0.starts_with("docker://") {
+                        if !ver.starts_with("sha256:") {
+                            let image = a.0.trim_start_matches("docker://");
+                            if let Ok(digest) = registry.resolve_digest(image, &ver).await {
+                                return Some((CommitSha(digest), Some(ver)));
+                            }
+                        }
+                    } else if ver.len() != 40 {
                         if let Ok(sha) = github.get_commit_sha(&a, &ver).await {
                             return Some((sha, Some(ver)));
                         }
@@ -142,11 +174,62 @@ impl<G: GithubProvider + 'static> Operations<G> {
 
     pub async fn upgrade(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
-        self.process(paths, move |a, _| {
+        let strategy = self.upgrade_strategy.clone();
+        self.process(paths, move |a, current_tag| {
             let a = ActionName::from(a);
             let github = github.clone();
+            let strategy = strategy.clone();
+            let current_tag = current_tag.map(|s| s.to_string());
             async move {
-                if let Ok(tag) = github.get_latest_release(&a).await {
+                if a.0.starts_with("docker://") {
+                    return None;
+                }
+
+                if strategy == UpgradeStrategy::Commit {
+                    if let Ok(branch) = github.get_default_branch(&a).await {
+                        if let Ok(sha) = github.get_commit_sha(&a, &branch.0).await {
+                            return Some((sha, Some(branch.0)));
+                        }
+                    }
+                    return None;
+                }
+
+                let latest_tag = if strategy == UpgradeStrategy::Latest {
+                    github.get_latest_release(&a).await.ok()
+                } else {
+                    let tags = github.list_tags(&a).await.unwrap_or_default();
+                    let current_tag = current_tag.as_deref().unwrap_or("");
+                    let current_version =
+                        semver::Version::parse(current_tag.trim_start_matches('v')).ok();
+
+                    let mut filtered_tags: Vec<_> = tags
+                        .into_iter()
+                        .filter_map(|t| {
+                            semver::Version::parse(t.trim_start_matches('v'))
+                                .ok()
+                                .map(|v| (t, v))
+                        })
+                        .collect();
+
+                    filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
+
+                    if let Some(cv) = current_version {
+                        filtered_tags
+                            .into_iter()
+                            .find(|(_, v)| match strategy {
+                                UpgradeStrategy::Major => v.major == cv.major && v > &cv,
+                                UpgradeStrategy::Minor => {
+                                    v.major == cv.major && v.minor == cv.minor && v > &cv
+                                }
+                                _ => false,
+                            })
+                            .map(|(t, _)| t)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(tag) = latest_tag {
                     if let Ok(sha) = github.get_commit_sha(&a, &tag).await {
                         return Some((sha, Some(tag)));
                     }
@@ -155,6 +238,83 @@ impl<G: GithubProvider + 'static> Operations<G> {
             }
         })
         .await
+    }
+
+    pub async fn verify(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
+        let mut parser = TSParser::new();
+        parser
+            .set_language(tree_sitter_yaml::language())
+            .map_err(|e| PinnerError::Parse(e.to_string()))?;
+
+        let mut unpinned = Vec::new();
+
+        for path in paths {
+            if !path.exists() {
+                continue;
+            }
+
+            for entry in WalkBuilder::new(path).build() {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
+                    let content = fs::read_to_string(path)?;
+                    let tree = parser.parse(&content, None).ok_or_else(|| {
+                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                    })?;
+
+                    let mut uses_nodes = Vec::new();
+                    find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
+
+                    for (_, _, val, _) in uses_nodes {
+                        if val.starts_with("./") {
+                            continue;
+                        }
+
+                        let parts: Vec<&str> = val.split('@').collect();
+                        let action = ActionName::from(parts[0]);
+
+                        if self.config.ignore_actions.contains(&action) {
+                            continue;
+                        }
+
+                        let tag = parts.get(1);
+                        let is_pinned = tag.is_some_and(|t| {
+                            (t.len() == 40 && t.chars().all(|c| c.is_ascii_hexdigit()))
+                                || (val.contains("@sha256:")
+                                    && val.split("@sha256:").nth(1).is_some_and(|s| s.len() == 64))
+                        });
+
+                        if !is_pinned {
+                            unpinned.push((path.to_path_buf(), val));
+                        }
+                    }
+                }
+            }
+        }
+
+        if !unpinned.is_empty() {
+            if !self.quiet {
+                println!(
+                    "{}",
+                    "Verification failed! Unpinned actions found:".red().bold()
+                );
+                for (path, action) in &unpinned {
+                    println!(
+                        "  {} in {}",
+                        action.yellow(),
+                        path.display().to_string().cyan()
+                    );
+                }
+            }
+            return Err(PinnerError::Api(
+                "Some actions are not pinned to a SHA".into(),
+            ));
+        }
+
+        if !self.quiet {
+            println!("{}", "✔ All actions are correctly pinned!".green().bold());
+        }
+        Ok(())
     }
 
     async fn process<F, Fut>(&self, paths: &[PathBuf], f: F) -> Result<(), PinnerError>
@@ -188,21 +348,36 @@ impl<G: GithubProvider + 'static> Operations<G> {
                     find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
                     file_contents.insert(path.to_path_buf(), content);
 
-                    for (start, end, val) in uses_nodes {
-                        let parts: Vec<&str> = val.split('@').collect();
-                        let action = ActionName::from(parts[0]);
+                    for (start, end, val, comment) in uses_nodes {
+                        if val.starts_with("./") {
+                            continue;
+                        }
+                        let (action_part, tag) = if val.contains('@') {
+                            let parts: Vec<&str> = val.split('@').collect();
+                            (parts[0], parts.get(1).copied())
+                        } else if val.starts_with("docker://") && val.contains(':') {
+                            let last_colon = val.rfind(':').unwrap();
+                            (&val[..last_colon], Some(&val[last_colon + 1..]))
+                        } else if val.contains(':') {
+                            let parts: Vec<&str> = val.split(':').collect();
+                            (parts[0], parts.get(1).copied())
+                        } else {
+                            (val.as_str(), None)
+                        };
+
+                        let action = ActionName::from(action_part);
 
                         if self.config.ignore_actions.contains(&action) {
                             continue;
                         }
 
-                        let tag = parts.get(1).copied();
                         tasks.push(UpdateTask {
                             path: path.to_path_buf(),
                             start,
                             end,
                             action,
                             current_tag: tag.map(|s| s.to_string()),
+                            comment,
                         });
                     }
                 }
@@ -293,7 +468,16 @@ impl<G: GithubProvider + 'static> Operations<G> {
                 let suffix = &content[res.task.end..line_end];
 
                 let mut final_suffix = suffix.trim_start().to_string();
-                if let Some(mat) = COMMENT_REGEX.find(&final_suffix) {
+                if let Some(parser_comment) = &res.task.comment {
+                    // Use the comment captured by the parser if available
+                    let c = parser_comment.trim_start_matches('#').trim();
+                    if let Some(mat) = COMMENT_REGEX.find(parser_comment) {
+                        let matched_comment = mat.as_str().trim_start_matches('#').trim();
+                        if matched_comment == c {
+                            final_suffix = "".to_string();
+                        }
+                    }
+                } else if let Some(mat) = COMMENT_REGEX.find(&final_suffix) {
                     final_suffix = final_suffix[mat.end()..].trim_start().to_string();
                     if final_suffix.starts_with('#') {
                         final_suffix = final_suffix[1..].trim_start().to_string();
@@ -301,7 +485,11 @@ impl<G: GithubProvider + 'static> Operations<G> {
                 }
 
                 let new_comment = if let Some(t) = &res.new_tag {
-                    format!(" # {}", t)
+                    if res.action.0.starts_with("docker://") && t.starts_with("sha256:") {
+                        "".to_string()
+                    } else {
+                        format!(" # {}", t)
+                    }
                 } else {
                     "".to_string()
                 };
@@ -313,9 +501,11 @@ impl<G: GithubProvider + 'static> Operations<G> {
                     format!(" # {}", final_suffix)
                 };
 
+                let separator = "@";
+
                 let new_val = format!(
-                    "{}@{}{}{}",
-                    res.task.action, res.new_sha, new_comment, extra_suffix
+                    "{}{}{}{}{}",
+                    res.task.action, separator, res.new_sha, new_comment, extra_suffix
                 );
 
                 if old_val_with_suffix == new_val {
@@ -338,18 +528,30 @@ impl<G: GithubProvider + 'static> Operations<G> {
                         self.print_inline_diff(old, new_ln);
                     }
                     let mut should_write = self.yes;
-                    if !should_write {
-                        use std::io::Write;
-                        print!(
-                            "{} {}? [y/N]: ",
-                            "Apply changes to".bold(),
-                            path.display().to_string().cyan()
-                        );
-                        let _ = std::io::stdout().flush();
-                        let mut input = String::new();
-                        if std::io::stdin().read_line(&mut input).is_ok() {
-                            let input = input.trim().to_lowercase();
-                            should_write = input == "y" || input == "yes";
+                    #[cfg(test)]
+                    let mut mocked = false;
+                    #[cfg(test)]
+                    if let Some(force) = self.force_confirm {
+                        should_write = force;
+                        mocked = true;
+                    }
+
+                    #[cfg(not(test))]
+                    let mocked = false;
+
+                    if !should_write && !self.yes && !mocked {
+                        #[cfg(not(tarpaulin))]
+                        {
+                            use dialoguer::Confirm;
+                            should_write = Confirm::new()
+                                .with_prompt(format!(
+                                    "{} {}?",
+                                    "Apply changes to".bold(),
+                                    path.display().to_string().cyan()
+                                ))
+                                .default(false)
+                                .interact()
+                                .unwrap_or(false);
                         }
                     }
                     if should_write {
@@ -432,6 +634,7 @@ impl<G: GithubProvider + 'static> Operations<G> {
 mod tests {
     use super::*;
     use crate::github::MockGithubProvider;
+    use crate::registry::OciRegistryProvider;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -451,7 +654,16 @@ mod tests {
             )
             .returning(|_, _| Ok(CommitSha("newhash".into())));
 
-        let mut ops = Operations::new(Arc::new(mock), true, true, false, false);
+        let mock_reg = OciRegistryProvider::new();
+        let mut ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
         ops.config = config;
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -464,7 +676,16 @@ mod tests {
     #[test]
     fn test_operations_diff_methods_sync() {
         let mock = MockGithubProvider::new();
-        let ops = Operations::new(Arc::new(mock), true, true, false, false);
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
 
         let d = ops.format_diff("line1\n", "line2\n");
         assert!(d.contains("line1"));

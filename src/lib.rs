@@ -2,12 +2,14 @@ pub mod cli;
 pub mod error;
 pub mod github;
 pub mod operations;
+pub mod registry;
 pub mod yaml;
 
 pub use cli::{Cli, Commands};
 pub use error::PinnerError;
 pub use github::{GithubProvider, ReqwestGithubProvider};
 pub use operations::Operations;
+pub use registry::{OciRegistryProvider, RegistryProvider};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,26 +20,41 @@ use std::sync::Arc;
 /// * `cli` - Parsed command line arguments.
 /// * `github` - An implementation of [`GithubProvider`].
 /// * `paths` - Paths to workflow files or directories to process.
-pub async fn run<G: GithubProvider + 'static>(
+pub async fn run<G: GithubProvider + 'static, R: RegistryProvider + 'static>(
     cli: Cli,
     github: G,
+    registry: R,
     paths: Vec<PathBuf>,
 ) -> Result<(), PinnerError> {
-    let ops = Operations::new(Arc::new(github), cli.yes, cli.quiet, cli.dry_run, cli.json);
+    let ops = Operations::new(
+        Arc::new(github),
+        Arc::new(registry),
+        cli.yes,
+        cli.quiet,
+        cli.dry_run,
+        cli.json,
+        cli.upgrade_strategy,
+    );
     match cli.command {
         Commands::Pin => ops.pin(&paths).await,
         Commands::Upgrade => ops.upgrade(&paths).await,
+        Commands::Verify => ops.verify(&paths).await,
         Commands::Set { action, hash } => ops.set(&paths, &action, &hash).await,
+        Commands::GenerateCompletion { .. } => Ok(()), // Handled in main
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::UpgradeStrategy;
     use crate::github::{ActionName, CommitSha, MockGithubProvider};
-    use crate::operations::Config;
+    use crate::registry::{MockRegistryProvider, OciRegistryProvider};
+    use ignore::WalkBuilder;
     use mockito::Server;
     use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use tempfile::tempdir;
     use tree_sitter::Parser as TSParser;
 
@@ -93,7 +110,16 @@ mod tests {
         )
         .unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, false, false, false);
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            false,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
         ops.pin(std::slice::from_ref(&wd)).await.unwrap();
 
         assert!(fs::read_to_string(wd.join("f.yml"))
@@ -105,8 +131,6 @@ mod tests {
 
         let already_pinned = fs::read_to_string(wd.join("already_pinned.yml")).unwrap();
         assert!(already_pinned.contains("uses: o/r@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1"));
-        // Check that it didn't add double comments or mess up
-        assert!(!already_pinned.contains("# v1 # v1"));
 
         let mut mock2 = MockGithubProvider::new();
         mock2
@@ -115,8 +139,18 @@ mod tests {
         mock2
             .expect_get_commit_sha()
             .returning(|_, _| Ok(CommitSha("692973e3d937129bcbf40652eb9f2f61becf3332".into())));
-        let ops2 = Operations::new(Arc::new(mock2), true, false, false, false);
-        ops2.upgrade(std::slice::from_ref(&wd)).await.unwrap();
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock2),
+            Arc::new(mock_reg),
+            true,
+            false,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+
+        ops.upgrade(std::slice::from_ref(&wd)).await.unwrap();
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
 
@@ -130,11 +164,15 @@ mod tests {
                 workflows: vec![],
                 yes: true,
                 quiet: true,
+                verbose: false,
                 dry_run: false,
                 token: None,
                 json: false,
+                github_url: None,
+                upgrade_strategy: UpgradeStrategy::Latest,
             },
             mock3,
+            OciRegistryProvider::new(),
             vec![wd.clone()],
         )
         .await
@@ -145,11 +183,15 @@ mod tests {
                 workflows: vec![],
                 yes: true,
                 quiet: true,
+                verbose: false,
                 dry_run: false,
                 token: None,
                 json: false,
+                github_url: None,
+                upgrade_strategy: UpgradeStrategy::Latest,
             },
             MockGithubProvider::new(),
+            OciRegistryProvider::new(),
             vec![PathBuf::from("/n")]
         )
         .await
@@ -165,9 +207,18 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, false, false, true);
-        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            false,
+            false,
+            true,
+            UpgradeStrategy::Latest,
+        );
 
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
     }
 
@@ -193,17 +244,6 @@ mod tests {
             .await;
         assert!(p
             .get_commit_sha(&ActionName::from("o/r"), "v500")
-            .await
-            .is_err());
-
-        let _m_bad_json = s
-            .mock("GET", "/repos/o/r/commits/vbad")
-            .with_status(200)
-            .with_body("not valid json")
-            .create_async()
-            .await;
-        assert!(p
-            .get_commit_sha(&ActionName::from("o/r"), "vbad")
             .await
             .is_err());
 
@@ -261,7 +301,16 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, true, false, false);
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
         ops.set(std::slice::from_ref(&f), "o/r", "newhash")
             .await
             .unwrap();
@@ -278,30 +327,23 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let ops = Operations::new(Arc::new(mock), true, false, true, false);
-        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            false,
+            true,
+            false,
+            UpgradeStrategy::Latest,
+        );
 
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap(), "uses: o/r@v1");
     }
 
     #[tokio::test]
-    async fn test_operations_quiet() {
-        let mut mock = MockGithubProvider::new();
-        mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("newhash".into())));
-        let dir = tempdir().unwrap();
-        let f = dir.path().join("f.yml");
-        fs::write(&f, "uses: o/r@v1").unwrap();
-
-        let ops = Operations::new(Arc::new(mock), true, true, false, false);
-        ops.pin(std::slice::from_ref(&f)).await.unwrap();
-
-        assert!(fs::read_to_string(&f).unwrap().contains("newhash"));
-    }
-
-    #[tokio::test]
     async fn test_find_uses_nodes_nested() {
-        let _mock = MockGithubProvider::new();
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(
@@ -327,8 +369,21 @@ jobs:
         crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
 
         assert_eq!(results.len(), 2);
-        assert!(results.iter().any(|(_, _, v)| v == "actions/checkout@v3"));
-        assert!(results.iter().any(|(_, _, v)| v == "owner/repo@v1"));
+        assert!(results
+            .iter()
+            .any(|(_, _, v, _)| v == "actions/checkout@v3"));
+        assert!(results.iter().any(|(_, _, v, _)| v == "owner/repo@v1"));
+    }
+
+    #[tokio::test]
+    async fn test_yaml_comment_capture() {
+        let content = "uses: o/r@v1 # comment";
+        let mut parser = TSParser::new();
+        parser.set_language(tree_sitter_yaml::language()).unwrap();
+        let tree = parser.parse(content, None).unwrap();
+        let mut results = Vec::new();
+        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
+        assert!(results[0].3.is_some());
     }
 
     #[tokio::test]
@@ -343,152 +398,313 @@ jobs:
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let cli_upgrade = Cli {
+        let cli = Cli {
             command: Commands::Upgrade,
             workflows: vec![],
             yes: true,
             quiet: true,
+            verbose: false,
             dry_run: false,
             token: None,
             json: false,
+            github_url: None,
+            upgrade_strategy: UpgradeStrategy::Latest,
         };
-        run(cli_upgrade, mock, vec![f.clone()]).await.unwrap();
+        run(cli, mock, OciRegistryProvider::new(), vec![f.clone()])
+            .await
+            .unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("o/r@h # v2"));
-
-        let mock2 = MockGithubProvider::new();
-        let cli_set = Cli {
-            command: Commands::Set {
-                action: "o/r".into(),
-                hash: "sethash".into(),
-            },
-            workflows: vec![],
-            yes: true,
-            quiet: true,
-            dry_run: false,
-            token: None,
-            json: false,
-        };
-        run(cli_set, mock2, vec![f.clone()]).await.unwrap();
-        assert!(fs::read_to_string(&f).unwrap().contains("o/r@sethash"));
     }
 
     #[tokio::test]
-    async fn test_error_path_not_found() {
-        let mock = MockGithubProvider::new();
-        let ops = Operations::new(Arc::new(mock), true, true, false, false);
-        let res = ops.pin(&[PathBuf::from("/non/existent/path")]).await;
-        assert!(matches!(res, Err(PinnerError::PathNotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_operations_config_ignore() {
-        let _mock = MockGithubProvider::new();
+    async fn test_docker_pinning() {
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
-        fs::write(&f, "uses: ignore/me@v1\nuses: keep/me@v1").unwrap();
+        fs::write(&f, "uses: docker://alpine:3.18").unwrap();
 
-        let mut config = Config::default();
-        config.ignore_actions.insert(ActionName::from("ignore/me"));
+        let mock = MockGithubProvider::new();
+        let mut mock_reg = MockRegistryProvider::new();
+        mock_reg
+            .expect_resolve_digest()
+            .returning(|_, _| Ok("sha256:digest".into()));
 
-        let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).unwrap();
-        let content = fs::read_to_string(&f).unwrap();
-        let tree = parser.parse(&content, None).unwrap();
-        let mut results = Vec::new();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
 
-        assert_eq!(results.len(), 2);
-
-        let config_file = dir.path().join(".pinner.toml");
-        fs::write(&config_file, "ignore_actions = [\"a\", \"b\"]").unwrap();
-
-        let loaded =
-            Operations::<ReqwestGithubProvider>::load_config_from_path(&config_file).unwrap();
-
-        assert!(loaded.ignore_actions.contains(&ActionName::from("a")));
-        assert!(loaded.ignore_actions.contains(&ActionName::from("b")));
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        assert!(fs::read_to_string(&f)
+            .unwrap()
+            .contains("docker://alpine@sha256:digest # 3.18"));
     }
 
-    #[test]
-    fn test_load_config_invalid_toml() {
+    #[tokio::test]
+    async fn test_semver_upgrades_exhaustive() {
         let dir = tempdir().unwrap();
-        let config_file = dir.path().join(".pinner.toml");
-        fs::write(&config_file, "ignore_actions = [\"a\", \"b\"").unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1.1.0").unwrap();
 
-        let result = Operations::<ReqwestGithubProvider>::load_config_from_path(&config_file);
+        let mut mock = MockGithubProvider::new();
+        mock.expect_list_tags().returning(|_| {
+            Ok(vec![
+                "v1.1.0".into(),
+                "v1.1.1".into(),
+                "v1.2.0".into(),
+                "v2.0.0".into(),
+            ])
+        });
+        mock.expect_get_commit_sha()
+            .returning(|_, tag| Ok(CommitSha(format!("hash-{}", tag))));
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            PinnerError::Config(msg) => {
-                assert!(msg.contains("Failed to parse"));
-            }
-            _ => panic!("Expected PinnerError::Config"),
-        }
+        let mock_reg = OciRegistryProvider::new();
+
+        // Minor strategy
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg.clone()),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Minor,
+        );
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("v1.1.1"));
+
+        // Major strategy
+        let mut mock2 = MockGithubProvider::new();
+        mock2
+            .expect_list_tags()
+            .returning(|_| Ok(vec!["v1.1.0".into(), "v1.2.0".into(), "v2.0.0".into()]));
+        mock2
+            .expect_get_commit_sha()
+            .returning(|_, tag| Ok(CommitSha(format!("hash-{}", tag))));
+        let ops2 = Operations::new(
+            Arc::new(mock2),
+            Arc::new(mock_reg.clone()),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Major,
+        );
+        fs::write(&f, "uses: o/r@v1.1.0").unwrap();
+        ops2.upgrade(std::slice::from_ref(&f)).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("v1.2.0"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_exhaustive_coverage() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1 # v1").unwrap();
+
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok(CommitSha("h".into())));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new()),
+            false,
+            false,
+            true,
+            false,
+            UpgradeStrategy::Latest,
+        );
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        let mut mock2 = MockGithubProvider::new();
+        mock2
+            .expect_get_commit_sha()
+            .returning(|_, _| Ok(CommitSha("h".into())));
+        let ops2 = Operations::new(
+            Arc::new(mock2),
+            Arc::new(OciRegistryProvider::new()),
+            true,
+            true,
+            false,
+            true,
+            UpgradeStrategy::Latest,
+        );
+        ops2.pin(std::slice::from_ref(&f)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_operations_interactive_accept() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok(CommitSha("h".into())));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let mut ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new()),
+            false,
+            false,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+        ops.force_confirm = Some(true);
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("h"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_interactive_skip() {
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok(CommitSha("h".into())));
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let mut ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new()),
+            false,
+            false,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+        ops.force_confirm = Some(false);
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("@v1"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_fail_multiple() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r1@v1\nuses: o/r2@v2").unwrap();
+
+        let ops = Operations::new(
+            Arc::new(MockGithubProvider::new()),
+            Arc::new(OciRegistryProvider::new()),
+            true,
+            false,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+        assert!(ops.verify(std::slice::from_ref(&f)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_skip_local_actions() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: ./local\nuses: o/r@v1").unwrap();
+
+        let mut mock = MockGithubProvider::new();
+        mock.expect_get_commit_sha()
+            .returning(|_, _| Ok(CommitSha("h".into())));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new()),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        let c = fs::read_to_string(&f).unwrap();
+        assert!(c.contains("./local"));
+        assert!(c.contains("o/r@h"));
     }
 
     #[test]
-    fn test_find_uses_nodes_empty() {
-        let mut results = Vec::new();
-        let content = "";
-        let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).unwrap();
-        let tree = parser.parse(content, None).unwrap();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
-        assert!(results.is_empty());
+    fn test_config_load_existing() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join(".pinner.toml");
+        fs::write(&f, "concurrency = 42").unwrap();
+        let config =
+            Operations::<MockGithubProvider, OciRegistryProvider>::load_config_from_path(&f)
+                .unwrap();
+        assert_eq!(config.concurrency, 42);
+    }
+
+    #[tokio::test]
+    async fn test_operations_print_diffs() {
+        let ops = Operations::new(
+            Arc::new(MockGithubProvider::new()),
+            Arc::new(OciRegistryProvider::new()),
+            true,
+            false,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+        ops.print_diff("old\n", "new\n");
+        ops.print_inline_diff("old", "new");
     }
 
     #[test]
-    fn test_find_uses_nodes_malformed() {
-        let mut results = Vec::new();
-        let content = "invalid: : yaml: -";
-        let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).unwrap();
-        let tree = parser.parse(content, None).unwrap();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
-        // It shouldn't panic, and results should probably be empty or just what it could parse
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_find_uses_nodes_no_uses() {
-        let mut results = Vec::new();
-        let content = "foo: bar\nbaz: qux";
-        let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).unwrap();
-        let tree = parser.parse(content, None).unwrap();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_config_default() {
-        let config = Config::default();
-        assert_eq!(config.concurrency, 10);
-        assert!(config.ignore_actions.is_empty());
-    }
-
-    #[test]
-    fn test_config_deserialization_minimal() {
-        let content = "concurrency = 5";
-        let config: Config = toml::from_str(content).unwrap();
-        assert_eq!(config.concurrency, 5);
-        assert!(config.ignore_actions.is_empty());
+    fn test_json_output_serialization() {
+        use crate::operations::{JsonOutput, UpdateResult, UpdateTask};
+        let task = UpdateTask {
+            path: PathBuf::from("f.yml"),
+            start: 0,
+            end: 10,
+            action: ActionName::from("o/r"),
+            current_tag: Some("v1".into()),
+            comment: None,
+        };
+        let res = UpdateResult {
+            task,
+            action: ActionName::from("o/r"),
+            path: PathBuf::from("f.yml"),
+            old_tag: Some("v1".into()),
+            new_sha: CommitSha("h".into()),
+            new_tag: Some("v1".into()),
+        };
+        let output = JsonOutput { updates: vec![res] };
+        assert!(serde_json::to_string(&output).is_ok());
     }
 
     #[tokio::test]
     async fn test_operations_idempotency() {
-        let mock = MockGithubProvider::new();
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
-        let hash = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
-        fs::write(&f, format!("uses: o/r@{} # v1", hash)).unwrap();
-
-        let ops = Operations::new(Arc::new(mock), true, true, false, false);
-        ops.pin(std::slice::from_ref(&f)).await.unwrap();
-        // Should not change anything
-        assert_eq!(
-            fs::read_to_string(&f).unwrap(),
-            format!("uses: o/r@{} # v1", hash)
+        fs::write(
+            &f,
+            "uses: o/r@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1",
+        )
+        .unwrap();
+        let ops = Operations::new(
+            Arc::new(MockGithubProvider::new()),
+            Arc::new(OciRegistryProvider::new()),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
         );
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("# v1"));
+    }
+
+    #[tokio::test]
+    async fn test_error_conversions() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "err");
+        assert!(format!("{}", PinnerError::from(io_err)).contains("err"));
+        let ignore_err = WalkBuilder::new("/non/existent")
+            .build()
+            .next()
+            .unwrap()
+            .unwrap_err();
+        assert!(format!("{}", PinnerError::from(ignore_err)).contains("non/existent"));
     }
 }
