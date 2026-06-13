@@ -24,12 +24,30 @@ pub enum PinnerError {
     /// Config file errors
     #[error("Config error: {0}")]
     Config(String),
+    /// API rate limit errors
+    #[error("Rate limit error: {0}")]
+    RateLimit(String),
 }
 
 impl PinnerError {
     /// Returns true if the error is a PathNotFound error.
     pub fn is_path_not_found(&self) -> bool {
         matches!(self, PinnerError::PathNotFound(_))
+    }
+
+    /// Returns true if the error should stop the entire process (e.g., rate limits).
+    pub fn is_fatal(&self) -> bool {
+        match self {
+            PinnerError::RateLimit(_) => true,
+            PinnerError::Config(_) => true,
+            PinnerError::Io(_) => true,
+            PinnerError::Parse(_) => true,
+            PinnerError::PathNotFound(_) => true,
+            PinnerError::VerificationFailed(_) => true,
+            PinnerError::Ignore(_) => true,
+            // Generic API errors (like 404) are not fatal for the whole process
+            PinnerError::Api(_) => false,
+        }
     }
 }
 

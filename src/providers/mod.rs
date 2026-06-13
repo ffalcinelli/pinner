@@ -211,11 +211,14 @@ impl BaseHttpClient {
         action: &DependencyName,
     ) -> PinnerError {
         match status.as_u16() {
-            403 | 429 => PinnerError::Api(format!(
-                "API rate limit exceeded (HTTP {}). Try providing an API token to increase limits.",
-                status
+            403 | 429 => PinnerError::RateLimit(format!(
+                "API rate limit exceeded (HTTP {}) at {}. Try providing an API token to increase limits.",
+                status, self.base_url
             )),
-            _ => PinnerError::Api(format!("HTTP {}: Error for action {}", status, action)),
+            _ => PinnerError::Api(format!(
+                "HTTP {}: Error for action {} at {}",
+                status, action, self.base_url
+            )),
         }
     }
 }
@@ -1112,21 +1115,29 @@ mod tests {
         let action = DependencyName::from("o/r");
 
         let err = provider.base.handle_error(StatusCode::FORBIDDEN, &action);
+        assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
+        assert!(format!("{}", err).contains("https://api.github.com"));
 
         let err = provider
             .base
             .handle_error(StatusCode::TOO_MANY_REQUESTS, &action);
+        assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
+        assert!(format!("{}", err).contains("https://api.github.com"));
 
         let err = provider.base.handle_error(StatusCode::NOT_FOUND, &action);
+        assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 404"));
         assert!(format!("{}", err).contains("o/r"));
+        assert!(format!("{}", err).contains("https://api.github.com"));
 
         let err = provider
             .base
             .handle_error(StatusCode::INTERNAL_SERVER_ERROR, &action);
+        assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 500"));
+        assert!(format!("{}", err).contains("https://api.github.com"));
     }
 
     #[tokio::test]

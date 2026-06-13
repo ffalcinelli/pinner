@@ -498,7 +498,17 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 match res {
                     Ok(Some(r)) => Some(Ok(r)),
                     Ok(None) => None,
-                    Err(e) => Some(Err(e)),
+                    Err(e) if e.is_fatal() => Some(Err(e)),
+                    Err(e) => {
+                        if !self.quiet {
+                            eprintln!(
+                                "{} Skipping action due to error: {}",
+                                "Warning:".yellow(),
+                                e
+                            );
+                        }
+                        None
+                    }
                 }
             })
             .collect()
