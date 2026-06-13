@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml/badge.svg)](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/ffalcinelli/pinner/graph/badge.svg)](https://codecov.io/gh/ffalcinelli/pinner)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub release](https://img.shields.io/github/v/release/ffalcinelli/pinner)](https://github.com/ffalcinelli/pinner/releases)
 [![Docs.rs](https://docs.rs/pinner/badge.svg)](https://docs.rs/pinner)

@@ -47,6 +47,7 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         cli.dry_run,
         cli.json,
         cli.upgrade_strategy,
+        cli.concurrency,
     );
     match cli.command {
         Commands::Pin => ops.pin(&paths).await,
@@ -126,7 +127,7 @@ mod tests {
         )
         .unwrap();
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -135,6 +136,7 @@ mod tests {
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.pin(std::slice::from_ref(&wd)).await.unwrap();
 
@@ -157,7 +159,7 @@ mod tests {
                 "692973e3d937129bcbf40652eb9f2f61becf3332".to_string(),
             ))
         });
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock2),
             Arc::new(mock_reg),
@@ -166,6 +168,7 @@ mod tests {
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
 
         ops.upgrade(std::slice::from_ref(&wd)).await.unwrap();
@@ -194,9 +197,12 @@ mod tests {
                 gitlab_url: "https://gitlab.com".to_string(),
                 forgejo_url: "https://codeberg.org".to_string(),
                 upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                oci_username: None,
+                oci_password: None,
             },
             mock3,
-            OciRegistryProvider::new(),
+            OciRegistryProvider::new(None, None),
             vec![wd.clone()],
         )
         .await
@@ -219,9 +225,12 @@ mod tests {
                 gitlab_url: "https://gitlab.com".to_string(),
                 forgejo_url: "https://codeberg.org".to_string(),
                 upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                oci_username: None,
+                oci_password: None,
             },
             MockRemoteProvider::new(),
-            OciRegistryProvider::new(),
+            OciRegistryProvider::new(None, None),
             vec![PathBuf::from("/n")]
         )
         .await
@@ -237,7 +246,7 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -246,6 +255,7 @@ mod tests {
             false,
             true,
             UpgradeStrategy::Latest,
+            None,
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -331,7 +341,7 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -340,6 +350,7 @@ mod tests {
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.set(std::slice::from_ref(&f), "o/r", "newhash")
             .await
@@ -357,7 +368,7 @@ mod tests {
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -366,6 +377,7 @@ mod tests {
             true,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -448,10 +460,18 @@ jobs:
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            oci_username: None,
+            oci_password: None,
         };
-        run(cli, mock, OciRegistryProvider::new(), vec![f.clone()])
-            .await
-            .unwrap();
+        run(
+            cli,
+            mock,
+            OciRegistryProvider::new(None, None),
+            vec![f.clone()],
+        )
+        .await
+        .unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("o/r@h # v2"));
     }
 
@@ -475,6 +495,7 @@ jobs:
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -501,7 +522,7 @@ jobs:
         mock.expect_get_commit_sha()
             .returning(|_, tag, _| Ok(DependencyRef::from(format!("hash-{}", tag))));
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
 
         // Minor strategy
         let ops = Operations::new(
@@ -512,6 +533,7 @@ jobs:
             false,
             false,
             UpgradeStrategy::Minor,
+            None,
         );
         ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("v1.1.1"));
@@ -532,6 +554,7 @@ jobs:
             false,
             false,
             UpgradeStrategy::Major,
+            None,
         );
         fs::write(&f, "uses: o/r@v1.1.0").unwrap();
         ops2.upgrade(std::slice::from_ref(&f)).await.unwrap();
@@ -550,12 +573,13 @@ jobs:
 
         let ops = Operations::new(
             Arc::new(mock),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             false,
             false,
             true,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
@@ -565,12 +589,13 @@ jobs:
             .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
         let ops2 = Operations::new(
             Arc::new(mock2),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             true,
             true,
             false,
             true,
             UpgradeStrategy::Latest,
+            None,
         );
         ops2.pin(std::slice::from_ref(&f)).await.unwrap();
     }
@@ -586,12 +611,13 @@ jobs:
 
         let mut ops = Operations::new(
             Arc::new(mock),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             false,
             false,
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.force_confirm = Some(true);
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -609,12 +635,13 @@ jobs:
 
         let mut ops = Operations::new(
             Arc::new(mock),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             false,
             false,
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.force_confirm = Some(false);
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -645,7 +672,7 @@ include:
         )
         .unwrap();
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -654,6 +681,7 @@ include:
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
 
         ops.pin(&[f.clone()]).await.unwrap();
@@ -702,6 +730,7 @@ pipelines:
             false, // dry_run
             false, // json
             UpgradeStrategy::Latest,
+            None,
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -719,12 +748,13 @@ pipelines:
 
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             true,
             false,
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         assert!(ops.verify(std::slice::from_ref(&f)).await.is_err());
     }
@@ -741,12 +771,13 @@ pipelines:
 
         let ops = Operations::new(
             Arc::new(mock),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             true,
             true,
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
         let c = fs::read_to_string(&f).unwrap();
@@ -769,12 +800,13 @@ pipelines:
     async fn test_operations_print_diffs() {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             true,
             false,
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.print_diff("old\n", "new\n");
         ops.print_inline_diff("old", "new");
@@ -815,12 +847,13 @@ pipelines:
         .unwrap();
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
-            Arc::new(OciRegistryProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
             true,
             true,
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("# v1"));

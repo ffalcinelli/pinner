@@ -117,8 +117,12 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         dry_run: bool,
         json: bool,
         upgrade_strategy: UpgradeStrategy,
+        concurrency: Option<usize>,
     ) -> Self {
-        let config = Self::load_config().unwrap_or_default();
+        let mut config = Self::load_config().unwrap_or_default();
+        if let Some(c) = concurrency {
+            config.concurrency = c;
+        }
         Self {
             github,
             registry,
@@ -134,7 +138,19 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     }
 
     fn load_config() -> Result<Config, PinnerError> {
-        Self::load_config_from_path(Path::new(".pinner.toml"))
+        let mut current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        loop {
+            let config_path = current_dir.join(".pinner.toml");
+            if config_path.exists() {
+                return Self::load_config_from_path(&config_path);
+            }
+            if let Some(parent) = current_dir.parent() {
+                current_dir = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+        Ok(Config::default())
     }
 
     pub fn load_config_from_path(path: &Path) -> Result<Config, PinnerError> {
@@ -310,19 +326,22 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                             continue;
                         }
 
-                        let parts: Vec<&str> = val.split('@').collect();
-                        let action = DependencyName::from(parts[0]);
+                        let (action_part, tag) = val.split_once('@').unwrap_or((&val, ""));
+                        let action = DependencyName::from(action_part);
 
                         if self.config.ignore_actions.contains(&action) {
                             continue;
                         }
 
-                        let tag = parts.get(1);
-                        let is_pinned = tag.is_some_and(|t| {
-                            (t.len() == 40 && t.chars().all(|c| c.is_ascii_hexdigit()))
+                        let is_pinned = if tag.is_empty() {
+                            false
+                        } else {
+                            (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
                                 || (val.contains("@sha256:")
-                                    && val.split("@sha256:").nth(1).is_some_and(|s| s.len() == 64))
-                        });
+                                    && val
+                                        .split_once("@sha256:")
+                                        .is_some_and(|(_, s)| s.len() == 64))
+                        };
 
                         if !is_pinned {
                             unpinned.push((path.to_path_buf(), val));
@@ -346,7 +365,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                     );
                 }
             }
-            return Err(PinnerError::Api(
+            return Err(PinnerError::VerificationFailed(
                 "Some actions are not pinned to a SHA".into(),
             ));
         }
@@ -357,11 +376,10 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         Ok(())
     }
 
-    async fn process<F, Fut>(&self, paths: &[PathBuf], f: F) -> Result<(), PinnerError>
-    where
-        F: Fn(&DependencyName, Option<&str>, &str) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Option<(DependencyRef, Option<String>)>> + Send,
-    {
+    async fn collect_tasks(
+        &self,
+        paths: &[PathBuf],
+    ) -> Result<(Vec<UpdateTask>, std::collections::HashMap<PathBuf, String>), PinnerError> {
         let mut parser = TSParser::new();
         parser
             .set_language(tree_sitter_yaml::language())
@@ -395,15 +413,13 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         if val.starts_with("./") {
                             continue;
                         }
-                        let (action_part, tag) = if val.contains('@') {
-                            let parts: Vec<&str> = val.split('@').collect();
-                            (parts[0], parts.get(1).copied())
+                        let (action_part, tag) = if let Some((a, t)) = val.split_once('@') {
+                            (a, Some(t))
                         } else if val.starts_with("docker://") && val.contains(':') {
                             let last_colon = val.rfind(':').unwrap();
                             (&val[..last_colon], Some(&val[last_colon + 1..]))
-                        } else if val.contains(':') {
-                            let parts: Vec<&str> = val.split(':').collect();
-                            (parts[0], parts.get(1).copied())
+                        } else if let Some((a, t)) = val.split_once(':') {
+                            (a, Some(t))
                         } else {
                             (val.as_str(), None)
                         };
@@ -427,8 +443,14 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 }
             }
         }
+        Ok((tasks, file_contents))
+    }
 
-        let f = std::sync::Arc::new(f);
+    async fn execute_updates<F, Fut>(&self, tasks: Vec<UpdateTask>, f: Arc<F>) -> Vec<UpdateResult>
+    where
+        F: Fn(&DependencyName, Option<&str>, &str) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<(DependencyRef, Option<String>)>> + Send,
+    {
         let pb = if !self.quiet && !self.json && !tasks.is_empty() {
             let pb = ProgressBar::new(tasks.len() as u64);
             pb.set_style(
@@ -476,7 +498,14 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         if let Some(p) = pb {
             p.finish_and_clear();
         }
+        results
+    }
 
+    fn apply_changes(
+        &self,
+        results: Vec<UpdateResult>,
+        file_contents: std::collections::HashMap<PathBuf, String>,
+    ) -> Result<(), PinnerError> {
         // Group results by file
         let mut file_results: std::collections::HashMap<PathBuf, Vec<UpdateResult>> =
             std::collections::HashMap::new();
@@ -529,7 +558,9 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 }
 
                 let new_comment = if let Some(t) = &res.new_tag {
-                    if res.action.0.starts_with("docker://") && t.starts_with("sha256:") {
+                    let is_sha = (t.len() == 40 && t.chars().all(|c| c.is_ascii_hexdigit()))
+                        || t.starts_with("sha256:");
+                    if is_sha {
                         "".to_string()
                     } else {
                         format!(" # {}", t)
@@ -574,6 +605,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                     for (old, new_ln) in &changes {
                         self.print_inline_diff(old, new_ln);
                     }
+                    #[allow(unused_mut)]
                     let mut should_write = self.yes;
                     #[cfg(test)]
                     let mut mocked = false;
@@ -626,6 +658,16 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         Ok(())
     }
 
+    async fn process<F, Fut>(&self, paths: &[PathBuf], f: F) -> Result<(), PinnerError>
+    where
+        F: Fn(&DependencyName, Option<&str>, &str) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<(DependencyRef, Option<String>)>> + Send,
+    {
+        let (tasks, file_contents) = self.collect_tasks(paths).await?;
+        let results = self.execute_updates(tasks, Arc::new(f)).await;
+        self.apply_changes(results, file_contents)
+    }
+
     pub fn format_diff(&self, old: &str, new: &str) -> String {
         let mut out = String::new();
         let diff = TextDiff::from_lines(old, new);
@@ -658,9 +700,10 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     ///
     /// let ops = Operations::new(
     ///     Arc::new(ReqwestGithubProvider::new("https://api.github.com".to_string(), None)),
-    ///     Arc::new(OciRegistryProvider::new()),
+    ///     Arc::new(OciRegistryProvider::new(None, None)),
     ///     true, true, false, false,
-    ///     UpgradeStrategy::Latest
+    ///     UpgradeStrategy::Latest,
+    ///     None
     /// );
     ///
     /// let diff = ops.format_inline_diff("actions/checkout@v2", "actions/checkout@hash");
@@ -726,7 +769,7 @@ mod tests {
             )
             .returning(|_, _, _| Ok(DependencyRef::from("newhash".to_string())));
 
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let mut ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -735,6 +778,7 @@ mod tests {
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
         ops.config = config;
 
@@ -748,7 +792,7 @@ mod tests {
     #[test]
     fn test_operations_diff_methods_sync() {
         let mock = MockRemoteProvider::new();
-        let mock_reg = OciRegistryProvider::new();
+        let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
@@ -757,6 +801,7 @@ mod tests {
             false,
             false,
             UpgradeStrategy::Latest,
+            None,
         );
 
         let d = ops.format_diff("line1\n", "line2\n");
@@ -769,5 +814,232 @@ mod tests {
 
         ops.print_diff("a\n", "b\n");
         ops.print_inline_diff("a", "b");
+    }
+
+    #[tokio::test]
+    async fn test_operations_decomposition() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1").unwrap();
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+
+        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].action.to_string(), "o/r");
+        assert!(file_contents.contains_key(&f));
+
+        let res = UpdateResult {
+            action: DependencyName::from("o/r"),
+            path: f.clone(),
+            old_tag: Some("v1".to_string()),
+            task: tasks.into_iter().next().unwrap(),
+            new_sha: DependencyRef::from("newhash".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+
+        ops.apply_changes(vec![res], file_contents).unwrap();
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("o/r@newhash # v2"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_fail_and_pass() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("unpinned.yml");
+        fs::write(&f, "uses: actions/checkout@v3").unwrap();
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+
+        let res = ops.verify(&[f.clone()]).await;
+        assert!(res.is_err()); // Should fail because @v3 is not a SHA
+
+        fs::write(
+            &f,
+            "uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        )
+        .unwrap();
+        let res = ops.verify(&[f.clone()]).await;
+        assert!(res.is_ok());
+
+        // Test docker pinned
+        fs::write(
+            &f,
+            "image: alpine@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+        )
+        .unwrap();
+        let res = ops.verify(&[f.clone()]).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_edge_cases() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1 # keep me").unwrap();
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+
+        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        let res = UpdateResult {
+            action: DependencyName::from("o/r"),
+            path: f.clone(),
+            old_tag: Some("v1".to_string()),
+            task: tasks.into_iter().next().unwrap(),
+            new_sha: DependencyRef::from("hash".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+
+        ops.apply_changes(vec![res], file_contents).unwrap();
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("o/r@hash # v2 # keep me"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_comment_regex() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: o/r@v1 # v1").unwrap(); // Comment matches the vX pattern
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+
+        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        let res = UpdateResult {
+            action: DependencyName::from("o/r"),
+            path: f.clone(),
+            old_tag: Some("v1".to_string()),
+            task: tasks.into_iter().next().unwrap(),
+            new_sha: DependencyRef::from("hash".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+
+        ops.apply_changes(vec![res], file_contents).unwrap();
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("o/r@hash # v2"));
+        assert!(!content.contains("# v1"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_no_redundant_sha_comment() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("config.yml");
+        // CircleCI style: image: user/repo@sha256:hash # comment
+        fs::write(&f, "image: cimg/base@sha256:35e5e29930ab565475a4f2aa9b4124998ed67dbc7b0e2dd5f420a4189d08d0d2 # stable").unwrap();
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+
+        let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.into_iter().next().unwrap();
+
+        let res = UpdateResult {
+            action: DependencyName::from("cimg/base"),
+            path: f.clone(),
+            old_tag: task.current_tag.clone(),
+            task,
+            new_sha: DependencyRef::from(
+                "sha256:35e5e29930ab565475a4f2aa9b4124998ed67dbc7b0e2dd5f420a4189d08d0d2"
+                    .to_string(),
+            ),
+            new_tag: Some(
+                "sha256:35e5e29930ab565475a4f2aa9b4124998ed67dbc7b0e2dd5f420a4189d08d0d2"
+                    .to_string(),
+            ),
+        };
+
+        ops.apply_changes(vec![res], file_contents).unwrap();
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(!content.contains(
+            "# sha256:35e5e29930ab565475a4f2aa9b4124998ed67dbc7b0e2dd5f420a4189d08d0d2 # stable"
+        ));
+        assert!(content.contains("cimg/base@sha256:35e5e29930ab565475a4f2aa9b4124998ed67dbc7b0e2dd5f420a4189d08d0d2 # stable"));
+    }
+
+    #[test]
+    fn test_load_config_traversal() {
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let config_path = dir.path().join(".pinner.toml");
+        fs::write(&config_path, "concurrency = 42").unwrap();
+
+        // Change current directory to sub
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&sub).unwrap();
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+
+        assert_eq!(ops.config.concurrency, 42);
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_operations_path_not_found() {
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+            None,
+        );
+        let res = ops.pin(&[PathBuf::from("/non/existent/path/12345")]).await;
+        assert!(res.is_err());
     }
 }

@@ -96,6 +96,15 @@ pub struct Cli {
     /// Strategy to use when upgrading actions.
     #[arg(long, global = true, default_value = "latest")]
     pub upgrade_strategy: UpgradeStrategy,
+    /// Number of concurrent API requests to make.
+    #[arg(long, global = true)]
+    pub concurrency: Option<usize>,
+    /// Username for OCI registry authentication.
+    #[arg(long, global = true, env = "OCI_USERNAME")]
+    pub oci_username: Option<String>,
+    /// Password for OCI registry authentication.
+    #[arg(long, global = true, env = "OCI_PASSWORD")]
+    pub oci_password: Option<String>,
 }
 
 impl Cli {

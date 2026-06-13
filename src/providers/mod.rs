@@ -168,10 +168,61 @@ pub trait RemoteProvider: Send + Sync {
     ) -> Result<BranchName, PinnerError>;
 }
 
-/// Default implementation of [`RemoteProvider`] for GitHub using `reqwest`.
-pub struct ReqwestGithubProvider {
+/// Shared HTTP client logic for repository providers.
+pub struct BaseHttpClient {
     pub client: ClientWithMiddleware,
     pub base_url: String,
+}
+
+impl BaseHttpClient {
+    pub fn new(base_url: String, token: Option<String>, token_prefix: &str, env_var: &str) -> Self {
+        let mut h = HeaderMap::new();
+        h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
+
+        let token = token.or_else(|| std::env::var(env_var).ok());
+
+        if let Some(t) = token {
+            let auth_val = if token_prefix.is_empty() {
+                t
+            } else {
+                format!("{} {}", token_prefix, t)
+            };
+            if let Ok(auth) = HeaderValue::from_str(&auth_val) {
+                h.insert(AUTHORIZATION, auth);
+            }
+        }
+
+        let reqwest_client = reqwest::Client::builder()
+            .default_headers(h)
+            .build()
+            .expect("Failed to build reqwest client");
+
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+        let client = ClientBuilder::new(reqwest_client)
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build();
+
+        Self { client, base_url }
+    }
+
+    pub fn handle_error(
+        &self,
+        status: reqwest::StatusCode,
+        action: &DependencyName,
+    ) -> PinnerError {
+        match status.as_u16() {
+            403 | 429 => PinnerError::Api(format!(
+                "API rate limit exceeded (HTTP {}). Try providing an API token to increase limits.",
+                status
+            )),
+            _ => PinnerError::Api(format!("HTTP {}: Error for action {}", status, action)),
+        }
+    }
+}
+
+/// Default implementation of [`RemoteProvider`] for GitHub using `reqwest`.
+pub struct ReqwestGithubProvider {
+    pub base: BaseHttpClient,
     pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
     pub release_cache: Cache<DependencyName, String>,
     pub branch_cache: Cache<DependencyName, BranchName>,
@@ -187,30 +238,8 @@ impl Default for ReqwestGithubProvider {
 impl ReqwestGithubProvider {
     /// Creates a new [`ReqwestGithubProvider`] with the specified base URL and optional token.
     pub fn new(base_url: String, token: Option<String>) -> Self {
-        let mut h = HeaderMap::new();
-        h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
-
-        let token = token.or_else(|| std::env::var("GITHUB_TOKEN").ok());
-
-        if let Some(t) = token {
-            if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", t)) {
-                h.insert(AUTHORIZATION, auth);
-            }
-        }
-
-        let reqwest_client = reqwest::Client::builder()
-            .default_headers(h)
-            .build()
-            .expect("Failed to build reqwest client");
-
-        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-        let client = ClientBuilder::new(reqwest_client)
-            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-            .build();
-
         Self {
-            client,
-            base_url,
+            base: BaseHttpClient::new(base_url, token, "Bearer", "GITHUB_TOKEN"),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
@@ -223,23 +252,6 @@ impl ReqwestGithubProvider {
                 .max_capacity(500)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
-        }
-    }
-
-    fn handle_api_error(
-        &self,
-        status: reqwest::StatusCode,
-        action: &DependencyName,
-    ) -> PinnerError {
-        match status.as_u16() {
-            403 | 429 => PinnerError::Api(format!(
-                "GitHub API rate limit exceeded (HTTP {}). Try providing a GITHUB_TOKEN to increase limits.",
-                status
-            )),
-            _ => PinnerError::Api(format!(
-                "HTTP {}: Error for action {}",
-                status, action
-            )),
         }
     }
 }
@@ -257,8 +269,9 @@ impl RemoteProvider for ReqwestGithubProvider {
             return Ok(sha);
         }
 
-        let url = format!("{}/repos/{}/commits/{}", self.base_url, action, tag);
+        let url = format!("{}/repos/{}/commits/{}", self.base.base_url, action, tag);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -274,7 +287,7 @@ impl RemoteProvider for ReqwestGithubProvider {
             self.sha_cache.insert(key, sha.clone()).await;
             Ok(sha)
         } else {
-            Err(self.handle_api_error(resp.status(), action))
+            Err(self.base.handle_error(resp.status(), action))
         }
     }
 
@@ -287,8 +300,9 @@ impl RemoteProvider for ReqwestGithubProvider {
             return Ok(tag);
         }
 
-        let url = format!("{}/repos/{}/releases/latest", self.base_url, action);
+        let url = format!("{}/repos/{}/releases/latest", self.base.base_url, action);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -308,7 +322,7 @@ impl RemoteProvider for ReqwestGithubProvider {
             let default_branch = self.get_default_branch(action, key).await?;
             Ok(default_branch.0)
         } else {
-            Err(self.handle_api_error(resp.status(), action))
+            Err(self.base.handle_error(resp.status(), action))
         }
     }
 
@@ -322,8 +336,9 @@ impl RemoteProvider for ReqwestGithubProvider {
             name: String,
         }
 
-        let url = format!("{}/repos/{}/tags", self.base_url, action);
+        let url = format!("{}/repos/{}/tags", self.base.base_url, action);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -337,7 +352,7 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(tags.into_iter().map(|t| t.name).collect())
         } else {
-            Err(self.handle_api_error(resp.status(), action))
+            Err(self.base.handle_error(resp.status(), action))
         }
     }
 
@@ -350,8 +365,9 @@ impl RemoteProvider for ReqwestGithubProvider {
             return Ok(branch);
         }
 
-        let url = format!("{}/repos/{}", self.base_url, action);
+        let url = format!("{}/repos/{}", self.base.base_url, action);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -376,8 +392,7 @@ impl RemoteProvider for ReqwestGithubProvider {
 
 /// Implementation of [`RemoteProvider`] for Bitbucket using `reqwest`.
 pub struct ReqwestBitbucketProvider {
-    pub client: ClientWithMiddleware,
-    pub base_url: String,
+    pub base: BaseHttpClient,
     pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
     pub is_cloud: bool,
 }
@@ -389,30 +404,8 @@ impl ReqwestBitbucketProvider {
     }
 
     pub fn with_type(base_url: String, token: Option<String>, is_cloud: bool) -> Self {
-        let mut h = HeaderMap::new();
-        h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
-
-        let token = token.or_else(|| std::env::var("BITBUCKET_TOKEN").ok());
-
-        if let Some(t) = token {
-            if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", t)) {
-                h.insert(AUTHORIZATION, auth);
-            }
-        }
-
-        let reqwest_client = reqwest::Client::builder()
-            .default_headers(h)
-            .build()
-            .expect("Failed to build reqwest client");
-
-        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-        let client = ClientBuilder::new(reqwest_client)
-            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-            .build();
-
         Self {
-            client,
-            base_url,
+            base: BaseHttpClient::new(base_url, token, "Bearer", "BITBUCKET_TOKEN"),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
@@ -438,25 +431,25 @@ impl RemoteProvider for ReqwestBitbucketProvider {
         let url = if self.is_cloud {
             format!(
                 "{}/repositories/{}/refs/tags/{}",
-                self.base_url, action, tag
+                self.base.base_url, action, tag
             )
         } else {
             // Data Center format: projects/{PROJ}/repos/{REPO}/tags/{TAG}
             // We assume action is formatted as "proj/repo"
-            let parts: Vec<&str> = action.0.split('/').collect();
-            if parts.len() != 2 {
+            let Some((project, repo)) = action.0.split_once('/') else {
                 return Err(PinnerError::Api(format!(
                     "Invalid Bitbucket action format: {}. Expected 'project/repo'",
                     action
                 )));
-            }
+            };
             format!(
                 "{}/rest/api/1.0/projects/{}/repos/{}/tags/{}",
-                self.base_url, parts[0], parts[1], tag
+                self.base.base_url, project, repo, tag
             )
         };
 
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -486,9 +479,10 @@ impl RemoteProvider for ReqwestBitbucketProvider {
             // Try branch if tag fails on Cloud
             let branch_url = format!(
                 "{}/repositories/{}/refs/branches/{}",
-                self.base_url, action, tag
+                self.base.base_url, action, tag
             );
             let resp = self
+                .base
                 .client
                 .get(&branch_url)
                 .send()
@@ -512,12 +506,18 @@ impl RemoteProvider for ReqwestBitbucketProvider {
             }
         } else {
             // Try branch for DC
-            let parts: Vec<&str> = action.0.split('/').collect();
+            let Some((project, repo)) = action.0.split_once('/') else {
+                return Err(PinnerError::Api(format!(
+                    "Invalid Bitbucket action format: {}. Expected 'project/repo'",
+                    action
+                )));
+            };
             let branch_url = format!(
                 "{}/rest/api/1.0/projects/{}/repos/{}/branches?filterText={}",
-                self.base_url, parts[0], parts[1], tag
+                self.base.base_url, project, repo, tag
             );
             let resp = self
+                .base
                 .client
                 .get(&branch_url)
                 .send()
@@ -573,19 +573,19 @@ impl RemoteProvider for ReqwestBitbucketProvider {
         _key: &str,
     ) -> Result<BranchName, PinnerError> {
         let url = if self.is_cloud {
-            format!("{}/repositories/{}", self.base_url, action)
+            format!("{}/repositories/{}", self.base.base_url, action)
         } else {
-            let parts: Vec<&str> = action.0.split('/').collect();
-            if parts.len() != 2 {
+            let Some((project, repo)) = action.0.split_once('/') else {
                 return Ok(BranchName("main".to_string()));
-            }
+            };
             format!(
                 "{}/rest/api/1.0/projects/{}/repos/{}",
-                self.base_url, parts[0], parts[1]
+                self.base.base_url, project, repo
             )
         };
 
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -626,37 +626,14 @@ impl RemoteProvider for ReqwestBitbucketProvider {
 
 /// Default implementation of [`RemoteProvider`] for GitLab using `reqwest`.
 pub struct ReqwestGitLabProvider {
-    pub client: ClientWithMiddleware,
-    pub base_url: String,
+    pub base: BaseHttpClient,
     pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
 }
 
 impl ReqwestGitLabProvider {
     pub fn new(base_url: String, token: Option<String>) -> Self {
-        let mut h = HeaderMap::new();
-        h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
-
-        let token = token.or_else(|| std::env::var("GITLAB_TOKEN").ok());
-
-        if let Some(t) = token {
-            if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {}", t)) {
-                h.insert(AUTHORIZATION, auth);
-            }
-        }
-
-        let reqwest_client = reqwest::Client::builder()
-            .default_headers(h)
-            .build()
-            .expect("Failed to build reqwest client");
-
-        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-        let client = ClientBuilder::new(reqwest_client)
-            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-            .build();
-
         Self {
-            client,
-            base_url,
+            base: BaseHttpClient::new(base_url, token, "Bearer", "GITLAB_TOKEN"),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
@@ -682,9 +659,10 @@ impl RemoteProvider for ReqwestGitLabProvider {
         let project_id = action.0.replace('/', "%2F");
         let url = format!(
             "{}/api/v4/projects/{}/repository/commits/{}",
-            self.base_url, project_id, tag
+            self.base.base_url, project_id, tag
         );
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -718,8 +696,12 @@ impl RemoteProvider for ReqwestGitLabProvider {
         _key: &str,
     ) -> Result<String, PinnerError> {
         let project_id = action.0.replace('/', "%2F");
-        let url = format!("{}/api/v4/projects/{}/releases", self.base_url, project_id);
+        let url = format!(
+            "{}/api/v4/projects/{}/releases",
+            self.base.base_url, project_id
+        );
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -752,9 +734,10 @@ impl RemoteProvider for ReqwestGitLabProvider {
         let project_id = action.0.replace('/', "%2F");
         let url = format!(
             "{}/api/v4/projects/{}/repository/tags",
-            self.base_url, project_id
+            self.base.base_url, project_id
         );
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -782,8 +765,9 @@ impl RemoteProvider for ReqwestGitLabProvider {
         _key: &str,
     ) -> Result<BranchName, PinnerError> {
         let project_id = action.0.replace('/', "%2F");
-        let url = format!("{}/api/v4/projects/{}", self.base_url, project_id);
+        let url = format!("{}/api/v4/projects/{}", self.base.base_url, project_id);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -810,37 +794,14 @@ impl RemoteProvider for ReqwestGitLabProvider {
 
 /// Default implementation of [`RemoteProvider`] for Forgejo/Gitea using `reqwest`.
 pub struct ReqwestForgejoProvider {
-    pub client: ClientWithMiddleware,
-    pub base_url: String,
+    pub base: BaseHttpClient,
     pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
 }
 
 impl ReqwestForgejoProvider {
     pub fn new(base_url: String, token: Option<String>) -> Self {
-        let mut h = HeaderMap::new();
-        h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
-
-        let token = token.or_else(|| std::env::var("FORGEJO_TOKEN").ok());
-
-        if let Some(t) = token {
-            if let Ok(auth) = HeaderValue::from_str(&format!("token {}", t)) {
-                h.insert(AUTHORIZATION, auth);
-            }
-        }
-
-        let reqwest_client = reqwest::Client::builder()
-            .default_headers(h)
-            .build()
-            .expect("Failed to build reqwest client");
-
-        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-        let client = ClientBuilder::new(reqwest_client)
-            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-            .build();
-
         Self {
-            client,
-            base_url,
+            base: BaseHttpClient::new(base_url, token, "token", "FORGEJO_TOKEN"),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
@@ -862,8 +823,12 @@ impl RemoteProvider for ReqwestForgejoProvider {
             return Ok(sha);
         }
 
-        let url = format!("{}/api/v1/repos/{}/commits/{}", self.base_url, action, tag);
+        let url = format!(
+            "{}/api/v1/repos/{}/commits/{}",
+            self.base.base_url, action, tag
+        );
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -883,11 +848,7 @@ impl RemoteProvider for ReqwestForgejoProvider {
             self.sha_cache.insert(key, sha.clone()).await;
             Ok(sha)
         } else {
-            Err(PinnerError::Api(format!(
-                "Forgejo API error (HTTP {}): repo {}",
-                resp.status(),
-                action
-            )))
+            Err(self.base.handle_error(resp.status(), action))
         }
     }
 
@@ -896,8 +857,9 @@ impl RemoteProvider for ReqwestForgejoProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<String, PinnerError> {
-        let url = format!("{}/api/v1/repos/{}/releases", self.base_url, action);
+        let url = format!("{}/api/v1/repos/{}/releases", self.base.base_url, action);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -927,8 +889,9 @@ impl RemoteProvider for ReqwestForgejoProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<Vec<String>, PinnerError> {
-        let url = format!("{}/api/v1/repos/{}/tags", self.base_url, action);
+        let url = format!("{}/api/v1/repos/{}/tags", self.base.base_url, action);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -955,8 +918,9 @@ impl RemoteProvider for ReqwestForgejoProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<BranchName, PinnerError> {
-        let url = format!("{}/api/v1/repos/{}", self.base_url, action);
+        let url = format!("{}/api/v1/repos/{}", self.base.base_url, action);
         let resp = self
+            .base
             .client
             .get(&url)
             .send()
@@ -1144,17 +1108,21 @@ mod tests {
         let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);
         let action = DependencyName::from("o/r");
 
-        let err = provider.handle_api_error(StatusCode::FORBIDDEN, &action);
+        let err = provider.base.handle_error(StatusCode::FORBIDDEN, &action);
         assert!(format!("{}", err).contains("rate limit exceeded"));
 
-        let err = provider.handle_api_error(StatusCode::TOO_MANY_REQUESTS, &action);
+        let err = provider
+            .base
+            .handle_error(StatusCode::TOO_MANY_REQUESTS, &action);
         assert!(format!("{}", err).contains("rate limit exceeded"));
 
-        let err = provider.handle_api_error(StatusCode::NOT_FOUND, &action);
+        let err = provider.base.handle_error(StatusCode::NOT_FOUND, &action);
         assert!(format!("{}", err).contains("HTTP 404"));
         assert!(format!("{}", err).contains("o/r"));
 
-        let err = provider.handle_api_error(StatusCode::INTERNAL_SERVER_ERROR, &action);
+        let err = provider
+            .base
+            .handle_error(StatusCode::INTERNAL_SERVER_ERROR, &action);
         assert!(format!("{}", err).contains("HTTP 500"));
     }
 
@@ -1245,6 +1213,304 @@ mod tests {
         let repo_json = r#"{"default_branch":"develop"}"#;
         let res: RepoResponse = serde_json::from_str(repo_json).unwrap();
         assert_eq!(res.default_branch, "develop");
+
+        let bb_json = r#"{"defaultBranch":"prod"}"#;
+        let res: BitbucketDCRepoResponse = serde_json::from_str(bb_json).unwrap();
+        assert_eq!(res.default_branch, "prod");
+    }
+
+    #[tokio::test]
+    async fn test_unified_provider_exhaustive() {
+        let mut server = mockito::Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/repos/o/r/releases/latest")
+            .with_status(200)
+            .with_body(r#"{"tag_name":"v1"}"#)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/api/v4/projects/o%2Fr/repository/tags")
+            .with_status(200)
+            .with_body(r#"[{"name":"v2"}]"#)
+            .create_async()
+            .await;
+
+        let unified = UnifiedProvider::new(
+            server.url(),
+            None,
+            server.url(),
+            None,
+            server.url(),
+            None,
+            server.url(),
+            None,
+        );
+
+        let rel = unified
+            .get_latest_release(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(rel, "v1");
+
+        let tags = unified
+            .list_tags(&DependencyName::from("o/r"), "include")
+            .await
+            .unwrap();
+        assert_eq!(tags, vec!["v2".to_string()]);
+
+        let branch = unified
+            .get_default_branch(&DependencyName::from("o/r"), "none")
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "main");
+    }
+
+    #[tokio::test]
+    async fn test_unified_provider_error() {
+        let unified = UnifiedProvider::new(
+            "http://invalid".into(),
+            None,
+            "http://invalid".into(),
+            None,
+            "http://invalid".into(),
+            None,
+            "http://invalid".into(),
+            None,
+        );
+        let res = unified
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
+            .await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_provider_errors_exhaustive() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let gitlab = ReqwestGitLabProvider::new(server.url(), None);
+        assert!(gitlab
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
+            .await
+            .is_err());
+        assert!(gitlab
+            .list_tags(&DependencyName::from("o/r"), "")
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            gitlab
+                .get_default_branch(&DependencyName::from("o/r"), "")
+                .await
+                .unwrap()
+                .0,
+            "main"
+        );
+
+        let forgejo = ReqwestForgejoProvider::new(server.url(), None);
+        assert!(forgejo
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
+            .await
+            .is_err());
+        assert!(forgejo
+            .list_tags(&DependencyName::from("o/r"), "")
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            forgejo
+                .get_default_branch(&DependencyName::from("o/r"), "")
+                .await
+                .unwrap()
+                .0,
+            "main"
+        );
+
+        let bb_cloud = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        assert!(bb_cloud
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
+            .await
+            .is_err());
+        assert_eq!(
+            bb_cloud
+                .get_default_branch(&DependencyName::from("o/r"), "")
+                .await
+                .unwrap()
+                .0,
+            "main"
+        );
+
+        let bb_dc = ReqwestBitbucketProvider::with_type(server.url(), None, false);
+        assert!(bb_dc
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
+            .await
+            .is_err());
+        assert_eq!(
+            bb_dc
+                .get_default_branch(&DependencyName::from("o/r"), "")
+                .await
+                .unwrap()
+                .0,
+            "main"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gitlab_latest_release() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v4/projects/o%2Fr/releases")
+            .with_status(200)
+            .with_body(r#"[{"tag_name":"v10"}]"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGitLabProvider::new(server.url(), None);
+        let rel = provider
+            .get_latest_release(&DependencyName::from("o/r"), "")
+            .await
+            .unwrap();
+        assert_eq!(rel, "v10");
+    }
+
+    #[tokio::test]
+    async fn test_forgejo_methods() {
+        let mut server = mockito::Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/api/v1/repos/o/r/releases")
+            .with_status(200)
+            .with_body(r#"[{"tag_name":"f1"}]"#)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/api/v1/repos/o/r/tags")
+            .with_status(200)
+            .with_body(r#"[{"name":"t1"}]"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestForgejoProvider::new(server.url(), None);
+        assert_eq!(
+            provider
+                .get_latest_release(&DependencyName::from("o/r"), "")
+                .await
+                .unwrap(),
+            "f1"
+        );
+        assert_eq!(
+            provider
+                .list_tags(&DependencyName::from("o/r"), "")
+                .await
+                .unwrap(),
+            vec!["t1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gitlab_provider() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v4/projects/o%2Fr/repository/commits/v1")
+            .with_status(200)
+            .with_body(r#"{"id":"gitlabsha"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGitLabProvider::new(server.url(), None);
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "include")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "gitlabsha");
+    }
+
+    #[tokio::test]
+    async fn test_forgejo_provider() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v1/repos/o/r/commits/v1")
+            .with_status(200)
+            .with_body(r#"{"sha":"forgejosha"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestForgejoProvider::new(server.url(), None);
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "forgejosha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_cloud_branch_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/repositories/o/p/refs/tags/v1")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/repositories/o/p/refs/branches/v1")
+            .with_status(200)
+            .with_body(r#"{"target":{"hash":"branchsha"}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/p"), "v1", "pipe")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "branchsha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_cloud_annotated_tag() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repositories/o/p/refs/tags/v1")
+            .with_status(200)
+            .with_body(r#"{"target":{"hash":"tagsha","target":{"hash":"realsha"}}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/p"), "v1", "pipe")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "realsha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_dc_branch_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/rest/api/1.0/projects/PROJ/repos/repo/tags/v1")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock(
+                "GET",
+                "/rest/api/1.0/projects/PROJ/repos/repo/branches?filterText=v1",
+            )
+            .with_status(200)
+            .with_body(r#"{"values":[{"latestCommit":"branchsha"}]}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false);
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("PROJ/repo"), "v1", "pipe")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "branchsha");
     }
 
     #[test]

@@ -86,7 +86,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_token_non_docker_hub() {
-        let provider = OciRegistryProvider::new();
+        let provider = OciRegistryProvider::new(None, None);
         let token = provider.get_token("ghcr.io", "owner/repo").await.unwrap();
         assert_eq!(token, "");
     }
@@ -124,20 +124,24 @@ pub struct OciRegistryProvider {
     client: reqwest::Client,
     auth_url: String,
     base_url_template: String,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 impl Default for OciRegistryProvider {
     fn default() -> Self {
-        Self::new()
+        Self::new(None, None)
     }
 }
 
 impl OciRegistryProvider {
-    pub fn new() -> Self {
+    pub fn new(username: Option<String>, password: Option<String>) -> Self {
         Self {
             client: reqwest::Client::new(),
             auth_url: "https://auth.docker.io/token".to_string(),
             base_url_template: "https://{registry}/v2/{repository}/manifests/{tag}".to_string(),
+            username,
+            password,
         }
     }
 
@@ -147,6 +151,8 @@ impl OciRegistryProvider {
             client: reqwest::Client::new(),
             auth_url,
             base_url_template,
+            username: None,
+            password: None,
         }
     }
 
@@ -160,9 +166,12 @@ impl OciRegistryProvider {
             return Ok("".to_string());
         };
 
-        let resp = self
-            .client
-            .get(&url)
+        let mut rb = self.client.get(&url);
+        if let (Some(u), Some(p)) = (&self.username, &self.password) {
+            rb = rb.basic_auth(u, Some(p));
+        }
+
+        let resp = rb
             .send()
             .await
             .map_err(|e| PinnerError::Api(e.to_string()))?;
@@ -225,6 +234,13 @@ impl RegistryProvider for OciRegistryProvider {
                 HeaderValue::from_str(&format!("Bearer {}", token))
                     .map_err(|e| PinnerError::Api(e.to_string()))?,
             );
+        } else if let (Some(u), Some(p)) = (&self.username, &self.password) {
+            let auth = format!("{}:{}", u, p);
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Basic {}", b64_encode(&auth)))
+                    .map_err(|e| PinnerError::Api(e.to_string()))?,
+            );
         }
 
         let resp = self
@@ -250,4 +266,9 @@ impl RegistryProvider for OciRegistryProvider {
             )))
         }
     }
+}
+
+fn b64_encode(s: &str) -> String {
+    use base64::{engine::general_purpose, Engine as _};
+    general_purpose::STANDARD.encode(s)
 }

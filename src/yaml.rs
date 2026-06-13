@@ -24,6 +24,34 @@ static USES_QUERY: LazyLock<Query> = LazyLock::new(|| {
     )
     .expect("Failed to create tree-sitter query")
 });
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
+        if s.len() >= 2 {
+            return s[1..s.len() - 1].to_string();
+        }
+    }
+    s.to_string()
+}
+
+fn resolve_gitlab_project(v_node: tree_sitter::Node, content: &[u8]) -> Option<String> {
+    let parent_pair = v_node.parent()?;
+    let mapping = parent_pair.parent()?;
+    let mut cursor = mapping.walk();
+    for child in mapping.children(&mut cursor) {
+        if child.kind() == "block_mapping_pair" {
+            if let Some(k_node) = child.child_by_field_name("key") {
+                if k_node.utf8_text(content).unwrap_or("") == "project" {
+                    if let Some(v_node) = child.child_by_field_name("value") {
+                        return Some(unquote(v_node.utf8_text(content).unwrap_or("")));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Finds all `uses`, `pipe`, `image`, `include`, `ref`, or `orbs` keys and adjacent comments in the YAML AST.
 pub fn find_uses_nodes(
     node: tree_sitter::Node,
@@ -55,40 +83,12 @@ pub fn find_uses_nodes(
                 }
 
                 let v_node = cap.node;
-                let mut val = v_node.utf8_text(content).unwrap_or("").trim().to_string();
-
-                // Remove surrounding quotes if present
-                if (val.starts_with('\'') && val.ends_with('\''))
-                    || (val.starts_with('"') && val.ends_with('"'))
-                {
-                    if val.len() >= 2 {
-                        val = val[1..val.len() - 1].to_string();
-                    }
-                }
+                let mut val = unquote(v_node.utf8_text(content).unwrap_or(""));
 
                 // GitLab context: if we found a 'ref', try to find a sibling 'project'
                 if current_key == "ref" {
-                    if let Some(parent_pair) = v_node.parent() {
-                        if let Some(mapping) = parent_pair.parent() {
-                            let mut cursor = mapping.walk();
-                            for child in mapping.children(&mut cursor) {
-                                if child.kind() == "block_mapping_pair" {
-                                    if let Some(k_node) = child.child_by_field_name("key") {
-                                        if k_node.utf8_text(content).unwrap_or("") == "project" {
-                                            if let Some(v_node) = child.child_by_field_name("value")
-                                            {
-                                                let project = v_node
-                                                    .utf8_text(content)
-                                                    .unwrap_or("")
-                                                    .trim_matches('\'')
-                                                    .trim_matches('"');
-                                                val = format!("{}@{}", project, val);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(project) = resolve_gitlab_project(v_node, content) {
+                        val = format!("{}@{}", project, val);
                     }
                 }
 
@@ -109,8 +109,6 @@ pub fn find_uses_nodes(
                     } else {
                         // Comment is on a different line, push the value without comment
                         results.push((start, end, val, None, key));
-                        // The comment might be a top-level comment or related to something else,
-                        // we don't have a value to pair it with right now.
                     }
                 }
             }
@@ -120,5 +118,119 @@ pub fn find_uses_nodes(
     // Push the last value if it wasn't paired with a comment
     if let Some((start, end, val, _, key)) = last_value.take() {
         results.push((start, end, val, None, key));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
+
+    fn parse_yaml(content: &str) -> (tree_sitter::Tree, Vec<u8>) {
+        let mut parser = Parser::new();
+        parser
+            .set_language(tree_sitter_yaml::language())
+            .expect("Error loading YAML grammar");
+        let content_bytes = content.as_bytes().to_vec();
+        let tree = parser.parse(&content_bytes, None).unwrap();
+        (tree, content_bytes)
+    }
+
+    #[test]
+    fn test_find_uses_basic() {
+        let yaml = "uses: actions/checkout@v3";
+        let (tree, content) = parse_yaml(yaml);
+        let mut results = Vec::new();
+        find_uses_nodes(tree.root_node(), &content, &mut results);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "actions/checkout@v3");
+        assert_eq!(results[0].3, None);
+        assert_eq!(results[0].4, "uses");
+    }
+
+    #[test]
+    fn test_find_uses_with_quotes() {
+        let yaml = "uses: \"actions/checkout@v3\"";
+        let (tree, content) = parse_yaml(yaml);
+        let mut results = Vec::new();
+        find_uses_nodes(tree.root_node(), &content, &mut results);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "actions/checkout@v3");
+    }
+
+    #[test]
+    fn test_find_uses_with_comment() {
+        let yaml = "uses: actions/checkout@hash # v3";
+        let (tree, content) = parse_yaml(yaml);
+        let mut results = Vec::new();
+        find_uses_nodes(tree.root_node(), &content, &mut results);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "actions/checkout@hash");
+        assert_eq!(results[0].3, Some("# v3".to_string()));
+    }
+
+    #[test]
+    fn test_find_other_keys() {
+        let yaml = r#"
+image: alpine:latest
+pipe: sonarsource/sonarcloud-scan:1.4.0
+include: other-template.yml
+orbs:
+  node: circleci/node@5.0.0
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let mut results = Vec::new();
+        find_uses_nodes(tree.root_node(), &content, &mut results);
+
+        let keys: Vec<String> = results.iter().map(|r| r.4.clone()).collect();
+        assert!(keys.contains(&"image".to_string()));
+        assert!(keys.contains(&"pipe".to_string()));
+        assert!(keys.contains(&"include".to_string()));
+        assert!(keys.contains(&"orbs".to_string()));
+    }
+
+    #[test]
+    fn test_gitlab_ref_project() {
+        let yaml = r#"
+include:
+  - project: 'my-group/my-project'
+    ref: 'v1.0.0'
+    file: '/templates/.gitlab-ci.yml'
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let mut results = Vec::new();
+        find_uses_nodes(tree.root_node(), &content, &mut results);
+
+        // We expect "my-group/my-project@v1.0.0" for the 'ref' key
+        let ref_node = results.iter().find(|r| r.4 == "ref").unwrap();
+        assert_eq!(ref_node.2, "my-group/my-project@v1.0.0");
+    }
+
+    #[test]
+    fn test_unquote_exhaustive() {
+        assert_eq!(unquote("'v1'"), "v1");
+        assert_eq!(unquote("\"v2\""), "v2");
+        assert_eq!(unquote("v3"), "v3");
+        assert_eq!(unquote("'"), "'");
+        assert_eq!(unquote("\""), "\"");
+        assert_eq!(unquote("''"), "");
+        assert_eq!(unquote("  'v4'  "), "v4");
+    }
+
+    #[test]
+    fn test_comment_on_different_line() {
+        let yaml = r#"
+uses: actions/checkout@v3
+# unrelated comment
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let mut results = Vec::new();
+        find_uses_nodes(tree.root_node(), &content, &mut results);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].3, None);
     }
 }

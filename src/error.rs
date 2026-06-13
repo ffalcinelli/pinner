@@ -15,6 +15,9 @@ pub enum PinnerError {
     /// Specified workflow path not found.
     #[error("Path not found: {0}")]
     PathNotFound(String),
+    /// Unpinned dependencies found during verification.
+    #[error("Verification failed: {0}")]
+    VerificationFailed(String),
     /// Errors from the `ignore` crate during directory walking.
     #[error("Ignore error: {0}")]
     Ignore(#[from] ignore::Error),
@@ -50,6 +53,9 @@ mod tests {
 
         let err = PinnerError::Config("invalid".to_string());
         assert_eq!(format!("{}", err), "Config error: invalid");
+
+        let err = PinnerError::VerificationFailed("unpinned".to_string());
+        assert_eq!(format!("{}", err), "Verification failed: unpinned");
     }
 
     #[test]

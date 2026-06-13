@@ -1483,6 +1483,7 @@ version = "0.0.4"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "cargo-husky",
  "clap",
  "clap_complete",

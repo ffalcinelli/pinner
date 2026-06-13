@@ -9,9 +9,22 @@ use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
-    run_app(cli).await
+    if let Err(e) = run_app(cli).await {
+        // Check if it's a verification failure (already printed details)
+        let is_verification_failure = e
+            .root_cause()
+            .downcast_ref::<pinner::error::PinnerError>()
+            .is_some_and(|pe| matches!(pe, pinner::error::PinnerError::VerificationFailed(_)));
+
+        if is_verification_failure {
+            std::process::exit(1);
+        }
+
+        eprintln!("Error: {:?}", e);
+        std::process::exit(1);
+    }
 }
 
 pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
@@ -30,10 +43,11 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         EnvFilter::new("info")
     };
 
-    let _ = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(filter)
-        .try_init();
+        .try_init()
+        .ok();
 
     let provider = pinner::providers::UnifiedProvider::new(
         cli.github_url.clone(),
@@ -45,7 +59,7 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         cli.forgejo_url.clone(),
         cli.forgejo_token.clone(),
     );
-    let registry = OciRegistryProvider::new();
+    let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone());
 
     // Determine the workflows directory to process
     let workflows_to_process = get_workflows(&cli.workflows);
