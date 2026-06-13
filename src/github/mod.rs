@@ -12,6 +12,15 @@ use std::time::Duration;
 use mockall::automock;
 
 /// Represents a GitHub Action name (e.g., "actions/checkout").
+///
+/// # Example
+///
+/// ```
+/// use pinner::github::ActionName;
+///
+/// let name = ActionName::from("actions/checkout");
+/// assert_eq!(name.to_string(), "actions/checkout");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActionName(pub String);
 
@@ -34,6 +43,15 @@ impl From<&str> for ActionName {
 }
 
 /// Represents a Git commit SHA-1 hash.
+///
+/// # Example
+///
+/// ```
+/// use pinner::github::CommitSha;
+///
+/// let sha = CommitSha::from("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".to_string());
+/// assert_eq!(sha.to_string(), "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitSha(pub String);
 
@@ -50,6 +68,15 @@ impl From<String> for CommitSha {
 }
 
 /// Represents a Git branch name.
+///
+/// # Example
+///
+/// ```
+/// use pinner::github::BranchName;
+///
+/// let branch = BranchName::from("main".to_string());
+/// assert_eq!(branch.to_string(), "main");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchName(pub String);
 

@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn test_error_from_ignore() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "ignore err");
+        let io_err = io::Error::other("ignore err");
         let err = PinnerError::Ignore(ignore::Error::Io(io_err));
         assert!(format!("{}", err).contains("Ignore error"));
     }

@@ -21,6 +21,25 @@ fn default_concurrency() -> usize {
 }
 
 /// Configuration for Pinner.
+///
+/// # Example
+///
+/// ```
+/// use pinner::operations::Config;
+/// use pinner::github::ActionName;
+/// use std::collections::HashSet;
+///
+/// let mut ignore = HashSet::new();
+/// ignore.insert(ActionName::from("actions/checkout"));
+///
+/// let config = Config {
+///     ignore_actions: ignore,
+///     concurrency: 5,
+///     github_url: Some("https://github.mycompany.com/api/v3".to_string()),
+/// };
+///
+/// assert_eq!(config.concurrency, 5);
+/// ```
 #[derive(Debug, Deserialize)]
 pub struct Config {
     /// List of actions to ignore.
@@ -593,10 +612,32 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         out
     }
 
+    /// Prints a standard line-by-line diff.
     pub fn print_diff(&self, old: &str, new: &str) {
         print!("{}", self.format_diff(old, new));
     }
 
+    /// Formats an inline diff for small changes (e.g., a single line).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pinner::Operations;
+    /// use pinner::github::ReqwestGithubProvider;
+    /// use pinner::registry::OciRegistryProvider;
+    /// use pinner::cli::UpgradeStrategy;
+    /// use std::sync::Arc;
+    ///
+    /// let ops = Operations::new(
+    ///     Arc::new(ReqwestGithubProvider::new("https://api.github.com".to_string(), None)),
+    ///     Arc::new(OciRegistryProvider::new()),
+    ///     true, true, false, false,
+    ///     UpgradeStrategy::Latest
+    /// );
+    ///
+    /// let diff = ops.format_inline_diff("actions/checkout@v2", "actions/checkout@hash");
+    /// assert!(diff.contains("actions/checkout"));
+    /// ```
     pub fn format_inline_diff(&self, old: &str, new: &str) -> String {
         let mut out = String::new();
         let old_trimmed = old.trim();

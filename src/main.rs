@@ -76,7 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_app_completion() {
-        let cli = Cli::try_parse_from(&["pinner", "generate-completion", "bash"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "generate-completion", "bash"]).unwrap();
         // This will print to stdout, but should cover the code path
         run_app(cli).await.unwrap();
     }
@@ -92,13 +92,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_app_quiet() {
-        let cli = Cli::try_parse_from(&["pinner", "-q", "verify"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "-q", "verify"]).unwrap();
         let _ = run_app(cli).await;
     }
 
     #[tokio::test]
     async fn test_run_app_verbose() {
-        let cli = Cli::try_parse_from(&["pinner", "-v", "verify"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "-v", "verify"]).unwrap();
         let _ = run_app(cli).await;
     }
 }

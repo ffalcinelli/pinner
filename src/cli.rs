@@ -1,6 +1,16 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+/// Strategy for upgrading actions.
+///
+/// # Example
+///
+/// ```
+/// use pinner::cli::UpgradeStrategy;
+///
+/// let strategy = UpgradeStrategy::Latest;
+/// assert_eq!(strategy, UpgradeStrategy::Latest);
+/// ```
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum UpgradeStrategy {
     /// Upgrade to the latest available version
@@ -88,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_cli_pin_basic() {
-        let cli = Cli::try_parse_from(&["pinner", "pin"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "pin"]).unwrap();
         assert_eq!(cli.command, Commands::Pin);
         assert!(!cli.yes);
         assert!(!cli.quiet());
@@ -98,13 +108,13 @@ mod tests {
 
     #[test]
     fn test_cli_verify() {
-        let cli = Cli::try_parse_from(&["pinner", "verify"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "verify"]).unwrap();
         assert_eq!(cli.command, Commands::Verify);
     }
     #[test]
     fn test_cli_flags() {
         let cli =
-            Cli::try_parse_from(&["pinner", "-y", "-q", "--dry-run", "--json", "pin"]).unwrap();
+            Cli::try_parse_from(["pinner", "-y", "-q", "--dry-run", "--json", "pin"]).unwrap();
         assert_eq!(cli.command, Commands::Pin);
         assert!(cli.yes);
         assert!(cli.quiet);
@@ -114,13 +124,13 @@ mod tests {
 
     #[test]
     fn test_cli_upgrade() {
-        let cli = Cli::try_parse_from(&["pinner", "upgrade"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "upgrade"]).unwrap();
         assert_eq!(cli.command, Commands::Upgrade);
     }
 
     #[test]
     fn test_cli_set() {
-        let cli = Cli::try_parse_from(&[
+        let cli = Cli::try_parse_from([
             "pinner",
             "set",
             "actions/checkout",
@@ -139,7 +149,7 @@ mod tests {
     #[test]
     fn test_cli_workflows() {
         let cli =
-            Cli::try_parse_from(&["pinner", "-w", "dir1", "--workflows", "dir2", "pin"]).unwrap();
+            Cli::try_parse_from(["pinner", "-w", "dir1", "--workflows", "dir2", "pin"]).unwrap();
         assert_eq!(
             cli.workflows,
             vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
@@ -150,7 +160,7 @@ mod tests {
     #[serial_test::serial]
     fn test_cli_token_env() {
         std::env::set_var("GITHUB_TOKEN", "test_token");
-        let cli = Cli::try_parse_from(&["pinner", "pin"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "pin"]).unwrap();
         assert_eq!(cli.token, Some("test_token".to_string()));
         std::env::remove_var("GITHUB_TOKEN");
     }
