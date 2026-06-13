@@ -951,39 +951,42 @@ pub enum ProviderType {
     Forgejo(Arc<ReqwestForgejoProvider>),
 }
 
+/// Configuration for the UnifiedProvider.
+pub struct UnifiedProviderConfig {
+    pub github_url: String,
+    pub github_token: Option<String>,
+    pub bitbucket_url: String,
+    pub bitbucket_token: Option<String>,
+    pub gitlab_url: String,
+    pub gitlab_token: Option<String>,
+    pub forgejo_url: String,
+    pub forgejo_token: Option<String>,
+}
+
 /// A provider that dispatches to various CI providers based on the YAML key.
 pub struct UnifiedProvider {
     pub providers: Vec<ProviderType>,
 }
 
 impl UnifiedProvider {
-    pub fn new(
-        github_url: String,
-        github_token: Option<String>,
-        bitbucket_url: String,
-        bitbucket_token: Option<String>,
-        gitlab_url: String,
-        gitlab_token: Option<String>,
-        forgejo_url: String,
-        forgejo_token: Option<String>,
-    ) -> Self {
+    pub fn new(config: UnifiedProviderConfig) -> Self {
         Self {
             providers: vec![
                 ProviderType::GitHub(Arc::new(ReqwestGithubProvider::new(
-                    github_url,
-                    github_token,
+                    config.github_url,
+                    config.github_token,
                 ))),
                 ProviderType::Bitbucket(Arc::new(ReqwestBitbucketProvider::new(
-                    bitbucket_url,
-                    bitbucket_token,
+                    config.bitbucket_url,
+                    config.bitbucket_token,
                 ))),
                 ProviderType::GitLab(Arc::new(ReqwestGitLabProvider::new(
-                    gitlab_url,
-                    gitlab_token,
+                    config.gitlab_url,
+                    config.gitlab_token,
                 ))),
                 ProviderType::Forgejo(Arc::new(ReqwestForgejoProvider::new(
-                    forgejo_url,
-                    forgejo_token,
+                    config.forgejo_url,
+                    config.forgejo_token,
                 ))),
             ],
         }
@@ -1235,16 +1238,16 @@ mod tests {
             .create_async()
             .await;
 
-        let unified = UnifiedProvider::new(
-            server.url(),
-            None,
-            server.url(),
-            None,
-            server.url(),
-            None,
-            server.url(),
-            None,
-        );
+        let unified = UnifiedProvider::new(UnifiedProviderConfig {
+            github_url: server.url(),
+            github_token: None,
+            bitbucket_url: server.url(),
+            bitbucket_token: None,
+            gitlab_url: server.url(),
+            gitlab_token: None,
+            forgejo_url: server.url(),
+            forgejo_token: None,
+        });
 
         let rel = unified
             .get_latest_release(&DependencyName::from("o/r"), "uses")
@@ -1267,16 +1270,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_provider_error() {
-        let unified = UnifiedProvider::new(
-            "http://invalid".into(),
-            None,
-            "http://invalid".into(),
-            None,
-            "http://invalid".into(),
-            None,
-            "http://invalid".into(),
-            None,
-        );
+        let unified = UnifiedProvider::new(UnifiedProviderConfig {
+            github_url: "http://invalid".into(),
+            github_token: None,
+            bitbucket_url: "http://invalid".into(),
+            bitbucket_token: None,
+            gitlab_url: "http://invalid".into(),
+            gitlab_token: None,
+            forgejo_url: "http://invalid".into(),
+            forgejo_token: None,
+        });
         let res = unified
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await;
@@ -1638,16 +1641,16 @@ mod tests {
             .create_async()
             .await;
 
-        let unified = UnifiedProvider::new(
-            server.url(),
-            None,
-            server.url(),
-            None,
-            server.url(),
-            None,
-            server.url(),
-            None,
-        );
+        let unified = UnifiedProvider::new(UnifiedProviderConfig {
+            github_url: server.url(),
+            github_token: None,
+            bitbucket_url: server.url(),
+            bitbucket_token: None,
+            gitlab_url: server.url(),
+            gitlab_token: None,
+            forgejo_url: server.url(),
+            forgejo_token: None,
+        });
 
         let sha1 = unified
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")

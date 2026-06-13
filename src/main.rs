@@ -49,16 +49,17 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         .try_init()
         .ok();
 
-    let provider = pinner::providers::UnifiedProvider::new(
-        cli.github_url.clone(),
-        cli.github_token.clone(),
-        cli.bitbucket_url.clone(),
-        cli.bitbucket_token.clone(),
-        cli.gitlab_url.clone(),
-        cli.gitlab_token.clone(),
-        cli.forgejo_url.clone(),
-        cli.forgejo_token.clone(),
-    );
+    let provider =
+        pinner::providers::UnifiedProvider::new(pinner::providers::UnifiedProviderConfig {
+            github_url: cli.github_url.clone(),
+            github_token: cli.github_token.clone(),
+            bitbucket_url: cli.bitbucket_url.clone(),
+            bitbucket_token: cli.bitbucket_token.clone(),
+            gitlab_url: cli.gitlab_url.clone(),
+            gitlab_token: cli.gitlab_token.clone(),
+            forgejo_url: cli.forgejo_url.clone(),
+            forgejo_token: cli.forgejo_token.clone(),
+        });
     let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone());
 
     // Determine the workflows directory to process

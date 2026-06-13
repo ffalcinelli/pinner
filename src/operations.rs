@@ -108,29 +108,30 @@ pub struct JsonOutput {
     pub updates: Vec<UpdateResult>,
 }
 
+/// Options for configuring Operations.
+pub struct OperationsOptions {
+    pub yes: bool,
+    pub quiet: bool,
+    pub dry_run: bool,
+    pub json: bool,
+    pub upgrade_strategy: UpgradeStrategy,
+    pub concurrency: Option<usize>,
+}
+
 impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R> {
-    pub fn new(
-        github: Arc<G>,
-        registry: Arc<R>,
-        yes: bool,
-        quiet: bool,
-        dry_run: bool,
-        json: bool,
-        upgrade_strategy: UpgradeStrategy,
-        concurrency: Option<usize>,
-    ) -> Self {
+    pub fn new(github: Arc<G>, registry: Arc<R>, options: OperationsOptions) -> Self {
         let mut config = Self::load_config().unwrap_or_default();
-        if let Some(c) = concurrency {
+        if let Some(c) = options.concurrency {
             config.concurrency = c;
         }
         Self {
             github,
             registry,
-            yes,
-            quiet,
-            dry_run,
-            json,
-            upgrade_strategy,
+            yes: options.yes,
+            quiet: options.quiet,
+            dry_run: options.dry_run,
+            json: options.json,
+            upgrade_strategy: options.upgrade_strategy,
             config,
             #[cfg(test)]
             force_confirm: None,
@@ -692,7 +693,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     /// # Example
     ///
     /// ```
-    /// use pinner::Operations;
+    /// use pinner::{Operations, OperationsOptions};
     /// use pinner::providers::ReqwestGithubProvider;
     /// use pinner::registry::OciRegistryProvider;
     /// use pinner::cli::UpgradeStrategy;
@@ -701,9 +702,14 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     /// let ops = Operations::new(
     ///     Arc::new(ReqwestGithubProvider::new("https://api.github.com".to_string(), None)),
     ///     Arc::new(OciRegistryProvider::new(None, None)),
-    ///     true, true, false, false,
-    ///     UpgradeStrategy::Latest,
-    ///     None
+    ///     OperationsOptions {
+    ///         yes: true,
+    ///         quiet: true,
+    ///         dry_run: false,
+    ///         json: false,
+    ///         upgrade_strategy: UpgradeStrategy::Latest,
+    ///         concurrency: None,
+    ///     }
     /// );
     ///
     /// let diff = ops.format_inline_diff("actions/checkout@v2", "actions/checkout@hash");
@@ -773,12 +779,14 @@ mod tests {
         let mut ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.config = config;
 
@@ -796,12 +804,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         let d = ops.format_diff("line1\n", "line2\n");
@@ -825,12 +835,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
@@ -861,12 +873,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         let res = ops.verify(&[f.clone()]).await;
@@ -899,12 +913,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
@@ -931,12 +947,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
@@ -965,12 +983,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         let (tasks, file_contents) = ops.collect_tasks(&[f.clone()]).await.unwrap();
@@ -1015,12 +1035,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         assert_eq!(ops.config.concurrency, 42);
@@ -1032,12 +1054,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         let res = ops.pin(&[PathBuf::from("/non/existent/path/12345")]).await;
         assert!(res.is_err());

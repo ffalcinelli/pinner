@@ -17,7 +17,7 @@ pub mod yaml;
 
 pub use cli::{Cli, Commands};
 pub use error::PinnerError;
-pub use operations::Operations;
+pub use operations::{Operations, OperationsOptions};
 pub use providers::{RemoteProvider, ReqwestGithubProvider};
 pub use registry::{OciRegistryProvider, RegistryProvider};
 
@@ -42,12 +42,14 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     let ops = Operations::new(
         Arc::new(github),
         Arc::new(registry),
-        cli.yes,
-        cli.quiet,
-        cli.dry_run,
-        cli.json,
-        cli.upgrade_strategy,
-        cli.concurrency,
+        OperationsOptions {
+            yes: cli.yes,
+            quiet: cli.quiet,
+            dry_run: cli.dry_run,
+            json: cli.json,
+            upgrade_strategy: cli.upgrade_strategy,
+            concurrency: cli.concurrency,
+        },
     );
     match cli.command {
         Commands::Pin => ops.pin(&paths).await,
@@ -131,12 +133,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            false,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: false,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.pin(std::slice::from_ref(&wd)).await.unwrap();
 
@@ -163,12 +167,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(mock2),
             Arc::new(mock_reg),
-            true,
-            false,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: false,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         ops.upgrade(std::slice::from_ref(&wd)).await.unwrap();
@@ -250,12 +256,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            false,
-            false,
-            true,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: false,
+                dry_run: false,
+                json: true,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -345,12 +353,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.set(std::slice::from_ref(&f), "o/r", "newhash")
             .await
@@ -372,12 +382,14 @@ mod tests {
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            false,
-            true,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: false,
+                dry_run: true,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -490,12 +502,14 @@ jobs:
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -528,12 +542,14 @@ jobs:
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg.clone()),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Minor,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Minor,
+                concurrency: None,
+            },
         );
         ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("v1.1.1"));
@@ -549,12 +565,14 @@ jobs:
         let ops2 = Operations::new(
             Arc::new(mock2),
             Arc::new(mock_reg.clone()),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Major,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Major,
+                concurrency: None,
+            },
         );
         fs::write(&f, "uses: o/r@v1.1.0").unwrap();
         ops2.upgrade(std::slice::from_ref(&f)).await.unwrap();
@@ -574,12 +592,14 @@ jobs:
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(OciRegistryProvider::new(None, None)),
-            false,
-            false,
-            true,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: false,
+                quiet: false,
+                dry_run: true,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
@@ -590,12 +610,14 @@ jobs:
         let ops2 = Operations::new(
             Arc::new(mock2),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            true,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: true,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops2.pin(std::slice::from_ref(&f)).await.unwrap();
     }
@@ -612,12 +634,14 @@ jobs:
         let mut ops = Operations::new(
             Arc::new(mock),
             Arc::new(OciRegistryProvider::new(None, None)),
-            false,
-            false,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: false,
+                quiet: false,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.force_confirm = Some(true);
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -636,12 +660,14 @@ jobs:
         let mut ops = Operations::new(
             Arc::new(mock),
             Arc::new(OciRegistryProvider::new(None, None)),
-            false,
-            false,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: false,
+                quiet: false,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.force_confirm = Some(false);
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -676,12 +702,14 @@ include:
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         ops.pin(&[f.clone()]).await.unwrap();
@@ -725,12 +753,14 @@ pipelines:
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(mock_reg),
-            true,  // yes
-            true,  // quiet
-            false, // dry_run
-            false, // json
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
 
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -749,12 +779,14 @@ pipelines:
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            false,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: false,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         assert!(ops.verify(std::slice::from_ref(&f)).await.is_err());
     }
@@ -772,12 +804,14 @@ pipelines:
         let ops = Operations::new(
             Arc::new(mock),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
         let c = fs::read_to_string(&f).unwrap();
@@ -801,12 +835,14 @@ pipelines:
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            false,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: false,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.print_diff("old\n", "new\n");
         ops.print_inline_diff("old", "new");
@@ -848,12 +884,14 @@ pipelines:
         let ops = Operations::new(
             Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new(None, None)),
-            true,
-            true,
-            false,
-            false,
-            UpgradeStrategy::Latest,
-            None,
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                json: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+            },
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
         assert!(fs::read_to_string(&f).unwrap().contains("# v1"));
