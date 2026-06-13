@@ -7,7 +7,7 @@ Thank you for your interest in contributing to Pinner! We welcome all contributi
 1.  **Fork the repository** on GitHub.
 2.  **Clone your fork** locally:
     ```bash
-    git clone https://github.com/your-username/pinner.git
+    git clone https://github.com/ffalcinelli/pinner.git
     cd pinner
     ```
 3.  **Install dependencies**: Ensure you have Rust and Cargo installed (1.70+).

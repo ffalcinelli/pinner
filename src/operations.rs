@@ -1,6 +1,11 @@
+//! Core logic for pinning and upgrading actions.
+//!
+//! This module contains the [`Operations`] struct, which is the primary orchestrator
+//! for finding, fetching, and replacing action tags in YAML files.
+
 use crate::cli::UpgradeStrategy;
 use crate::error::PinnerError;
-use crate::github::{ActionName, CommitSha, GithubProvider};
+use crate::providers::{DependencyName, DependencyRef, RemoteProvider};
 use crate::registry::RegistryProvider;
 use crate::yaml::find_uses_nodes;
 use colored::Colorize;
@@ -20,37 +25,18 @@ fn default_concurrency() -> usize {
     10
 }
 
-/// Configuration for Pinner.
-///
-/// # Example
-///
-/// ```
-/// use pinner::operations::Config;
-/// use pinner::github::ActionName;
-/// use std::collections::HashSet;
-///
-/// let mut ignore = HashSet::new();
-/// ignore.insert(ActionName::from("actions/checkout"));
-///
-/// let config = Config {
-///     ignore_actions: ignore,
-///     concurrency: 5,
-///     github_url: Some("https://github.mycompany.com/api/v3".to_string()),
-/// };
-///
-/// assert_eq!(config.concurrency, 5);
-/// ```
+/// Configuration for Pinner, typically loaded from a `.pinner.toml` file.
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// List of actions to ignore.
+    /// List of actions to ignore during pinning or upgrading.
     #[serde(default)]
-    pub ignore_actions: HashSet<ActionName>,
-    /// Number of concurrent GitHub API requests.
+    pub ignore_actions: HashSet<DependencyName>,
+    /// Number of concurrent API requests to make.
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
-    /// Custom GitHub API URL.
-    #[serde(default)]
-    pub github_url: Option<String>,
+    /// Custom API URL for the primary forge (e.g., GitHub Enterprise).
+    #[serde(default, alias = "github_url")]
+    pub api_url: Option<String>,
 }
 
 impl Default for Config {
@@ -58,13 +44,16 @@ impl Default for Config {
         Self {
             ignore_actions: HashSet::new(),
             concurrency: default_concurrency(),
-            github_url: None,
+            api_url: None,
         }
     }
 }
 
-/// Orchestrator for pinning operations.
-pub struct Operations<G: GithubProvider, R: RegistryProvider> {
+/// Orchestrator for pinning and upgrading operations.
+///
+/// This struct holds the shared state and configuration needed to perform
+/// updates across multiple files.
+pub struct Operations<G: RemoteProvider, R: RegistryProvider> {
     github: Arc<G>,
     registry: Arc<R>,
     yes: bool,
@@ -72,28 +61,45 @@ pub struct Operations<G: GithubProvider, R: RegistryProvider> {
     dry_run: bool,
     json: bool,
     upgrade_strategy: UpgradeStrategy,
+    /// The current configuration.
     pub config: Config,
     #[cfg(test)]
     pub force_confirm: Option<bool>,
 }
 
+/// Represents a specific location in a file that needs to be updated.
 pub struct UpdateTask {
+    /// Path to the file containing the dependency.
     pub path: PathBuf,
+    /// Byte offset where the dependency value starts.
     pub start: usize,
+    /// Byte offset where the dependency value ends.
     pub end: usize,
-    pub action: ActionName,
+    /// The name of the action or dependency.
+    pub action: DependencyName,
+    /// The current tag or ref (if any).
     pub current_tag: Option<String>,
+    /// Any existing comment following the dependency.
     pub comment: Option<String>,
+    /// The YAML key used (e.g., "uses", "image", "pipe").
+    pub key: String,
 }
 
+/// The result of a successful update operation.
 #[derive(Serialize)]
 pub struct UpdateResult {
+    /// The task that was executed.
     #[serde(skip)]
     pub task: UpdateTask,
-    pub action: ActionName,
+    /// The name of the updated action.
+    pub action: DependencyName,
+    /// The path to the modified file.
     pub path: PathBuf,
+    /// The previous tag or ref.
     pub old_tag: Option<String>,
-    pub new_sha: CommitSha,
+    /// The new immutable SHA or digest.
+    pub new_sha: DependencyRef,
+    /// The new tag (used as a comment for readability).
     pub new_tag: Option<String>,
 }
 
@@ -102,7 +108,7 @@ pub struct JsonOutput {
     pub updates: Vec<UpdateResult>,
 }
 
-impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R> {
+impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R> {
     pub fn new(
         github: Arc<G>,
         registry: Arc<R>,
@@ -144,22 +150,23 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
         let registry = self.registry.clone();
-        self.process(paths, move |action, tag| {
-            let a = ActionName::from(action);
+        self.process(paths, move |action, tag, key| {
+            let a = action.clone();
             let t = tag.map(|s| s.to_string());
+            let k = key.to_string();
             let github = github.clone();
             let registry = registry.clone();
             async move {
                 if let Some(ver) = t {
-                    if a.0.starts_with("docker://") {
+                    if a.0.starts_with("docker://") || k == "image" {
                         if !ver.starts_with("sha256:") {
                             let image = a.0.trim_start_matches("docker://");
                             if let Ok(digest) = registry.resolve_digest(image, &ver).await {
-                                return Some((CommitSha(digest), Some(ver)));
+                                return Some((DependencyRef::from(digest), Some(ver)));
                             }
                         }
                     } else if ver.len() != 40 {
-                        if let Ok(sha) = github.get_commit_sha(&a, &ver).await {
+                        if let Ok(sha) = github.get_commit_sha(&a, &ver, &k).await {
                             return Some((sha, Some(ver)));
                         }
                     }
@@ -176,10 +183,10 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         action: &str,
         hash: &str,
     ) -> Result<(), PinnerError> {
-        let a = ActionName::from(action);
-        let h = CommitSha::from(hash.to_string());
-        self.process(paths, move |act, _| {
-            let (a, h, act_owned) = (a.clone(), h.clone(), ActionName::from(act));
+        let a = DependencyName::from(action);
+        let h = DependencyRef::from(hash.to_string());
+        self.process(paths, move |act, _, _| {
+            let (a, h, act_owned) = (a.clone(), h.clone(), act.clone());
             async move {
                 if act_owned == a {
                     Some((h, None))
@@ -193,20 +200,34 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
     pub async fn upgrade(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
+        let registry = self.registry.clone();
         let strategy = self.upgrade_strategy.clone();
-        self.process(paths, move |a, current_tag| {
-            let a = ActionName::from(a);
+        self.process(paths, move |a, current_tag, key| {
+            let a = a.clone();
+            let k = key.to_string();
             let github = github.clone();
+            let registry = registry.clone();
             let strategy = strategy.clone();
             let current_tag = current_tag.map(|s| s.to_string());
             async move {
-                if a.0.starts_with("docker://") {
+                if a.0.starts_with("docker://") || k == "image" {
+                    let image = a.0.trim_start_matches("docker://");
+                    if let Some(ver) = &current_tag {
+                        if let Ok(digest) = registry.resolve_digest(image, ver).await {
+                            return Some((DependencyRef::from(digest), Some(ver.clone())));
+                        }
+                    } else {
+                        // Fallback to latest tag for images if no tag specified
+                        if let Ok(digest) = registry.resolve_digest(image, "latest").await {
+                            return Some((DependencyRef::from(digest), Some("latest".to_string())));
+                        }
+                    }
                     return None;
                 }
 
                 if strategy == UpgradeStrategy::Commit {
-                    if let Ok(branch) = github.get_default_branch(&a).await {
-                        if let Ok(sha) = github.get_commit_sha(&a, &branch.0).await {
+                    if let Ok(branch) = github.get_default_branch(&a, &k).await {
+                        if let Ok(sha) = github.get_commit_sha(&a, &branch.0, &k).await {
                             return Some((sha, Some(branch.0)));
                         }
                     }
@@ -214,9 +235,9 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 }
 
                 let latest_tag = if strategy == UpgradeStrategy::Latest {
-                    github.get_latest_release(&a).await.ok()
+                    github.get_latest_release(&a, &k).await.ok()
                 } else {
-                    let tags = github.list_tags(&a).await.unwrap_or_default();
+                    let tags = github.list_tags(&a, &k).await.unwrap_or_default();
                     let current_tag = current_tag.as_deref().unwrap_or("");
                     let current_version =
                         semver::Version::parse(current_tag.trim_start_matches('v')).ok();
@@ -249,7 +270,7 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 };
 
                 if let Some(tag) = latest_tag {
-                    if let Ok(sha) = github.get_commit_sha(&a, &tag).await {
+                    if let Ok(sha) = github.get_commit_sha(&a, &tag, &k).await {
                         return Some((sha, Some(tag)));
                     }
                 }
@@ -284,13 +305,13 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                     let mut uses_nodes = Vec::new();
                     find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
 
-                    for (_, _, val, _) in uses_nodes {
+                    for (_, _, val, _, _) in uses_nodes {
                         if val.starts_with("./") {
                             continue;
                         }
 
                         let parts: Vec<&str> = val.split('@').collect();
-                        let action = ActionName::from(parts[0]);
+                        let action = DependencyName::from(parts[0]);
 
                         if self.config.ignore_actions.contains(&action) {
                             continue;
@@ -338,8 +359,8 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
     async fn process<F, Fut>(&self, paths: &[PathBuf], f: F) -> Result<(), PinnerError>
     where
-        F: Fn(&str, Option<&str>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Option<(CommitSha, Option<String>)>> + Send,
+        F: Fn(&DependencyName, Option<&str>, &str) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<(DependencyRef, Option<String>)>> + Send,
     {
         let mut parser = TSParser::new();
         parser
@@ -367,7 +388,10 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                     find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
                     file_contents.insert(path.to_path_buf(), content);
 
-                    for (start, end, val, comment) in uses_nodes {
+                    for (start, end, val, comment, key) in uses_nodes {
+                        if key == "include" || key == "project" {
+                            continue;
+                        }
                         if val.starts_with("./") {
                             continue;
                         }
@@ -384,7 +408,7 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                             (val.as_str(), None)
                         };
 
-                        let action = ActionName::from(action_part);
+                        let action = DependencyName::from(action_part);
 
                         if self.config.ignore_actions.contains(&action) {
                             continue;
@@ -397,6 +421,7 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                             action,
                             current_tag: tag.map(|s| s.to_string()),
                             comment,
+                            key,
                         });
                     }
                 }
@@ -422,7 +447,7 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             let pb = pb.clone();
             async move {
                 let res = if let Some((sha, tag)) =
-                    f_clone(&task.action.0, task.current_tag.as_deref()).await
+                    f_clone(&task.action, task.current_tag.as_deref(), &task.key).await
                 {
                     Some(UpdateResult {
                         action: task.action.clone(),
@@ -520,12 +545,15 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                     format!(" # {}", final_suffix)
                 };
 
-                let separator = "@";
-
-                let new_val = format!(
-                    "{}{}{}{}{}",
-                    res.task.action, separator, res.new_sha, new_comment, extra_suffix
-                );
+                let new_val = if res.task.key == "ref" {
+                    format!("{}{}{}", res.new_sha, new_comment, extra_suffix)
+                } else {
+                    let separator = if res.task.key == "pipe" { ":" } else { "@" };
+                    format!(
+                        "{}{}{}{}{}",
+                        res.task.action, separator, res.new_sha, new_comment, extra_suffix
+                    )
+                };
 
                 if old_val_with_suffix == new_val {
                     continue;
@@ -623,7 +651,7 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     ///
     /// ```
     /// use pinner::Operations;
-    /// use pinner::github::ReqwestGithubProvider;
+    /// use pinner::providers::ReqwestGithubProvider;
     /// use pinner::registry::OciRegistryProvider;
     /// use pinner::cli::UpgradeStrategy;
     /// use std::sync::Arc;
@@ -674,26 +702,29 @@ impl<G: GithubProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::MockGithubProvider;
+    use crate::providers::MockRemoteProvider;
     use crate::registry::OciRegistryProvider;
     use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_operations_ignore_actions() {
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: ignore/me@v1\nuses: keep/me@v1").unwrap();
 
         let mut config = Config::default();
-        config.ignore_actions.insert(ActionName::from("ignore/me"));
+        config
+            .ignore_actions
+            .insert(DependencyName::from("ignore/me"));
 
         mock.expect_get_commit_sha()
             .with(
-                mockall::predicate::eq(ActionName::from("keep/me")),
+                mockall::predicate::eq(DependencyName::from("keep/me")),
                 mockall::predicate::eq("v1"),
+                mockall::predicate::eq("uses"),
             )
-            .returning(|_, _| Ok(CommitSha("newhash".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("newhash".to_string())));
 
         let mock_reg = OciRegistryProvider::new();
         let mut ops = Operations::new(
@@ -716,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_operations_diff_methods_sync() {
-        let mock = MockGithubProvider::new();
+        let mock = MockRemoteProvider::new();
         let mock_reg = OciRegistryProvider::new();
         let ops = Operations::new(
             Arc::new(mock),

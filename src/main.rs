@@ -4,7 +4,7 @@
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use pinner::{run, Cli, OciRegistryProvider, Operations, ReqwestGithubProvider};
+use pinner::{run, Cli, OciRegistryProvider};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -35,27 +35,23 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         .with(filter)
         .try_init();
 
-    // Initialize the default GitHub provider
-    let github_url = cli
-        .github_url
-        .clone()
-        .or_else(|| {
-            Operations::<ReqwestGithubProvider, OciRegistryProvider>::load_config_from_path(
-                std::path::Path::new(".pinner.toml"),
-            )
-            .ok()
-            .and_then(|c| c.github_url)
-        })
-        .unwrap_or_else(|| "https://api.github.com".to_string());
-
-    let github = ReqwestGithubProvider::new(github_url, cli.token.clone());
+    let provider = pinner::providers::UnifiedProvider::new(
+        cli.github_url.clone(),
+        cli.github_token.clone(),
+        cli.bitbucket_url.clone(),
+        cli.bitbucket_token.clone(),
+        cli.gitlab_url.clone(),
+        cli.gitlab_token.clone(),
+        cli.forgejo_url.clone(),
+        cli.forgejo_token.clone(),
+    );
     let registry = OciRegistryProvider::new();
 
     // Determine the workflows directory to process
     let workflows_to_process = get_workflows(&cli.workflows);
 
     // Execute the requested command
-    run(cli, github, registry, workflows_to_process)
+    run(cli, provider, registry, workflows_to_process)
         .await
         .context("Failed to run pinner")?;
 
@@ -64,7 +60,61 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
 
 pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
     if cli_workflows.is_empty() {
-        vec![Path::new(".github/workflows").to_path_buf()]
+        let mut defaults = Vec::new();
+
+        // Check for GitHub Actions
+        let github_workflows = Path::new(".github/workflows");
+        if github_workflows.exists() {
+            defaults.push(github_workflows.to_path_buf());
+        }
+
+        // Check for Bitbucket Pipelines
+        let bitbucket_yml = Path::new("bitbucket-pipelines.yml");
+        if bitbucket_yml.exists() {
+            defaults.push(bitbucket_yml.to_path_buf());
+        } else {
+            let bitbucket_yaml = Path::new("bitbucket-pipelines.yaml");
+            if bitbucket_yaml.exists() {
+                defaults.push(bitbucket_yaml.to_path_buf());
+            }
+        }
+
+        // GitLab CI
+        let gitlab_ci = Path::new(".gitlab-ci.yml");
+        if gitlab_ci.exists() {
+            defaults.push(gitlab_ci.to_path_buf());
+        }
+
+        // CircleCI
+        let circle_ci = Path::new(".circleci/config.yml");
+        if circle_ci.exists() {
+            defaults.push(circle_ci.to_path_buf());
+        }
+
+        // Travis CI
+        let travis_yml = Path::new(".travis.yml");
+        if travis_yml.exists() {
+            defaults.push(travis_yml.to_path_buf());
+        }
+
+        // AppVeyor
+        let appveyor_yml = Path::new("appveyor.yml");
+        if appveyor_yml.exists() {
+            defaults.push(appveyor_yml.to_path_buf());
+        }
+
+        // Forgejo / Gitea
+        let forgejo_workflows = Path::new(".forgejo/workflows");
+        if forgejo_workflows.exists() {
+            defaults.push(forgejo_workflows.to_path_buf());
+        }
+
+        if defaults.is_empty() {
+            // Fallback to default GitHub path if nothing found
+            vec![Path::new(".github/workflows").to_path_buf()]
+        } else {
+            defaults
+        }
     } else {
         cli_workflows.to_vec()
     }
@@ -74,6 +124,17 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_get_workflows() {
+        // Since we can't easily mock the filesystem here without more complexity,
+        // we just test the cli_workflows priority.
+        let cli_paths = vec![PathBuf::from("custom/path")];
+        assert_eq!(get_workflows(&cli_paths), cli_paths);
+
+        // Default case (will likely return .github/workflows if it doesn't exist in the current env)
+        assert_eq!(get_workflows(&[]), vec![PathBuf::from(".github/workflows")]);
+    }
+
     #[tokio::test]
     async fn test_run_app_completion() {
         let cli = Cli::try_parse_from(["pinner", "generate-completion", "bash"]).unwrap();
@@ -81,24 +142,16 @@ mod tests {
         run_app(cli).await.unwrap();
     }
 
-    #[test]
-    fn test_get_workflows() {
-        assert_eq!(get_workflows(&[]), vec![PathBuf::from(".github/workflows")]);
-        assert_eq!(
-            get_workflows(&[PathBuf::from("dir")]),
-            vec![PathBuf::from("dir")]
-        );
-    }
-
     #[tokio::test]
     async fn test_run_app_quiet() {
-        let cli = Cli::try_parse_from(["pinner", "-q", "verify"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "--quiet", "verify"]).unwrap();
+        // This will fail if no workflows found, but that's okay for coverage
         let _ = run_app(cli).await;
     }
 
     #[tokio::test]
     async fn test_run_app_verbose() {
-        let cli = Cli::try_parse_from(["pinner", "-v", "verify"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "--verbose", "verify"]).unwrap();
         let _ = run_app(cli).await;
     }
 }

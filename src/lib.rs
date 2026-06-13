@@ -1,26 +1,39 @@
+//! # Pinner
+//!
+//! `pinner` is a high-performance Rust library and CLI utility designed to hash-pin
+//! dependencies in CI/CD workflow files. It currently supports GitHub Actions,
+//! GitLab CI, Bitbucket Pipelines, and Docker images.
+//!
+//! The core logic resides in the [`Operations`] struct, which coordinates between
+//! repository providers (like GitHub) and YAML parsing logic to perform surgical
+//! replacements of mutable tags with immutable commit SHAs or digests.
+
 pub mod cli;
 pub mod error;
-pub mod github;
 pub mod operations;
+pub mod providers;
 pub mod registry;
 pub mod yaml;
 
 pub use cli::{Cli, Commands};
 pub use error::PinnerError;
-pub use github::{GithubProvider, ReqwestGithubProvider};
 pub use operations::Operations;
+pub use providers::{RemoteProvider, ReqwestGithubProvider};
 pub use registry::{OciRegistryProvider, RegistryProvider};
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Runs the Pinner CLI logic.
+/// Runs the Pinner CLI logic based on the provided configuration.
 ///
-/// # Arguments
-/// * `cli` - Parsed command line arguments.
-/// * `github` - An implementation of [`GithubProvider`].
-/// * `paths` - Paths to workflow files or directories to process.
-pub async fn run<G: GithubProvider + 'static, R: RegistryProvider + 'static>(
+/// This is the main entry point for the CLI application. It initializes the
+/// necessary providers and delegates the command execution to [`Operations`].
+///
+/// # Errors
+///
+/// Returns a [`PinnerError`] if any operation fails, such as network issues,
+/// file system errors, or parsing failures.
+pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     cli: Cli,
     github: G,
     registry: R,
@@ -48,7 +61,7 @@ pub async fn run<G: GithubProvider + 'static, R: RegistryProvider + 'static>(
 mod tests {
     use super::*;
     use crate::cli::UpgradeStrategy;
-    use crate::github::{ActionName, CommitSha, MockGithubProvider};
+    use crate::providers::{DependencyName, DependencyRef, MockRemoteProvider};
     use crate::registry::{MockRegistryProvider, OciRegistryProvider};
     use ignore::WalkBuilder;
     use mockito::Server;
@@ -82,21 +95,24 @@ mod tests {
 
         let p = ReqwestGithubProvider::new(s.url(), None);
         assert!(p
-            .get_commit_sha(&ActionName::from("o/r"), "v1")
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await
             .is_ok());
         assert_eq!(
-            p.get_latest_release(&ActionName::from("o/r"))
+            p.get_latest_release(&DependencyName::from("o/r"), "uses")
                 .await
                 .unwrap(),
             "v2"
         );
 
-        let mut mock = MockGithubProvider::new();
-        mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".into())));
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_commit_sha().returning(|_, _, _| {
+            Ok(DependencyRef::from(
+                "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".to_string(),
+            ))
+        });
         mock.expect_get_latest_release()
-            .returning(|_| Ok("v2".into()));
+            .returning(|_, _| Ok("v2".to_string()));
 
         let dir = tempdir().unwrap();
         let wd = dir.path().join("w");
@@ -132,13 +148,15 @@ mod tests {
         let already_pinned = fs::read_to_string(wd.join("already_pinned.yml")).unwrap();
         assert!(already_pinned.contains("uses: o/r@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1"));
 
-        let mut mock2 = MockGithubProvider::new();
+        let mut mock2 = MockRemoteProvider::new();
         mock2
             .expect_get_latest_release()
-            .returning(|_| Ok("v3".into()));
-        mock2
-            .expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("692973e3d937129bcbf40652eb9f2f61becf3332".into())));
+            .returning(|_, _| Ok("v3".to_string()));
+        mock2.expect_get_commit_sha().returning(|_, _, _| {
+            Ok(DependencyRef::from(
+                "692973e3d937129bcbf40652eb9f2f61becf3332".to_string(),
+            ))
+        });
         let mock_reg = OciRegistryProvider::new();
         let ops = Operations::new(
             Arc::new(mock2),
@@ -154,10 +172,10 @@ mod tests {
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
 
-        let mut mock3 = MockGithubProvider::new();
+        let mut mock3 = MockRemoteProvider::new();
         mock3
             .expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("s".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("s".to_string())));
         run(
             Cli {
                 command: Commands::Pin,
@@ -166,9 +184,15 @@ mod tests {
                 quiet: true,
                 verbose: false,
                 dry_run: false,
-                token: None,
+                github_token: None,
+                bitbucket_token: None,
+                gitlab_token: None,
+                forgejo_token: None,
                 json: false,
-                github_url: None,
+                github_url: "https://api.github.com".to_string(),
+                bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+                gitlab_url: "https://gitlab.com".to_string(),
+                forgejo_url: "https://codeberg.org".to_string(),
                 upgrade_strategy: UpgradeStrategy::Latest,
             },
             mock3,
@@ -185,12 +209,18 @@ mod tests {
                 quiet: true,
                 verbose: false,
                 dry_run: false,
-                token: None,
+                github_token: None,
+                bitbucket_token: None,
+                gitlab_token: None,
+                forgejo_token: None,
                 json: false,
-                github_url: None,
+                github_url: "https://api.github.com".to_string(),
+                bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+                gitlab_url: "https://gitlab.com".to_string(),
+                forgejo_url: "https://codeberg.org".to_string(),
                 upgrade_strategy: UpgradeStrategy::Latest,
             },
-            MockGithubProvider::new(),
+            MockRemoteProvider::new(),
             OciRegistryProvider::new(),
             vec![PathBuf::from("/n")]
         )
@@ -200,9 +230,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_operations_json() {
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("newhash".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("newhash".to_string())));
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
@@ -233,7 +263,7 @@ mod tests {
             .create_async()
             .await;
         assert!(p
-            .get_commit_sha(&ActionName::from("o/r"), "v1")
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await
             .is_err());
 
@@ -243,13 +273,13 @@ mod tests {
             .create_async()
             .await;
         assert!(p
-            .get_commit_sha(&ActionName::from("o/r"), "v500")
+            .get_commit_sha(&DependencyName::from("o/r"), "v500", "uses")
             .await
             .is_err());
 
         let p_bad_url = ReqwestGithubProvider::new("http://127.0.0.1:0".to_string(), None);
         assert!(p_bad_url
-            .get_commit_sha(&ActionName::from("o/r"), "v1")
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await
             .is_err());
 
@@ -259,7 +289,7 @@ mod tests {
             .create_async()
             .await;
         assert!(p
-            .get_latest_release(&ActionName::from("o/r"))
+            .get_latest_release(&DependencyName::from("o/r"), "uses")
             .await
             .is_err());
 
@@ -269,7 +299,7 @@ mod tests {
             .create_async()
             .await;
         assert_eq!(
-            p.get_latest_release(&ActionName::from("o/r"))
+            p.get_latest_release(&DependencyName::from("o/r"), "uses")
                 .await
                 .unwrap(),
             "main"
@@ -287,7 +317,7 @@ mod tests {
             .create_async()
             .await;
         assert_eq!(
-            p.get_latest_release(&ActionName::from("o/r2"))
+            p.get_latest_release(&DependencyName::from("o/r2"), "uses")
                 .await
                 .unwrap(),
             "develop"
@@ -296,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_operations_set() {
-        let mock = MockGithubProvider::new();
+        let mock = MockRemoteProvider::new();
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
@@ -320,9 +350,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_operations_dry_run() {
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("newhash".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("newhash".to_string())));
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
@@ -371,8 +401,10 @@ jobs:
         assert_eq!(results.len(), 2);
         assert!(results
             .iter()
-            .any(|(_, _, v, _)| v == "actions/checkout@v3"));
-        assert!(results.iter().any(|(_, _, v, _)| v == "owner/repo@v1"));
+            .any(|(_, _, v, _, k)| v == "actions/checkout@v3" && k == "uses"));
+        assert!(results
+            .iter()
+            .any(|(_, _, v, _, k)| v == "owner/repo@v1" && k == "uses"));
     }
 
     #[tokio::test]
@@ -384,15 +416,16 @@ jobs:
         let mut results = Vec::new();
         crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
         assert!(results[0].3.is_some());
+        assert_eq!(results[0].4, "uses");
     }
 
     #[tokio::test]
     async fn test_run_subcommands() {
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("h".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
         mock.expect_get_latest_release()
-            .returning(|_| Ok("v2".into()));
+            .returning(|_, _| Ok("v2".to_string()));
 
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
@@ -405,9 +438,15 @@ jobs:
             quiet: true,
             verbose: false,
             dry_run: false,
-            token: None,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
             json: false,
-            github_url: None,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
         };
         run(cli, mock, OciRegistryProvider::new(), vec![f.clone()])
@@ -422,11 +461,11 @@ jobs:
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: docker://alpine:3.18").unwrap();
 
-        let mock = MockGithubProvider::new();
+        let mock = MockRemoteProvider::new();
         let mut mock_reg = MockRegistryProvider::new();
         mock_reg
             .expect_resolve_digest()
-            .returning(|_, _| Ok("sha256:digest".into()));
+            .returning(|_, _| Ok("sha256:digest".to_string()));
 
         let ops = Operations::new(
             Arc::new(mock),
@@ -450,8 +489,8 @@ jobs:
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1.1.0").unwrap();
 
-        let mut mock = MockGithubProvider::new();
-        mock.expect_list_tags().returning(|_| {
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_list_tags().returning(|_, _| {
             Ok(vec![
                 "v1.1.0".into(),
                 "v1.1.1".into(),
@@ -460,7 +499,7 @@ jobs:
             ])
         });
         mock.expect_get_commit_sha()
-            .returning(|_, tag| Ok(CommitSha(format!("hash-{}", tag))));
+            .returning(|_, tag, _| Ok(DependencyRef::from(format!("hash-{}", tag))));
 
         let mock_reg = OciRegistryProvider::new();
 
@@ -478,13 +517,13 @@ jobs:
         assert!(fs::read_to_string(&f).unwrap().contains("v1.1.1"));
 
         // Major strategy
-        let mut mock2 = MockGithubProvider::new();
+        let mut mock2 = MockRemoteProvider::new();
         mock2
             .expect_list_tags()
-            .returning(|_| Ok(vec!["v1.1.0".into(), "v1.2.0".into(), "v2.0.0".into()]));
+            .returning(|_, _| Ok(vec!["v1.1.0".into(), "v1.2.0".into(), "v2.0.0".into()]));
         mock2
             .expect_get_commit_sha()
-            .returning(|_, tag| Ok(CommitSha(format!("hash-{}", tag))));
+            .returning(|_, tag, _| Ok(DependencyRef::from(format!("hash-{}", tag))));
         let ops2 = Operations::new(
             Arc::new(mock2),
             Arc::new(mock_reg.clone()),
@@ -505,9 +544,9 @@ jobs:
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1 # v1").unwrap();
 
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("h".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
 
         let ops = Operations::new(
             Arc::new(mock),
@@ -520,10 +559,10 @@ jobs:
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
 
-        let mut mock2 = MockGithubProvider::new();
+        let mut mock2 = MockRemoteProvider::new();
         mock2
             .expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("h".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
         let ops2 = Operations::new(
             Arc::new(mock2),
             Arc::new(OciRegistryProvider::new()),
@@ -538,9 +577,9 @@ jobs:
 
     #[tokio::test]
     async fn test_operations_interactive_accept() {
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("h".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
@@ -561,9 +600,9 @@ jobs:
 
     #[tokio::test]
     async fn test_operations_interactive_skip() {
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("h".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r@v1").unwrap();
@@ -583,13 +622,103 @@ jobs:
     }
 
     #[tokio::test]
+    async fn test_gitlab_pinning() {
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_commit_sha()
+            .with(
+                mockall::predicate::eq(DependencyName::from("my-group/my-project")),
+                mockall::predicate::eq("v1.0.0"),
+                mockall::predicate::eq("ref"),
+            )
+            .returning(|_, _, _| Ok(DependencyRef::from("gitlabsha".to_string())));
+
+        let dir = tempdir().unwrap();
+        let f = dir.path().join(".gitlab-ci.yml");
+        fs::write(
+            &f,
+            r#"
+include:
+  - project: 'my-group/my-project'
+    ref: 'v1.0.0'
+    file: 'template.yml'
+"#,
+        )
+        .unwrap();
+
+        let mock_reg = OciRegistryProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,
+            true,
+            false,
+            false,
+            UpgradeStrategy::Latest,
+        );
+
+        ops.pin(&[f.clone()]).await.unwrap();
+
+        let updated = fs::read_to_string(&f).unwrap();
+        println!("Updated content: {}", updated);
+        assert!(updated.contains("ref: gitlabsha # v1.0.0"));
+    }
+    #[tokio::test]
+    async fn test_bitbucket_pinning() {
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_commit_sha()
+            .with(
+                mockall::predicate::eq(DependencyName::from("atlassian/slack-notify")),
+                mockall::predicate::eq("2.1.0"),
+                mockall::predicate::eq("pipe"),
+            )
+            .returning(|_, _, _| Ok(DependencyRef::from("pipehash".to_string())));
+
+        let mut mock_reg = MockRegistryProvider::new();
+        mock_reg
+            .expect_resolve_digest()
+            .with(mockall::predicate::eq("node"), mockall::predicate::eq("20"))
+            .returning(|_, _| Ok("imghash".to_string()));
+
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("bitbucket-pipelines.yml");
+        fs::write(
+            &f,
+            "
+image: node:20
+pipelines:
+  default:
+    - step:
+        script:
+          - pipe: atlassian/slack-notify:2.1.0
+",
+        )
+        .unwrap();
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(mock_reg),
+            true,  // yes
+            true,  // quiet
+            false, // dry_run
+            false, // json
+            UpgradeStrategy::Latest,
+        );
+
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("pipe: atlassian/slack-notify:pipehash # 2.1.0"));
+        assert!(content.contains("image: node@imghash # 20"));
+    }
+
+    #[tokio::test]
     async fn test_verify_fail_multiple() {
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: o/r1@v1\nuses: o/r2@v2").unwrap();
 
         let ops = Operations::new(
-            Arc::new(MockGithubProvider::new()),
+            Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new()),
             true,
             false,
@@ -606,9 +735,9 @@ jobs:
         let f = dir.path().join("f.yml");
         fs::write(&f, "uses: ./local\nuses: o/r@v1").unwrap();
 
-        let mut mock = MockGithubProvider::new();
+        let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha()
-            .returning(|_, _| Ok(CommitSha("h".into())));
+            .returning(|_, _, _| Ok(DependencyRef::from("h".to_string())));
 
         let ops = Operations::new(
             Arc::new(mock),
@@ -631,7 +760,7 @@ jobs:
         let f = dir.path().join(".pinner.toml");
         fs::write(&f, "concurrency = 42").unwrap();
         let config =
-            Operations::<MockGithubProvider, OciRegistryProvider>::load_config_from_path(&f)
+            Operations::<MockRemoteProvider, OciRegistryProvider>::load_config_from_path(&f)
                 .unwrap();
         assert_eq!(config.concurrency, 42);
     }
@@ -639,7 +768,7 @@ jobs:
     #[tokio::test]
     async fn test_operations_print_diffs() {
         let ops = Operations::new(
-            Arc::new(MockGithubProvider::new()),
+            Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new()),
             true,
             false,
@@ -658,17 +787,18 @@ jobs:
             path: PathBuf::from("f.yml"),
             start: 0,
             end: 10,
-            action: ActionName::from("o/r"),
-            current_tag: Some("v1".into()),
+            action: DependencyName::from("o/r"),
+            current_tag: Some("v1".to_string()),
             comment: None,
+            key: "uses".to_string(),
         };
         let res = UpdateResult {
             task,
-            action: ActionName::from("o/r"),
+            action: DependencyName::from("o/r"),
             path: PathBuf::from("f.yml"),
-            old_tag: Some("v1".into()),
-            new_sha: CommitSha("h".into()),
-            new_tag: Some("v1".into()),
+            old_tag: Some("v1".to_string()),
+            new_sha: DependencyRef::from("h".to_string()),
+            new_tag: Some("v1".to_string()),
         };
         let output = JsonOutput { updates: vec![res] };
         assert!(serde_json::to_string(&output).is_ok());
@@ -684,7 +814,7 @@ jobs:
         )
         .unwrap();
         let ops = Operations::new(
-            Arc::new(MockGithubProvider::new()),
+            Arc::new(MockRemoteProvider::new()),
             Arc::new(OciRegistryProvider::new()),
             true,
             true,
