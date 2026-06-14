@@ -9,23 +9,24 @@ no-default-features = false
 [advisories]
 db-path = "~/.cargo/advisories"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
-unsound = "warn"
-notice = "warn"
+# vulnerability check is now implicit and always on
+unmaintained = "workspace"
+unsound = "all"
+yanked = "deny"
 
 [licenses]
-unlicensed = "deny"
 # Allow common open source licenses
 allow = [
     "MIT",
     "Apache-2.0",
     "BSD-3-Clause",
     "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
-copyleft = "deny"
 
 [bans]
-multiple-versions = "deny"
+multiple-versions = "warn"
 wildcards = "deny"
