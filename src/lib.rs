@@ -21,6 +21,8 @@ pub use operations::{Operations, OperationsOptions};
 pub use providers::{RemoteProvider, ReqwestGithubProvider};
 pub use registry::{OciRegistryProvider, RegistryProvider};
 
+use colored::Colorize;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -46,9 +48,10 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
             yes: cli.yes,
             quiet: cli.quiet,
             dry_run: cli.dry_run,
-            json: cli.json,
+            format: cli.output_format(),
             upgrade_strategy: cli.upgrade_strategy,
             concurrency: cli.concurrency,
+            ignore: cli.ignore,
         },
     );
     match cli.command {
@@ -56,8 +59,52 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         Commands::Upgrade => ops.upgrade(&paths).await,
         Commands::Verify => ops.verify(&paths).await,
         Commands::Set { action, hash } => ops.set(&paths, &action, &hash).await,
+        Commands::InstallHook => install_git_hook(),
         Commands::GenerateCompletion { .. } => Ok(()), // Handled in main
     }
+}
+
+/// Installs a pre-commit git hook that runs `pinner verify`.
+///
+/// This function creates a `.git/hooks/pre-commit` file that executes the verify
+/// command before each commit, helping ensure all actions remain pinned.
+pub fn install_git_hook() -> Result<(), PinnerError> {
+    let git_dir = PathBuf::from(".git");
+    if !git_dir.exists() {
+        return Err(PinnerError::Config(
+            "Not a git repository (no .git directory found)".into(),
+        ));
+    }
+
+    let hooks_dir = git_dir.join("hooks");
+    if !hooks_dir.exists() {
+        fs::create_dir_all(&hooks_dir)?;
+    }
+
+    let hook_path = hooks_dir.join("pre-commit");
+
+    let hook_content = r#"#!/bin/sh
+# Pinner pre-commit hook: Verify that all actions are pinned to a SHA.
+pinner verify --quiet
+"#;
+
+    fs::write(&hook_path, hook_content)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook_path, perms)?;
+    }
+
+    println!(
+        "{} Git pre-commit hook installed successfully at {}",
+        "✔".green().bold(),
+        hook_path.display().to_string().cyan()
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -137,9 +184,10 @@ mod tests {
                 yes: true,
                 quiet: false,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.pin(std::slice::from_ref(&wd)).await.unwrap();
@@ -171,9 +219,10 @@ mod tests {
                 yes: true,
                 quiet: false,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -197,6 +246,7 @@ mod tests {
                 bitbucket_token: None,
                 gitlab_token: None,
                 forgejo_token: None,
+                format: crate::cli::OutputFormat::Text,
                 json: false,
                 github_url: "https://api.github.com".to_string(),
                 bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
@@ -204,6 +254,7 @@ mod tests {
                 forgejo_url: "https://codeberg.org".to_string(),
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
                 oci_username: None,
                 oci_password: None,
             },
@@ -225,6 +276,7 @@ mod tests {
                 bitbucket_token: None,
                 gitlab_token: None,
                 forgejo_token: None,
+                format: crate::cli::OutputFormat::Text,
                 json: false,
                 github_url: "https://api.github.com".to_string(),
                 bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
@@ -232,6 +284,7 @@ mod tests {
                 forgejo_url: "https://codeberg.org".to_string(),
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
                 oci_username: None,
                 oci_password: None,
             },
@@ -260,9 +313,10 @@ mod tests {
                 yes: true,
                 quiet: false,
                 dry_run: false,
-                json: true,
+                format: crate::cli::OutputFormat::Json,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -357,9 +411,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.set(std::slice::from_ref(&f), "o/r", "newhash")
@@ -386,9 +441,10 @@ mod tests {
                 yes: true,
                 quiet: false,
                 dry_run: true,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -419,16 +475,19 @@ jobs:
         parser.set_language(tree_sitter_yaml::language()).unwrap();
         let content = fs::read_to_string(&f).unwrap();
         let tree = parser.parse(&content, None).unwrap();
-        let mut results = Vec::new();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
+        let results = crate::yaml::find_uses_nodes(
+            tree.root_node(),
+            content.as_bytes(),
+            crate::yaml::CiProvider::GitHub,
+        );
 
         assert_eq!(results.len(), 2);
         assert!(results
             .iter()
-            .any(|(_, _, v, _, k)| v == "actions/checkout@v3" && k == "uses"));
+            .any(|r| r.value == "actions/checkout@v3" && r.key == "uses"));
         assert!(results
             .iter()
-            .any(|(_, _, v, _, k)| v == "owner/repo@v1" && k == "uses"));
+            .any(|r| r.value == "owner/repo@v1" && r.key == "uses"));
     }
 
     #[tokio::test]
@@ -437,10 +496,13 @@ jobs:
         let mut parser = TSParser::new();
         parser.set_language(tree_sitter_yaml::language()).unwrap();
         let tree = parser.parse(content, None).unwrap();
-        let mut results = Vec::new();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
-        assert!(results[0].3.is_some());
-        assert_eq!(results[0].4, "uses");
+        let results = crate::yaml::find_uses_nodes(
+            tree.root_node(),
+            content.as_bytes(),
+            crate::yaml::CiProvider::GitHub,
+        );
+        assert!(results[0].comment.is_some());
+        assert_eq!(results[0].key, "uses");
     }
 
     #[tokio::test]
@@ -466,6 +528,7 @@ jobs:
             bitbucket_token: None,
             gitlab_token: None,
             forgejo_token: None,
+            format: crate::cli::OutputFormat::Text,
             json: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
@@ -473,6 +536,7 @@ jobs:
             forgejo_url: "https://codeberg.org".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
+            ignore: vec![],
             oci_username: None,
             oci_password: None,
         };
@@ -506,9 +570,10 @@ jobs:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -546,9 +611,10 @@ jobs:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Minor,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
@@ -569,9 +635,10 @@ jobs:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Major,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         fs::write(&f, "uses: o/r@v1.1.0").unwrap();
@@ -596,9 +663,10 @@ jobs:
                 yes: false,
                 quiet: false,
                 dry_run: true,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -614,9 +682,10 @@ jobs:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: true,
+                format: crate::cli::OutputFormat::Json,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops2.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -638,9 +707,10 @@ jobs:
                 yes: false,
                 quiet: false,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.force_confirm = Some(true);
@@ -664,9 +734,10 @@ jobs:
                 yes: false,
                 quiet: false,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.force_confirm = Some(false);
@@ -706,9 +777,10 @@ include:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -757,9 +829,10 @@ pipelines:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -783,9 +856,10 @@ pipelines:
                 yes: true,
                 quiet: false,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         assert!(ops.verify(std::slice::from_ref(&f)).await.is_err());
@@ -808,9 +882,10 @@ pipelines:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -839,9 +914,10 @@ pipelines:
                 yes: true,
                 quiet: false,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.print_diff("old\n", "new\n");
@@ -888,9 +964,10 @@ pipelines:
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: crate::cli::OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.pin(std::slice::from_ref(&f)).await.unwrap();
@@ -907,5 +984,26 @@ pipelines:
             .unwrap()
             .unwrap_err();
         assert!(format!("{}", PinnerError::from(ignore_err)).contains("non/existent"));
+    }
+
+    #[test]
+    fn test_install_git_hook() {
+        let dir = tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Should fail if .git doesn't exist
+        assert!(install_git_hook().is_err());
+
+        // Setup mock .git
+        fs::create_dir(".git").unwrap();
+        assert!(install_git_hook().is_ok());
+
+        let hook_path = PathBuf::from(".git/hooks/pre-commit");
+        assert!(hook_path.exists());
+        let content = fs::read_to_string(hook_path).unwrap();
+        assert!(content.contains("pinner verify"));
+
+        std::env::set_current_dir(original_dir).unwrap();
     }
 }

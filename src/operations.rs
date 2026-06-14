@@ -3,19 +3,22 @@
 //! This module contains the [`Operations`] struct, which is the primary orchestrator
 //! for finding, fetching, and replacing action tags in YAML files.
 
-use crate::cli::UpgradeStrategy;
+use crate::cli::{OutputFormat, UpgradeStrategy};
 use crate::error::PinnerError;
 use crate::providers::{DependencyName, DependencyRef, RemoteProvider};
 use crate::registry::RegistryProvider;
-use crate::yaml::find_uses_nodes;
+use crate::yaml::{find_uses_nodes, CiProvider};
 use colored::Colorize;
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use futures::stream::{self, StreamExt};
 use ignore::WalkBuilder;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
@@ -26,40 +29,45 @@ fn default_concurrency() -> usize {
 }
 
 /// Configuration for Pinner, typically loaded from a `.pinner.toml` file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    /// List of actions to ignore during pinning or upgrading.
+    /// List of actions or image patterns to ignore.
     #[serde(default)]
-    pub ignore_actions: HashSet<DependencyName>,
+    pub ignore: Vec<String>,
     /// Number of concurrent API requests to make.
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
-    /// Custom API URL for the primary forge (e.g., GitHub Enterprise).
-    #[serde(default, alias = "github_url")]
-    pub api_url: Option<String>,
+    /// Base URL for the GitHub API.
+    pub github_url: Option<String>,
+    /// Base URL for the Bitbucket API.
+    pub bitbucket_url: Option<String>,
+    /// Base URL for the GitLab API.
+    pub gitlab_url: Option<String>,
+    /// Base URL for the Forgejo/Gitea API.
+    pub forgejo_url: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            ignore_actions: HashSet::new(),
+            ignore: Vec::new(),
             concurrency: default_concurrency(),
-            api_url: None,
+            github_url: None,
+            bitbucket_url: None,
+            gitlab_url: None,
+            forgejo_url: None,
         }
     }
 }
 
 /// Orchestrator for pinning and upgrading operations.
-///
-/// This struct holds the shared state and configuration needed to perform
-/// updates across multiple files.
 pub struct Operations<G: RemoteProvider, R: RegistryProvider> {
     github: Arc<G>,
     registry: Arc<R>,
     yes: bool,
     quiet: bool,
     dry_run: bool,
-    json: bool,
+    format: OutputFormat,
     upgrade_strategy: UpgradeStrategy,
     /// The current configuration.
     pub config: Config,
@@ -113,24 +121,31 @@ pub struct OperationsOptions {
     pub yes: bool,
     pub quiet: bool,
     pub dry_run: bool,
-    pub json: bool,
+    pub format: OutputFormat,
     pub upgrade_strategy: UpgradeStrategy,
     pub concurrency: Option<usize>,
+    pub ignore: Vec<String>,
 }
 
 impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R> {
     pub fn new(github: Arc<G>, registry: Arc<R>, options: OperationsOptions) -> Self {
         let mut config = Self::load_config().unwrap_or_default();
+
+        // Override config with CLI options
         if let Some(c) = options.concurrency {
             config.concurrency = c;
         }
+        if !options.ignore.is_empty() {
+            config.ignore.extend(options.ignore);
+        }
+
         Self {
             github,
             registry,
             yes: options.yes,
             quiet: options.quiet,
             dry_run: options.dry_run,
-            json: options.json,
+            format: options.format,
             upgrade_strategy: options.upgrade_strategy,
             config,
             #[cfg(test)]
@@ -138,30 +153,32 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         }
     }
 
+    /// Loads the configuration using figment (File -> Env -> Defaults).
     fn load_config() -> Result<Config, PinnerError> {
-        let mut current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        loop {
-            let config_path = current_dir.join(".pinner.toml");
-            if config_path.exists() {
-                return Self::load_config_from_path(&config_path);
-            }
-            if let Some(parent) = current_dir.parent() {
-                current_dir = parent.to_path_buf();
-            } else {
-                break;
-            }
-        }
-        Ok(Config::default())
+        let figment = Figment::new()
+            .merge(Toml::file(".pinner.toml"))
+            .merge(Env::prefixed("PINNER_"));
+
+        figment
+            .extract()
+            .map_err(|e| PinnerError::Config(format!("Failed to load configuration: {}", e)))
     }
 
     pub fn load_config_from_path(path: &Path) -> Result<Config, PinnerError> {
-        if !path.exists() {
-            return Ok(Config::default());
-        }
-        let content = fs::read_to_string(path).unwrap_or_default();
-        let config: Config = toml::from_str(&content)
-            .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
-        Ok(config)
+        Figment::new()
+            .merge(Toml::file(path))
+            .extract()
+            .map_err(|e| {
+                PinnerError::Config(format!("Failed to load config from {:?}: {}", path, e))
+            })
+    }
+
+    /// Returns true if the action should be ignored.
+    fn is_ignored(&self, action: &DependencyName) -> bool {
+        self.config
+            .ignore
+            .iter()
+            .any(|pattern| action.0.contains(pattern))
     }
 
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
@@ -295,12 +312,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     }
 
     pub async fn verify(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
-        let mut parser = TSParser::new();
-        parser
-            .set_language(tree_sitter_yaml::language())
-            .map_err(|e| PinnerError::Parse(e.to_string()))?;
-
-        let mut unpinned = Vec::new();
+        let mut all_paths = Vec::new();
 
         for path in paths {
             if !path.exists() {
@@ -311,43 +323,66 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    let content = fs::read_to_string(path)?;
-                    let tree = parser.parse(&content, None).ok_or_else(|| {
-                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                    })?;
-
-                    let mut uses_nodes = Vec::new();
-                    find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
-
-                    for (_, _, val, _, _) in uses_nodes {
-                        if val.starts_with("./") {
-                            continue;
-                        }
-
-                        let (action_part, tag) = val.split_once('@').unwrap_or((&val, ""));
-                        let action = DependencyName::from(action_part);
-
-                        if self.config.ignore_actions.contains(&action) {
-                            continue;
-                        }
-
-                        let is_pinned = if tag.is_empty() {
-                            false
-                        } else {
-                            (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                                || (val.contains("@sha256:")
-                                    && val
-                                        .split_once("@sha256:")
-                                        .is_some_and(|(_, s)| s.len() == 64))
-                        };
-
-                        if !is_pinned {
-                            unpinned.push((path.to_path_buf(), val));
-                        }
-                    }
+                    all_paths.push(path.to_path_buf());
                 }
             }
         }
+
+        use rayon::prelude::*;
+        let unpinned: Vec<(PathBuf, String)> = all_paths
+            .into_par_iter()
+            .map(|path| {
+                let content = fs::read_to_string(&path)?;
+                let mut parser = TSParser::new();
+                parser
+                    .set_language(tree_sitter_yaml::language())
+                    .map_err(|e| PinnerError::Parse(e.to_string()))?;
+
+                let tree = parser.parse(&content, None).ok_or_else(|| {
+                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                })?;
+
+                let provider = CiProvider::from_path(&path);
+                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+
+                let mut local_unpinned = Vec::new();
+                for node in uses_nodes {
+                    if node.key == "include" || node.key == "project" {
+                        continue;
+                    }
+                    if node.value.starts_with("./") {
+                        continue;
+                    }
+
+                    let (action_part, tag) =
+                        node.value.split_once('@').unwrap_or((&node.value, ""));
+                    let action = DependencyName::from(action_part);
+
+                    if self.is_ignored(&action) {
+                        continue;
+                    }
+
+                    let is_pinned = if tag.is_empty() {
+                        false
+                    } else {
+                        (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
+                            || (node.value.contains("@sha256:")
+                                && node
+                                    .value
+                                    .split_once("@sha256:")
+                                    .is_some_and(|(_, s)| s.len() == 64))
+                    };
+
+                    if !is_pinned {
+                        local_unpinned.push((path.clone(), node.value));
+                    }
+                }
+                Ok(local_unpinned)
+            })
+            .collect::<Result<Vec<Vec<(PathBuf, String)>>, PinnerError>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         if !unpinned.is_empty() {
             if !self.quiet {
@@ -378,13 +413,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         &self,
         paths: &[PathBuf],
     ) -> Result<(Vec<UpdateTask>, std::collections::HashMap<PathBuf, String>), PinnerError> {
-        let mut parser = TSParser::new();
-        parser
-            .set_language(tree_sitter_yaml::language())
-            .map_err(|e| PinnerError::Parse(e.to_string()))?;
-
-        let mut tasks = Vec::new();
-        let mut file_contents = std::collections::HashMap::new();
+        let mut all_paths = Vec::new();
 
         for path in paths {
             if !path.exists() {
@@ -395,53 +424,81 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    let content = fs::read_to_string(path)?;
-                    let tree = parser.parse(&content, None).ok_or_else(|| {
-                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                    })?;
-
-                    let mut uses_nodes = Vec::new();
-                    find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
-                    file_contents.insert(path.to_path_buf(), content);
-
-                    for (start, end, val, comment, key) in uses_nodes {
-                        if key == "include" || key == "project" {
-                            continue;
-                        }
-                        if val.starts_with("./") {
-                            continue;
-                        }
-                        let (action_part, tag) = if let Some((a, t)) = val.split_once('@') {
-                            (a, Some(t))
-                        } else if val.starts_with("docker://") && val.contains(':') {
-                            let last_colon = val.rfind(':').unwrap();
-                            (&val[..last_colon], Some(&val[last_colon + 1..]))
-                        } else if let Some((a, t)) = val.split_once(':') {
-                            (a, Some(t))
-                        } else {
-                            (val.as_str(), None)
-                        };
-
-                        let action = DependencyName::from(action_part);
-
-                        if self.config.ignore_actions.contains(&action) {
-                            continue;
-                        }
-
-                        tasks.push(UpdateTask {
-                            path: path.to_path_buf(),
-                            start,
-                            end,
-                            action,
-                            current_tag: tag.map(|s| s.to_string()),
-                            comment,
-                            key,
-                        });
-                    }
+                    all_paths.push(path.to_path_buf());
                 }
             }
         }
-        Ok((tasks, file_contents))
+
+        use rayon::prelude::*;
+        type CollectResult = Result<(Vec<UpdateTask>, (PathBuf, String)), PinnerError>;
+        let results: Vec<CollectResult> = all_paths
+            .into_par_iter()
+            .map(|path| {
+                let content = fs::read_to_string(&path)?;
+                let mut parser = TSParser::new();
+                parser
+                    .set_language(tree_sitter_yaml::language())
+                    .map_err(|e| PinnerError::Parse(e.to_string()))?;
+
+                let tree = parser.parse(&content, None).ok_or_else(|| {
+                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                })?;
+
+                let provider = CiProvider::from_path(&path);
+                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+
+                let mut tasks = Vec::new();
+                for node in uses_nodes {
+                    if node.key == "include" || node.key == "project" {
+                        continue;
+                    }
+                    if node.value.starts_with("./") {
+                        continue;
+                    }
+                    let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
+                        (a, Some(t))
+                    } else if node.value.starts_with("docker://") && node.value.contains(':') {
+                        let last_colon = node.value.rfind(':').unwrap();
+                        (
+                            &node.value[..last_colon],
+                            Some(&node.value[last_colon + 1..]),
+                        )
+                    } else if let Some((a, t)) = node.value.split_once(':') {
+                        (a, Some(t))
+                    } else {
+                        (node.value.as_str(), None)
+                    };
+
+                    let action = DependencyName::from(action_part);
+
+                    if self.is_ignored(&action) {
+                        continue;
+                    }
+
+                    tasks.push(UpdateTask {
+                        path: path.clone(),
+                        start: node.start,
+                        end: node.end,
+                        action,
+                        current_tag: tag.map(|s| s.to_string()),
+                        comment: node.comment,
+                        key: node.key,
+                    });
+                }
+                Ok((tasks, (path, content)))
+            })
+            .collect();
+
+        let mut final_tasks = Vec::new();
+        let mut final_file_contents = std::collections::HashMap::new();
+
+        for res in results {
+            let (tasks, (path, content)) = res?;
+            final_tasks.extend(tasks);
+            final_file_contents.insert(path, content);
+        }
+
+        Ok((final_tasks, final_file_contents))
     }
 
     async fn execute_updates<F, Fut>(
@@ -455,7 +512,9 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 Output = Result<Option<(DependencyRef, Option<String>)>, PinnerError>,
             > + Send,
     {
-        let pb = if !self.quiet && !self.json && !tasks.is_empty() {
+        let is_structured =
+            self.format == OutputFormat::Json || self.format == OutputFormat::Markdown;
+        let pb = if !self.quiet && !is_structured && !tasks.is_empty() {
             let pb = ProgressBar::new(tasks.len() as u64);
             pb.set_style(
                 ProgressStyle::default_bar()
@@ -612,12 +671,16 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
                 changes.push((old_val_with_suffix.to_string(), new_val.clone()));
                 new_content.replace_range(res.task.start..line_end, &new_val);
-                if self.json {
+                if self.format == OutputFormat::Json || self.format == OutputFormat::Markdown {
                     all_json_updates.push(res);
                 }
             }
 
-            if !changes.is_empty() && !self.quiet && !self.json {
+            if !changes.is_empty()
+                && !self.quiet
+                && self.format != OutputFormat::Json
+                && self.format != OutputFormat::Markdown
+            {
                 println!("\n{} {}", "File:".bold(), path.display().to_string().cyan());
                 if self.dry_run {
                     self.print_diff(content, &new_content);
@@ -660,19 +723,41 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         println!("{}", "✘ Skipped".yellow());
                     }
                 }
-            } else if !changes.is_empty() && (self.yes || self.json) && !self.dry_run {
+            } else if !changes.is_empty()
+                && (self.yes
+                    || self.format == OutputFormat::Json
+                    || self.format == OutputFormat::Markdown)
+                && !self.dry_run
+            {
                 fs::write(&path, new_content)?;
             }
         }
 
-        if self.json {
-            let output = JsonOutput {
-                updates: all_json_updates,
-            };
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output")
-            );
+        match self.format {
+            OutputFormat::Json => {
+                let output = JsonOutput {
+                    updates: all_json_updates,
+                };
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output")
+                );
+            }
+            OutputFormat::Markdown => {
+                println!("\n# Pinner Update Summary\n");
+                println!("| File | Action | Old Ref | New SHA |");
+                println!("|------|--------|---------|---------|");
+                for res in all_json_updates {
+                    println!(
+                        "| `{}` | `{}` | `{}` | `{}` |",
+                        res.path.display(),
+                        res.action,
+                        res.old_tag.as_deref().unwrap_or("-"),
+                        res.new_sha
+                    );
+                }
+            }
+            _ => {}
         }
 
         Ok(())
@@ -727,9 +812,10 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     ///         yes: true,
     ///         quiet: true,
     ///         dry_run: false,
-    ///         json: false,
+    ///         format: pinner::cli::OutputFormat::Text,
     ///         upgrade_strategy: UpgradeStrategy::Latest,
     ///         concurrency: None,
+    ///         ignore: vec![],
     ///     }
     /// );
     ///
@@ -772,9 +858,137 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::MockRemoteProvider;
-    use crate::registry::OciRegistryProvider;
+    use crate::providers::{BranchName, DependencyRef, MockRemoteProvider};
+    use crate::registry::{MockRegistryProvider, OciRegistryProvider};
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_operations_config_overrides() {
+        let mock = MockRemoteProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: Some(5),
+                ignore: vec!["actions/checkout".into()],
+            },
+        );
+        assert_eq!(ops.config.concurrency, 5);
+        assert!(ops.config.ignore.contains(&"actions/checkout".to_string()));
+    }
+
+    #[test]
+    fn test_load_config_from_path_error() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("invalid.toml");
+        fs::write(&f, "invalid = toml = format").unwrap();
+        let res = Operations::<MockRemoteProvider, OciRegistryProvider>::load_config_from_path(&f);
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade_strategy_commit() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_default_branch()
+            .returning(|_, _| Ok(BranchName("develop".to_string())));
+        mock.expect_get_commit_sha()
+            .returning(|_, _, _| Ok(DependencyRef::GitSha("developsha".to_string())));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Commit,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@developsha # develop"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_non_fatal_error_skipping() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        // Return a non-fatal API error
+        mock.expect_get_latest_release()
+            .returning(|_, _| Err(PinnerError::Api("404 Not Found".into())));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: false, // Show warning
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        // Should not fail the whole operation
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@v1")); // Unchanged
+    }
+
+    #[tokio::test]
+    async fn test_operations_image_fallback_latest() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "image: nginx:latest").unwrap();
+
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_resolve_digest()
+            .with(
+                mockall::predicate::eq("nginx"),
+                mockall::predicate::eq("latest"),
+            )
+            .returning(|_, _| Ok("sha256:latest".to_string()));
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(registry),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("image: nginx@sha256:latest # latest"));
+    }
 
     #[tokio::test]
     async fn test_operations_ignore_actions() {
@@ -784,9 +998,7 @@ mod tests {
         fs::write(&f, "uses: ignore/me@v1\nuses: keep/me@v1").unwrap();
 
         let mut config = Config::default();
-        config
-            .ignore_actions
-            .insert(DependencyName::from("ignore/me"));
+        config.ignore.push("ignore/me".to_string());
 
         mock.expect_get_commit_sha()
             .with(
@@ -804,9 +1016,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.config = config;
@@ -829,9 +1042,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -860,9 +1074,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -898,9 +1113,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -938,9 +1154,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -972,9 +1189,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1008,9 +1226,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1060,9 +1279,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1079,12 +1299,112 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         let res = ops.pin(&[PathBuf::from("/non/existent/path/12345")]).await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_operations_set() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1\nuses: other/action@v2").unwrap();
+
+        let mock = MockRemoteProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.set(
+            std::slice::from_ref(&f),
+            "actions/checkout",
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        )
+        .await
+        .unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"));
+        assert!(content.contains("uses: other/action@v2"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade_latest() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_latest_release()
+            .returning(|_, _| Ok("v2".to_string()));
+        mock.expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@v2sha # v2"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade_major() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1.0.0").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_list_tags()
+            .returning(|_, _| Ok(vec!["v1.1.0".to_string(), "v2.0.0".to_string()]));
+        mock.expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Major,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@v1.1.0sha # v1.1.0"));
+        assert!(!content.contains("v2.0.0"));
     }
 }

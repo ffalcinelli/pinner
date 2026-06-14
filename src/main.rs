@@ -8,8 +8,10 @@ use pinner::{run, Cli, OciRegistryProvider};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+use std::process::ExitCode;
+
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
     if let Err(e) = run_app(cli).await {
         // Check if it's a verification failure (already printed details)
@@ -19,12 +21,13 @@ async fn main() {
             .is_some_and(|pe| matches!(pe, pinner::error::PinnerError::VerificationFailed(_)));
 
         if is_verification_failure {
-            std::process::exit(1);
+            return ExitCode::FAILURE;
         }
 
         eprintln!("Error: {:?}", e);
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
+    ExitCode::SUCCESS
 }
 
 pub async fn run_app(cli: Cli) -> anyhow::Result<()> {

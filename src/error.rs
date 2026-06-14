@@ -74,6 +74,21 @@ mod tests {
 
         let err = PinnerError::VerificationFailed("unpinned".to_string());
         assert_eq!(format!("{}", err), "Verification failed: unpinned");
+
+        let err = PinnerError::RateLimit("exceeded".to_string());
+        assert_eq!(format!("{}", err), "Rate limit error: exceeded");
+    }
+
+    #[test]
+    fn test_error_is_fatal() {
+        assert!(PinnerError::RateLimit("".into()).is_fatal());
+        assert!(PinnerError::Config("".into()).is_fatal());
+        assert!(PinnerError::Io(io::Error::other("")).is_fatal());
+        assert!(PinnerError::Parse("".into()).is_fatal());
+        assert!(PinnerError::PathNotFound("".into()).is_fatal());
+        assert!(PinnerError::VerificationFailed("".into()).is_fatal());
+        assert!(PinnerError::Ignore(ignore::Error::Io(io::Error::other(""))).is_fatal());
+        assert!(!PinnerError::Api("".into()).is_fatal());
     }
 
     #[test]

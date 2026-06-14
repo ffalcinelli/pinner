@@ -19,8 +19,20 @@ pub enum UpgradeStrategy {
     Commit,
 }
 
+/// Format for the output results.
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+pub enum OutputFormat {
+    /// Standard text output (default).
+    #[default]
+    Text,
+    /// JSON format.
+    Json,
+    /// Markdown table format.
+    Markdown,
+}
+
 /// The main command-line interface for Pinner.
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Subcommand to execute.
@@ -58,7 +70,10 @@ pub struct Cli {
     /// Forgejo/Gitea API Token for authentication.
     #[arg(long, global = true, env = "FORGEJO_TOKEN")]
     pub forgejo_token: Option<String>,
-    /// Output results in JSON format.
+    /// Output results in the specified format.
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+    /// Output results in JSON format (deprecated, use --format json).
     #[arg(long, global = true)]
     pub json: bool,
     /// Base URL for the GitHub API (defaults to public GitHub).
@@ -99,6 +114,9 @@ pub struct Cli {
     /// Number of concurrent API requests to make.
     #[arg(long, global = true)]
     pub concurrency: Option<usize>,
+    /// Actions or images to ignore (e.g., "actions/checkout").
+    #[arg(long, global = true)]
+    pub ignore: Vec<String>,
     /// Username for OCI registry authentication.
     #[arg(long, global = true, env = "OCI_USERNAME")]
     pub oci_username: Option<String>,
@@ -112,10 +130,19 @@ impl Cli {
     pub fn quiet(&self) -> bool {
         self.quiet
     }
+
+    /// Returns the effective output format, considering the deprecated --json flag.
+    pub fn output_format(&self) -> OutputFormat {
+        if self.json {
+            OutputFormat::Json
+        } else {
+            self.format.clone()
+        }
+    }
 }
 
 /// Subcommands for the Pinner CLI.
-#[derive(Subcommand, Debug, PartialEq)]
+#[derive(Subcommand, Debug, PartialEq, Clone)]
 pub enum Commands {
     /// Pin all actions to their current commit SHAs.
     Pin,
@@ -130,6 +157,8 @@ pub enum Commands {
         /// Commit SHA-1 hash
         hash: String,
     },
+    /// Install a pre-commit hook that runs pinner verify.
+    InstallHook,
     /// Generate shell completions.
     GenerateCompletion {
         /// Shell to generate completions for
@@ -199,6 +228,39 @@ mod tests {
             cli.workflows,
             vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
         );
+    }
+
+    #[test]
+    fn test_cli_methods() {
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![],
+            yes: false,
+            quiet: true,
+            verbose: false,
+            dry_run: false,
+            json: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            oci_username: None,
+            oci_password: None,
+            format: OutputFormat::Text,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            ignore: vec![],
+        };
+        assert!(cli.quiet());
+        assert_eq!(cli.output_format(), OutputFormat::Text);
+
+        let mut cli_json = cli.clone();
+        cli_json.json = true;
+        assert_eq!(cli_json.output_format(), OutputFormat::Json);
     }
 
     #[test]

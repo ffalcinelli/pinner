@@ -39,10 +39,13 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
-          tool: cargo-audit,cargo-tarpaulin
+          tool: cargo-audit,cargo-tarpaulin,cargo-deny
 
       - name: Run cargo-audit
         run: cargo audit
+
+      - name: Run cargo-deny
+        run: cargo deny check
 
       - name: Run cargo-tarpaulin
         run: cargo tarpaulin --out Xml
