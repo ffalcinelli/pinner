@@ -76,6 +76,51 @@ async fn test_verify_command() {
 }
 
 #[tokio::test]
+async fn test_verify_false_positive() {
+    let dir = tempdir().unwrap();
+    let workflows = dir.path().join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+
+    let yaml = r#"
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            build-tool: cargo-zigbuild
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            build-tool: cargo
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v4
+      - name: Build
+        run: echo building for ${{ matrix.target }}
+"#;
+
+    fs::write(workflows.join("release.yml"), yaml).unwrap();
+
+    let status = Command::new("cargo")
+        .arg("run")
+        .arg("--")
+        .arg("--workflows")
+        .arg(workflows.to_str().unwrap())
+        .arg("verify")
+        .status()
+        .unwrap();
+
+    assert!(status.success());
+}
+
+#[tokio::test]
 async fn test_github_url_env() {
     let mut server = Server::new_async().await;
     let _m = server

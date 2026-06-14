@@ -205,16 +205,35 @@ impl BaseHttpClient {
         Self { client, base_url }
     }
 
-    pub fn handle_error(
-        &self,
-        status: reqwest::StatusCode,
-        action: &DependencyName,
-    ) -> PinnerError {
+    pub fn handle_error(&self, resp: reqwest::Response, action: &DependencyName) -> PinnerError {
+        let status = resp.status();
         match status.as_u16() {
-            403 | 429 => PinnerError::RateLimit(format!(
-                "API rate limit exceeded (HTTP {}) at {}. Try providing an API token to increase limits.",
-                status, self.base_url
-            )),
+            403 | 429 => {
+                let mut msg = format!(
+                    "API rate limit exceeded (HTTP {}) at {}. Try providing an API token to increase limits.",
+                    status, self.base_url
+                );
+
+                if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
+                    if let Ok(reset_str) = reset.to_str() {
+                        if let Ok(ts) = reset_str.parse::<i64>() {
+                            use chrono::{TimeZone, Utc};
+                            if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
+                                msg.push_str(&format!(
+                                    " Rate limit resets at {}.",
+                                    dt.format("%Y-%m-%d %H:%M:%S UTC")
+                                ));
+                            }
+                        }
+                    }
+                } else if let Some(retry) = resp.headers().get("retry-after") {
+                    if let Ok(retry_str) = retry.to_str() {
+                        msg.push_str(&format!(" Retry after {} seconds.", retry_str));
+                    }
+                }
+
+                PinnerError::RateLimit(msg)
+            }
             _ => PinnerError::Api(format!(
                 "HTTP {}: Error for action {} at {}",
                 status, action, self.base_url
@@ -290,7 +309,7 @@ impl RemoteProvider for ReqwestGithubProvider {
             self.sha_cache.insert(key, sha.clone()).await;
             Ok(sha)
         } else {
-            Err(self.base.handle_error(resp.status(), action))
+            Err(self.base.handle_error(resp, action))
         }
     }
 
@@ -325,7 +344,7 @@ impl RemoteProvider for ReqwestGithubProvider {
             let default_branch = self.get_default_branch(action, key).await?;
             Ok(default_branch.0)
         } else {
-            Err(self.base.handle_error(resp.status(), action))
+            Err(self.base.handle_error(resp, action))
         }
     }
 
@@ -355,7 +374,7 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(tags.into_iter().map(|t| t.name).collect())
         } else {
-            Err(self.base.handle_error(resp.status(), action))
+            Err(self.base.handle_error(resp, action))
         }
     }
 
@@ -851,7 +870,7 @@ impl RemoteProvider for ReqwestForgejoProvider {
             self.sha_cache.insert(key, sha.clone()).await;
             Ok(sha)
         } else {
-            Err(self.base.handle_error(resp.status(), action))
+            Err(self.base.handle_error(resp, action))
         }
     }
 
@@ -1085,7 +1104,7 @@ impl RemoteProvider for UnifiedProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::StatusCode;
+    use reqwest::{Response, StatusCode};
 
     #[test]
     fn test_action_name_display_and_from() {
@@ -1114,30 +1133,79 @@ mod tests {
         let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);
         let action = DependencyName::from("o/r");
 
-        let err = provider.base.handle_error(StatusCode::FORBIDDEN, &action);
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
         assert!(format!("{}", err).contains("https://api.github.com"));
 
-        let err = provider
-            .base
-            .handle_error(StatusCode::TOO_MANY_REQUESTS, &action);
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
         assert!(format!("{}", err).contains("https://api.github.com"));
 
-        let err = provider.base.handle_error(StatusCode::NOT_FOUND, &action);
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 404"));
         assert!(format!("{}", err).contains("o/r"));
         assert!(format!("{}", err).contains("https://api.github.com"));
 
-        let err = provider
-            .base
-            .handle_error(StatusCode::INTERNAL_SERVER_ERROR, &action);
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 500"));
         assert!(format!("{}", err).contains("https://api.github.com"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_rate_limit_headers() {
+        let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);
+        let action = DependencyName::from("o/r");
+
+        // Test x-ratelimit-reset
+        let ts = 1718374400; // 2024-06-14 14:13:20 UTC
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .header("x-ratelimit-reset", ts.to_string())
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
+        assert!(format!("{}", err).contains("Rate limit resets at 2024-06-14 14:13:20 UTC"));
+
+        // Test retry-after
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .header("retry-after", "60")
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
+        assert!(format!("{}", err).contains("Retry after 60 seconds"));
     }
 
     #[tokio::test]

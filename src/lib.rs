@@ -419,16 +419,19 @@ jobs:
         parser.set_language(tree_sitter_yaml::language()).unwrap();
         let content = fs::read_to_string(&f).unwrap();
         let tree = parser.parse(&content, None).unwrap();
-        let mut results = Vec::new();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
+        let results = crate::yaml::find_uses_nodes(
+            tree.root_node(),
+            content.as_bytes(),
+            crate::yaml::CiProvider::GitHub,
+        );
 
         assert_eq!(results.len(), 2);
         assert!(results
             .iter()
-            .any(|(_, _, v, _, k)| v == "actions/checkout@v3" && k == "uses"));
+            .any(|r| r.value == "actions/checkout@v3" && r.key == "uses"));
         assert!(results
             .iter()
-            .any(|(_, _, v, _, k)| v == "owner/repo@v1" && k == "uses"));
+            .any(|r| r.value == "owner/repo@v1" && r.key == "uses"));
     }
 
     #[tokio::test]
@@ -437,10 +440,13 @@ jobs:
         let mut parser = TSParser::new();
         parser.set_language(tree_sitter_yaml::language()).unwrap();
         let tree = parser.parse(content, None).unwrap();
-        let mut results = Vec::new();
-        crate::yaml::find_uses_nodes(tree.root_node(), content.as_bytes(), &mut results);
-        assert!(results[0].3.is_some());
-        assert_eq!(results[0].4, "uses");
+        let results = crate::yaml::find_uses_nodes(
+            tree.root_node(),
+            content.as_bytes(),
+            crate::yaml::CiProvider::GitHub,
+        );
+        assert!(results[0].comment.is_some());
+        assert_eq!(results[0].key, "uses");
     }
 
     #[tokio::test]

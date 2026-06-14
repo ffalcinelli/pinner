@@ -1,0 +1,31 @@
+# cargo-deny configuration
+
+[graph]
+# Check for multiple versions of the same crate
+targets = []
+all-features = true
+no-default-features = false
+
+[advisories]
+db-path = "~/.cargo/advisories"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+vulnerability = "deny"
+unmaintained = "warn"
+unsound = "warn"
+notice = "warn"
+
+[licenses]
+unlicensed = "deny"
+# Allow common open source licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+]
+confidence-threshold = 0.8
+copyleft = "deny"
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"

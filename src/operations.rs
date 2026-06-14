@@ -7,7 +7,7 @@ use crate::cli::UpgradeStrategy;
 use crate::error::PinnerError;
 use crate::providers::{DependencyName, DependencyRef, RemoteProvider};
 use crate::registry::RegistryProvider;
-use crate::yaml::find_uses_nodes;
+use crate::yaml::{find_uses_nodes, CiProvider};
 use colored::Colorize;
 use futures::stream::{self, StreamExt};
 use ignore::WalkBuilder;
@@ -295,12 +295,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     }
 
     pub async fn verify(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
-        let mut parser = TSParser::new();
-        parser
-            .set_language(tree_sitter_yaml::language())
-            .map_err(|e| PinnerError::Parse(e.to_string()))?;
-
-        let mut unpinned = Vec::new();
+        let mut all_paths = Vec::new();
 
         for path in paths {
             if !path.exists() {
@@ -311,43 +306,66 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    let content = fs::read_to_string(path)?;
-                    let tree = parser.parse(&content, None).ok_or_else(|| {
-                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                    })?;
-
-                    let mut uses_nodes = Vec::new();
-                    find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
-
-                    for (_, _, val, _, _) in uses_nodes {
-                        if val.starts_with("./") {
-                            continue;
-                        }
-
-                        let (action_part, tag) = val.split_once('@').unwrap_or((&val, ""));
-                        let action = DependencyName::from(action_part);
-
-                        if self.config.ignore_actions.contains(&action) {
-                            continue;
-                        }
-
-                        let is_pinned = if tag.is_empty() {
-                            false
-                        } else {
-                            (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                                || (val.contains("@sha256:")
-                                    && val
-                                        .split_once("@sha256:")
-                                        .is_some_and(|(_, s)| s.len() == 64))
-                        };
-
-                        if !is_pinned {
-                            unpinned.push((path.to_path_buf(), val));
-                        }
-                    }
+                    all_paths.push(path.to_path_buf());
                 }
             }
         }
+
+        use rayon::prelude::*;
+        let unpinned: Vec<(PathBuf, String)> = all_paths
+            .into_par_iter()
+            .map(|path| {
+                let content = fs::read_to_string(&path)?;
+                let mut parser = TSParser::new();
+                parser
+                    .set_language(tree_sitter_yaml::language())
+                    .map_err(|e| PinnerError::Parse(e.to_string()))?;
+
+                let tree = parser.parse(&content, None).ok_or_else(|| {
+                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                })?;
+
+                let provider = CiProvider::from_path(&path);
+                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+
+                let mut local_unpinned = Vec::new();
+                for node in uses_nodes {
+                    if node.key == "include" || node.key == "project" {
+                        continue;
+                    }
+                    if node.value.starts_with("./") {
+                        continue;
+                    }
+
+                    let (action_part, tag) =
+                        node.value.split_once('@').unwrap_or((&node.value, ""));
+                    let action = DependencyName::from(action_part);
+
+                    if self.config.ignore_actions.contains(&action) {
+                        continue;
+                    }
+
+                    let is_pinned = if tag.is_empty() {
+                        false
+                    } else {
+                        (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
+                            || (node.value.contains("@sha256:")
+                                && node
+                                    .value
+                                    .split_once("@sha256:")
+                                    .is_some_and(|(_, s)| s.len() == 64))
+                    };
+
+                    if !is_pinned {
+                        local_unpinned.push((path.clone(), node.value));
+                    }
+                }
+                Ok(local_unpinned)
+            })
+            .collect::<Result<Vec<Vec<(PathBuf, String)>>, PinnerError>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         if !unpinned.is_empty() {
             if !self.quiet {
@@ -378,13 +396,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         &self,
         paths: &[PathBuf],
     ) -> Result<(Vec<UpdateTask>, std::collections::HashMap<PathBuf, String>), PinnerError> {
-        let mut parser = TSParser::new();
-        parser
-            .set_language(tree_sitter_yaml::language())
-            .map_err(|e| PinnerError::Parse(e.to_string()))?;
-
-        let mut tasks = Vec::new();
-        let mut file_contents = std::collections::HashMap::new();
+        let mut all_paths = Vec::new();
 
         for path in paths {
             if !path.exists() {
@@ -395,53 +407,81 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    let content = fs::read_to_string(path)?;
-                    let tree = parser.parse(&content, None).ok_or_else(|| {
-                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                    })?;
-
-                    let mut uses_nodes = Vec::new();
-                    find_uses_nodes(tree.root_node(), content.as_bytes(), &mut uses_nodes);
-                    file_contents.insert(path.to_path_buf(), content);
-
-                    for (start, end, val, comment, key) in uses_nodes {
-                        if key == "include" || key == "project" {
-                            continue;
-                        }
-                        if val.starts_with("./") {
-                            continue;
-                        }
-                        let (action_part, tag) = if let Some((a, t)) = val.split_once('@') {
-                            (a, Some(t))
-                        } else if val.starts_with("docker://") && val.contains(':') {
-                            let last_colon = val.rfind(':').unwrap();
-                            (&val[..last_colon], Some(&val[last_colon + 1..]))
-                        } else if let Some((a, t)) = val.split_once(':') {
-                            (a, Some(t))
-                        } else {
-                            (val.as_str(), None)
-                        };
-
-                        let action = DependencyName::from(action_part);
-
-                        if self.config.ignore_actions.contains(&action) {
-                            continue;
-                        }
-
-                        tasks.push(UpdateTask {
-                            path: path.to_path_buf(),
-                            start,
-                            end,
-                            action,
-                            current_tag: tag.map(|s| s.to_string()),
-                            comment,
-                            key,
-                        });
-                    }
+                    all_paths.push(path.to_path_buf());
                 }
             }
         }
-        Ok((tasks, file_contents))
+
+        use rayon::prelude::*;
+        type CollectResult = Result<(Vec<UpdateTask>, (PathBuf, String)), PinnerError>;
+        let results: Vec<CollectResult> = all_paths
+            .into_par_iter()
+            .map(|path| {
+                let content = fs::read_to_string(&path)?;
+                let mut parser = TSParser::new();
+                parser
+                    .set_language(tree_sitter_yaml::language())
+                    .map_err(|e| PinnerError::Parse(e.to_string()))?;
+
+                let tree = parser.parse(&content, None).ok_or_else(|| {
+                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                })?;
+
+                let provider = CiProvider::from_path(&path);
+                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+
+                let mut tasks = Vec::new();
+                for node in uses_nodes {
+                    if node.key == "include" || node.key == "project" {
+                        continue;
+                    }
+                    if node.value.starts_with("./") {
+                        continue;
+                    }
+                    let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
+                        (a, Some(t))
+                    } else if node.value.starts_with("docker://") && node.value.contains(':') {
+                        let last_colon = node.value.rfind(':').unwrap();
+                        (
+                            &node.value[..last_colon],
+                            Some(&node.value[last_colon + 1..]),
+                        )
+                    } else if let Some((a, t)) = node.value.split_once(':') {
+                        (a, Some(t))
+                    } else {
+                        (node.value.as_str(), None)
+                    };
+
+                    let action = DependencyName::from(action_part);
+
+                    if self.config.ignore_actions.contains(&action) {
+                        continue;
+                    }
+
+                    tasks.push(UpdateTask {
+                        path: path.clone(),
+                        start: node.start,
+                        end: node.end,
+                        action,
+                        current_tag: tag.map(|s| s.to_string()),
+                        comment: node.comment,
+                        key: node.key,
+                    });
+                }
+                Ok((tasks, (path, content)))
+            })
+            .collect();
+
+        let mut final_tasks = Vec::new();
+        let mut final_file_contents = std::collections::HashMap::new();
+
+        for res in results {
+            let (tasks, (path, content)) = res?;
+            final_tasks.extend(tasks);
+            final_file_contents.insert(path, content);
+        }
+
+        Ok((final_tasks, final_file_contents))
     }
 
     async fn execute_updates<F, Fut>(
