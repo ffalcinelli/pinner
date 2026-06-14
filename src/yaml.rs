@@ -321,4 +321,58 @@ uses: actions/checkout@v3
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].comment, None);
     }
+
+    #[test]
+    fn test_ci_provider_from_path() {
+        assert_eq!(
+            CiProvider::from_path(Path::new(".github/workflows/ci.yml")),
+            CiProvider::GitHub
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new(".gitea/workflows/deploy.yaml")),
+            CiProvider::GitHub
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new(".gitlab-ci.yml")),
+            CiProvider::GitLab
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new("bitbucket-pipelines.yml")),
+            CiProvider::Bitbucket
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new(".circleci/config.yml")),
+            CiProvider::CircleCI
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new("docker-compose.yml")),
+            CiProvider::Unknown
+        );
+    }
+
+    #[test]
+    fn test_ci_provider_supports_key() {
+        let github = CiProvider::GitHub;
+        assert!(github.supports_key("uses"));
+        assert!(github.supports_key("image"));
+        assert!(!github.supports_key("pipe"));
+
+        let gitlab = CiProvider::GitLab;
+        assert!(gitlab.supports_key("include"));
+        assert!(gitlab.supports_key("ref"));
+        assert!(!gitlab.supports_key("uses"));
+
+        let bitbucket = CiProvider::Bitbucket;
+        assert!(bitbucket.supports_key("pipe"));
+        assert!(bitbucket.supports_key("image"));
+        assert!(!bitbucket.supports_key("orbs"));
+
+        let circle = CiProvider::CircleCI;
+        assert!(circle.supports_key("orbs"));
+        assert!(circle.supports_key("image"));
+        assert!(!circle.supports_key("include"));
+
+        let unknown = CiProvider::Unknown;
+        assert!(unknown.supports_key("any_key"));
+    }
 }

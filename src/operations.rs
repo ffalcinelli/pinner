@@ -1180,4 +1180,103 @@ mod tests {
         let res = ops.pin(&[PathBuf::from("/non/existent/path/12345")]).await;
         assert!(res.is_err());
     }
+
+    #[tokio::test]
+    async fn test_operations_set() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1\nuses: other/action@v2").unwrap();
+
+        let mock = MockRemoteProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.set(
+            std::slice::from_ref(&f),
+            "actions/checkout",
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        )
+        .await
+        .unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"));
+        assert!(content.contains("uses: other/action@v2"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade_latest() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_latest_release()
+            .returning(|_, _| Ok("v2".to_string()));
+        mock.expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@v2sha # v2"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade_major() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1.0.0").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_list_tags()
+            .returning(|_, _| Ok(vec!["v1.1.0".to_string(), "v2.0.0".to_string()]));
+        mock.expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Major,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@v1.1.0sha # v1.1.0"));
+        assert!(!content.contains("v2.0.0"));
+    }
 }

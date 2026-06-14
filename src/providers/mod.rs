@@ -1743,4 +1743,44 @@ mod tests {
             .unwrap();
         assert_eq!(sha2.to_string(), "bitbucketsha");
     }
+
+    #[test]
+    fn test_handle_error_rate_limit() {
+        let base = BaseHttpClient::new(
+            "https://api.github.com".to_string(),
+            None,
+            "Bearer",
+            "GITHUB_TOKEN",
+        );
+        let action = DependencyName::from("actions/checkout");
+
+        // Test 403 with x-ratelimit-reset
+        let mut builder = http::Response::builder().status(403);
+        builder = builder.header("x-ratelimit-reset", "1718352000"); // 2024-06-14 08:00:00 UTC
+        let resp = builder.body("").unwrap();
+        let reqwest_resp = reqwest::Response::from(resp);
+
+        let err = base.handle_error(reqwest_resp, &action);
+        assert!(matches!(err, PinnerError::RateLimit(_)));
+        assert!(err
+            .to_string()
+            .contains("Rate limit resets at 2024-06-14 08:00:00 UTC"));
+
+        // Test 429 with retry-after
+        let mut builder = http::Response::builder().status(429);
+        builder = builder.header("retry-after", "60");
+        let resp = builder.body("").unwrap();
+        let reqwest_resp = reqwest::Response::from(resp);
+
+        let err = base.handle_error(reqwest_resp, &action);
+        assert!(matches!(err, PinnerError::RateLimit(_)));
+        assert!(err.to_string().contains("Retry after 60 seconds"));
+
+        // Test generic error
+        let resp = http::Response::builder().status(500).body("").unwrap();
+        let reqwest_resp = reqwest::Response::from(resp);
+        let err = base.handle_error(reqwest_resp, &action);
+        assert!(matches!(err, PinnerError::Api(_)));
+        assert!(err.to_string().contains("HTTP 500"));
+    }
 }

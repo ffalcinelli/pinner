@@ -148,3 +148,63 @@ async fn test_github_url_env() {
     assert!(status.success());
     assert!(fs::read_to_string(&f).unwrap().contains("o/r@h"));
 }
+
+#[tokio::test]
+async fn test_upgrade_command() {
+    let mut github_server = Server::new_async().await;
+    let _m1 = github_server
+        .mock("GET", "/repos/actions/checkout/releases/latest")
+        .with_status(200)
+        .with_body(r#"{"tag_name":"v4"}"#)
+        .create_async()
+        .await;
+    let _m2 = github_server
+        .mock("GET", "/repos/actions/checkout/commits/v4")
+        .with_status(200)
+        .with_body(r#"{"sha":"hashv4"}"#)
+        .create_async()
+        .await;
+
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3").unwrap();
+
+    let status = Command::new("cargo")
+        .arg("run")
+        .arg("--")
+        .arg("--github-url")
+        .arg(github_server.url())
+        .arg("--workflows")
+        .arg(wf.to_str().unwrap())
+        .arg("--yes")
+        .arg("upgrade")
+        .status()
+        .unwrap();
+
+    assert!(status.success());
+    let content = fs::read_to_string(&wf).unwrap();
+    assert!(content.contains("actions/checkout@hashv4 # v4"));
+}
+
+#[tokio::test]
+async fn test_set_command() {
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3").unwrap();
+
+    let status = Command::new("cargo")
+        .arg("run")
+        .arg("--")
+        .arg("--workflows")
+        .arg(wf.to_str().unwrap())
+        .arg("--yes")
+        .arg("set")
+        .arg("actions/checkout")
+        .arg("fixedhash")
+        .status()
+        .unwrap();
+
+    assert!(status.success());
+    let content = fs::read_to_string(&wf).unwrap();
+    assert!(content.contains("actions/checkout@fixedhash"));
+}
