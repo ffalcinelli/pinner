@@ -858,9 +858,137 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::MockRemoteProvider;
-    use crate::registry::OciRegistryProvider;
+    use crate::providers::{BranchName, DependencyRef, MockRemoteProvider};
+    use crate::registry::{MockRegistryProvider, OciRegistryProvider};
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_operations_config_overrides() {
+        let mock = MockRemoteProvider::new();
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: Some(5),
+                ignore: vec!["actions/checkout".into()],
+            },
+        );
+        assert_eq!(ops.config.concurrency, 5);
+        assert!(ops.config.ignore.contains(&"actions/checkout".to_string()));
+    }
+
+    #[test]
+    fn test_load_config_from_path_error() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("invalid.toml");
+        fs::write(&f, "invalid = toml = format").unwrap();
+        let res = Operations::<MockRemoteProvider, OciRegistryProvider>::load_config_from_path(&f);
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade_strategy_commit() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        mock.expect_get_default_branch()
+            .returning(|_, _| Ok(BranchName("develop".to_string())));
+        mock.expect_get_commit_sha()
+            .returning(|_, _, _| Ok(DependencyRef::GitSha("developsha".to_string())));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Commit,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@developsha # develop"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_non_fatal_error_skipping() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v1").unwrap();
+
+        let mut mock = MockRemoteProvider::new();
+        // Return a non-fatal API error
+        mock.expect_get_latest_release()
+            .returning(|_, _| Err(PinnerError::Api("404 Not Found".into())));
+
+        let ops = Operations::new(
+            Arc::new(mock),
+            Arc::new(OciRegistryProvider::new(None, None)),
+            OperationsOptions {
+                yes: true,
+                quiet: false, // Show warning
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        // Should not fail the whole operation
+        ops.upgrade(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("uses: actions/checkout@v1")); // Unchanged
+    }
+
+    #[tokio::test]
+    async fn test_operations_image_fallback_latest() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "image: nginx:latest").unwrap();
+
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_resolve_digest()
+            .with(
+                mockall::predicate::eq("nginx"),
+                mockall::predicate::eq("latest"),
+            )
+            .returning(|_, _| Ok("sha256:latest".to_string()));
+
+        let ops = Operations::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(registry),
+            OperationsOptions {
+                yes: true,
+                quiet: true,
+                dry_run: false,
+                format: OutputFormat::Text,
+                upgrade_strategy: UpgradeStrategy::Latest,
+                concurrency: None,
+                ignore: vec![],
+            },
+        );
+
+        ops.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("image: nginx@sha256:latest # latest"));
+    }
 
     #[tokio::test]
     async fn test_operations_ignore_actions() {

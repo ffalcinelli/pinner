@@ -1722,6 +1722,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bitbucket_dc_invalid_format() {
+        let provider = ReqwestBitbucketProvider::with_type("http://bb.local".into(), None, false);
+        let res = provider
+            .get_commit_sha(&DependencyName::from("invalid-format"), "v1", "pipe")
+            .await;
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid Bitbucket action format"));
+    }
+
+    #[tokio::test]
     async fn test_unified_provider_routing() {
         let mut server = mockito::Server::new_async().await;
         let _m_github = server

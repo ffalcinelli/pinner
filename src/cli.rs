@@ -32,7 +32,7 @@ pub enum OutputFormat {
 }
 
 /// The main command-line interface for Pinner.
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Subcommand to execute.
@@ -142,7 +142,7 @@ impl Cli {
 }
 
 /// Subcommands for the Pinner CLI.
-#[derive(Subcommand, Debug, PartialEq)]
+#[derive(Subcommand, Debug, PartialEq, Clone)]
 pub enum Commands {
     /// Pin all actions to their current commit SHAs.
     Pin,
@@ -228,6 +228,39 @@ mod tests {
             cli.workflows,
             vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
         );
+    }
+
+    #[test]
+    fn test_cli_methods() {
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![],
+            yes: false,
+            quiet: true,
+            verbose: false,
+            dry_run: false,
+            json: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            oci_username: None,
+            oci_password: None,
+            format: OutputFormat::Text,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            ignore: vec![],
+        };
+        assert!(cli.quiet());
+        assert_eq!(cli.output_format(), OutputFormat::Text);
+
+        let mut cli_json = cli.clone();
+        cli_json.json = true;
+        assert_eq!(cli_json.output_format(), OutputFormat::Json);
     }
 
     #[test]

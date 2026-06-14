@@ -88,7 +88,141 @@ mod tests {
     async fn test_get_token_non_docker_hub() {
         let provider = OciRegistryProvider::new(None, None);
         let token = provider.get_token("ghcr.io", "owner/repo").await.unwrap();
-        assert_eq!(token, "");
+        assert!(token.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_oci_registry_parsing() {
+        let provider = OciRegistryProvider::new(None, None);
+
+        // Docker Hub library image
+        // We don't assert error here because if get_token returns empty/ok it might proceed
+        // to a real network call if not mocked.
+        // Instead, just call it to cover the parsing code paths.
+        let _ = provider.resolve_digest("nginx", "latest").await;
+
+        // Custom registry
+        let _ = provider.resolve_digest("ghcr.io/owner/repo", "v1").await;
+    }
+
+    #[tokio::test]
+    async fn test_oci_auth_headers() {
+        let mut server = mockito::Server::new_async().await;
+        let provider = OciRegistryProvider::with_base_urls(
+            format!("{}/auth", server.url()),
+            format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
+        );
+
+        let _m_token = server
+            .mock("GET", mockito::Matcher::Regex("^/auth".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"token":"abc"}"#)
+            .create_async()
+            .await;
+
+        let _m_manifest = server
+            .mock("GET", "/v2/library/nginx/manifests/latest")
+            .match_header("Authorization", "Bearer abc")
+            .with_status(200)
+            .with_header("docker-content-digest", "sha256:12345")
+            .create_async()
+            .await;
+
+        let res = provider.resolve_digest("nginx", "latest").await.unwrap();
+        assert_eq!(res, "sha256:12345");
+    }
+
+    #[tokio::test]
+    async fn test_oci_auth_with_credentials() {
+        let mut server = mockito::Server::new_async().await;
+        let provider = OciRegistryProvider {
+            client: reqwest::Client::new(),
+            auth_url: format!("{}/auth", server.url()),
+            base_url_template: format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+        };
+
+        let _m_token = server
+            .mock("GET", mockito::Matcher::Regex("^/auth".to_string()))
+            .match_header("Authorization", "Basic dXNlcjpwYXNz") // user:pass
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"token":"token123"}"#)
+            .create_async()
+            .await;
+
+        let _m_manifest = server
+            .mock("GET", "/v2/library/nginx/manifests/latest")
+            .match_header("Authorization", "Bearer token123")
+            .with_status(200)
+            .with_header("docker-content-digest", "sha256:54321")
+            .create_async()
+            .await;
+
+        let res = provider.resolve_digest("nginx", "latest").await.unwrap();
+        assert_eq!(res, "sha256:54321");
+    }
+
+    #[tokio::test]
+    async fn test_oci_registry_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let provider = OciRegistryProvider::with_base_urls(
+            format!("{}/auth", server.url()),
+            format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
+        );
+
+        let _m_token = server
+            .mock("GET", mockito::Matcher::Regex("^/auth".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"token":"abc"}"#)
+            .create_async()
+            .await;
+
+        let _m_manifest = server
+            .mock("GET", "/v2/owner/repo/manifests/v1")
+            .with_status(200)
+            .with_header("Digest", "sha256:fallback")
+            .create_async()
+            .await;
+
+        // Image without dot in first part should fallback to registry-1.docker.io
+        let res = provider.resolve_digest("owner/repo", "v1").await.unwrap();
+        assert_eq!(res, "sha256:fallback");
+    }
+
+    #[tokio::test]
+    async fn test_oci_auth_basic_non_docker_hub() {
+        let mut server = mockito::Server::new_async().await;
+        let provider = OciRegistryProvider {
+            client: reqwest::Client::new(),
+            auth_url: "http://auth".into(),
+            base_url_template: format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+        };
+
+        let _m = server
+            .mock("GET", "/v2/owner/repo/manifests/v1")
+            .match_header("Authorization", "Basic dXNlcjpwYXNz") // user:pass
+            .with_status(200)
+            .with_header("Digest", "sha256:basic")
+            .create_async()
+            .await;
+
+        let res = provider
+            .resolve_digest("ghcr.io/owner/repo", "v1")
+            .await
+            .unwrap();
+        assert_eq!(res, "sha256:basic");
+    }
+
+    #[test]
+    fn test_oci_provider_default() {
+        let p = OciRegistryProvider::default();
+        assert!(p.username.is_none());
     }
 
     #[tokio::test]

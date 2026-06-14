@@ -249,3 +249,34 @@ async fn test_set_command() {
     let content = fs::read_to_string(&wf).unwrap();
     assert!(content.contains("actions/checkout@fixedhash"));
 }
+
+#[tokio::test]
+async fn test_install_hook_command() {
+    let dir = tempdir().unwrap();
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    // Create a mock .git directory
+    fs::create_dir(".git").unwrap();
+
+    let cli = Cli::try_parse_from(["pinner", "install-hook"]).unwrap();
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default());
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![]).await.unwrap();
+
+    assert!(dir.path().join(".git/hooks/pre-commit").exists());
+
+    std::env::set_current_dir(original_dir).unwrap();
+}
+
+#[tokio::test]
+async fn test_generate_completion_command() {
+    let cli = Cli::try_parse_from(["pinner", "generate-completion", "bash"]).unwrap();
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default());
+    let registry = OciRegistryProvider::new(None, None);
+
+    // This command currently returns Ok(()) in pinner::run and is handled in main.rs
+    // But we still want to cover the match arm in pinner::run
+    run(cli, provider, registry, vec![]).await.unwrap();
+}
