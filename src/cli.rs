@@ -19,6 +19,18 @@ pub enum UpgradeStrategy {
     Commit,
 }
 
+/// Format for the output results.
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+pub enum OutputFormat {
+    /// Standard text output (default).
+    #[default]
+    Text,
+    /// JSON format.
+    Json,
+    /// Markdown table format.
+    Markdown,
+}
+
 /// The main command-line interface for Pinner.
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -58,7 +70,10 @@ pub struct Cli {
     /// Forgejo/Gitea API Token for authentication.
     #[arg(long, global = true, env = "FORGEJO_TOKEN")]
     pub forgejo_token: Option<String>,
-    /// Output results in JSON format.
+    /// Output results in the specified format.
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+    /// Output results in JSON format (deprecated, use --format json).
     #[arg(long, global = true)]
     pub json: bool,
     /// Base URL for the GitHub API (defaults to public GitHub).
@@ -99,6 +114,9 @@ pub struct Cli {
     /// Number of concurrent API requests to make.
     #[arg(long, global = true)]
     pub concurrency: Option<usize>,
+    /// Actions or images to ignore (e.g., "actions/checkout").
+    #[arg(long, global = true)]
+    pub ignore: Vec<String>,
     /// Username for OCI registry authentication.
     #[arg(long, global = true, env = "OCI_USERNAME")]
     pub oci_username: Option<String>,
@@ -111,6 +129,15 @@ impl Cli {
     /// Returns true if the quiet flag is set.
     pub fn quiet(&self) -> bool {
         self.quiet
+    }
+
+    /// Returns the effective output format, considering the deprecated --json flag.
+    pub fn output_format(&self) -> OutputFormat {
+        if self.json {
+            OutputFormat::Json
+        } else {
+            self.format.clone()
+        }
     }
 }
 
@@ -130,6 +157,8 @@ pub enum Commands {
         /// Commit SHA-1 hash
         hash: String,
     },
+    /// Install a pre-commit hook that runs pinner verify.
+    InstallHook,
     /// Generate shell completions.
     GenerateCompletion {
         /// Shell to generate completions for

@@ -3,19 +3,22 @@
 //! This module contains the [`Operations`] struct, which is the primary orchestrator
 //! for finding, fetching, and replacing action tags in YAML files.
 
-use crate::cli::UpgradeStrategy;
+use crate::cli::{OutputFormat, UpgradeStrategy};
 use crate::error::PinnerError;
 use crate::providers::{DependencyName, DependencyRef, RemoteProvider};
 use crate::registry::RegistryProvider;
 use crate::yaml::{find_uses_nodes, CiProvider};
 use colored::Colorize;
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use futures::stream::{self, StreamExt};
 use ignore::WalkBuilder;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
@@ -26,40 +29,45 @@ fn default_concurrency() -> usize {
 }
 
 /// Configuration for Pinner, typically loaded from a `.pinner.toml` file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    /// List of actions to ignore during pinning or upgrading.
+    /// List of actions or image patterns to ignore.
     #[serde(default)]
-    pub ignore_actions: HashSet<DependencyName>,
+    pub ignore: Vec<String>,
     /// Number of concurrent API requests to make.
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
-    /// Custom API URL for the primary forge (e.g., GitHub Enterprise).
-    #[serde(default, alias = "github_url")]
-    pub api_url: Option<String>,
+    /// Base URL for the GitHub API.
+    pub github_url: Option<String>,
+    /// Base URL for the Bitbucket API.
+    pub bitbucket_url: Option<String>,
+    /// Base URL for the GitLab API.
+    pub gitlab_url: Option<String>,
+    /// Base URL for the Forgejo/Gitea API.
+    pub forgejo_url: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            ignore_actions: HashSet::new(),
+            ignore: Vec::new(),
             concurrency: default_concurrency(),
-            api_url: None,
+            github_url: None,
+            bitbucket_url: None,
+            gitlab_url: None,
+            forgejo_url: None,
         }
     }
 }
 
 /// Orchestrator for pinning and upgrading operations.
-///
-/// This struct holds the shared state and configuration needed to perform
-/// updates across multiple files.
 pub struct Operations<G: RemoteProvider, R: RegistryProvider> {
     github: Arc<G>,
     registry: Arc<R>,
     yes: bool,
     quiet: bool,
     dry_run: bool,
-    json: bool,
+    format: OutputFormat,
     upgrade_strategy: UpgradeStrategy,
     /// The current configuration.
     pub config: Config,
@@ -113,24 +121,31 @@ pub struct OperationsOptions {
     pub yes: bool,
     pub quiet: bool,
     pub dry_run: bool,
-    pub json: bool,
+    pub format: OutputFormat,
     pub upgrade_strategy: UpgradeStrategy,
     pub concurrency: Option<usize>,
+    pub ignore: Vec<String>,
 }
 
 impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R> {
     pub fn new(github: Arc<G>, registry: Arc<R>, options: OperationsOptions) -> Self {
         let mut config = Self::load_config().unwrap_or_default();
+
+        // Override config with CLI options
         if let Some(c) = options.concurrency {
             config.concurrency = c;
         }
+        if !options.ignore.is_empty() {
+            config.ignore.extend(options.ignore);
+        }
+
         Self {
             github,
             registry,
             yes: options.yes,
             quiet: options.quiet,
             dry_run: options.dry_run,
-            json: options.json,
+            format: options.format,
             upgrade_strategy: options.upgrade_strategy,
             config,
             #[cfg(test)]
@@ -138,30 +153,32 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         }
     }
 
+    /// Loads the configuration using figment (File -> Env -> Defaults).
     fn load_config() -> Result<Config, PinnerError> {
-        let mut current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        loop {
-            let config_path = current_dir.join(".pinner.toml");
-            if config_path.exists() {
-                return Self::load_config_from_path(&config_path);
-            }
-            if let Some(parent) = current_dir.parent() {
-                current_dir = parent.to_path_buf();
-            } else {
-                break;
-            }
-        }
-        Ok(Config::default())
+        let figment = Figment::new()
+            .merge(Toml::file(".pinner.toml"))
+            .merge(Env::prefixed("PINNER_"));
+
+        figment
+            .extract()
+            .map_err(|e| PinnerError::Config(format!("Failed to load configuration: {}", e)))
     }
 
     pub fn load_config_from_path(path: &Path) -> Result<Config, PinnerError> {
-        if !path.exists() {
-            return Ok(Config::default());
-        }
-        let content = fs::read_to_string(path).unwrap_or_default();
-        let config: Config = toml::from_str(&content)
-            .map_err(|e| PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e)))?;
-        Ok(config)
+        Figment::new()
+            .merge(Toml::file(path))
+            .extract()
+            .map_err(|e| {
+                PinnerError::Config(format!("Failed to load config from {:?}: {}", path, e))
+            })
+    }
+
+    /// Returns true if the action should be ignored.
+    fn is_ignored(&self, action: &DependencyName) -> bool {
+        self.config
+            .ignore
+            .iter()
+            .any(|pattern| action.0.contains(pattern))
     }
 
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
@@ -341,7 +358,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         node.value.split_once('@').unwrap_or((&node.value, ""));
                     let action = DependencyName::from(action_part);
 
-                    if self.config.ignore_actions.contains(&action) {
+                    if self.is_ignored(&action) {
                         continue;
                     }
 
@@ -454,7 +471,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
                     let action = DependencyName::from(action_part);
 
-                    if self.config.ignore_actions.contains(&action) {
+                    if self.is_ignored(&action) {
                         continue;
                     }
 
@@ -495,7 +512,9 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 Output = Result<Option<(DependencyRef, Option<String>)>, PinnerError>,
             > + Send,
     {
-        let pb = if !self.quiet && !self.json && !tasks.is_empty() {
+        let is_structured =
+            self.format == OutputFormat::Json || self.format == OutputFormat::Markdown;
+        let pb = if !self.quiet && !is_structured && !tasks.is_empty() {
             let pb = ProgressBar::new(tasks.len() as u64);
             pb.set_style(
                 ProgressStyle::default_bar()
@@ -652,12 +671,16 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
                 changes.push((old_val_with_suffix.to_string(), new_val.clone()));
                 new_content.replace_range(res.task.start..line_end, &new_val);
-                if self.json {
+                if self.format == OutputFormat::Json || self.format == OutputFormat::Markdown {
                     all_json_updates.push(res);
                 }
             }
 
-            if !changes.is_empty() && !self.quiet && !self.json {
+            if !changes.is_empty()
+                && !self.quiet
+                && self.format != OutputFormat::Json
+                && self.format != OutputFormat::Markdown
+            {
                 println!("\n{} {}", "File:".bold(), path.display().to_string().cyan());
                 if self.dry_run {
                     self.print_diff(content, &new_content);
@@ -700,19 +723,41 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         println!("{}", "✘ Skipped".yellow());
                     }
                 }
-            } else if !changes.is_empty() && (self.yes || self.json) && !self.dry_run {
+            } else if !changes.is_empty()
+                && (self.yes
+                    || self.format == OutputFormat::Json
+                    || self.format == OutputFormat::Markdown)
+                && !self.dry_run
+            {
                 fs::write(&path, new_content)?;
             }
         }
 
-        if self.json {
-            let output = JsonOutput {
-                updates: all_json_updates,
-            };
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output")
-            );
+        match self.format {
+            OutputFormat::Json => {
+                let output = JsonOutput {
+                    updates: all_json_updates,
+                };
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).expect("Failed to serialize JSON output")
+                );
+            }
+            OutputFormat::Markdown => {
+                println!("\n# Pinner Update Summary\n");
+                println!("| File | Action | Old Ref | New SHA |");
+                println!("|------|--------|---------|---------|");
+                for res in all_json_updates {
+                    println!(
+                        "| `{}` | `{}` | `{}` | `{}` |",
+                        res.path.display(),
+                        res.action,
+                        res.old_tag.as_deref().unwrap_or("-"),
+                        res.new_sha
+                    );
+                }
+            }
+            _ => {}
         }
 
         Ok(())
@@ -767,9 +812,10 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     ///         yes: true,
     ///         quiet: true,
     ///         dry_run: false,
-    ///         json: false,
+    ///         format: pinner::cli::OutputFormat::Text,
     ///         upgrade_strategy: UpgradeStrategy::Latest,
     ///         concurrency: None,
+    ///         ignore: vec![],
     ///     }
     /// );
     ///
@@ -824,9 +870,7 @@ mod tests {
         fs::write(&f, "uses: ignore/me@v1\nuses: keep/me@v1").unwrap();
 
         let mut config = Config::default();
-        config
-            .ignore_actions
-            .insert(DependencyName::from("ignore/me"));
+        config.ignore.push("ignore/me".to_string());
 
         mock.expect_get_commit_sha()
             .with(
@@ -844,9 +888,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         ops.config = config;
@@ -869,9 +914,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -900,9 +946,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -938,9 +985,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -978,9 +1026,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1012,9 +1061,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1048,9 +1098,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1100,9 +1151,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
 
@@ -1119,9 +1171,10 @@ mod tests {
                 yes: true,
                 quiet: true,
                 dry_run: false,
-                json: false,
+                format: OutputFormat::Text,
                 upgrade_strategy: UpgradeStrategy::Latest,
                 concurrency: None,
+                ignore: vec![],
             },
         );
         let res = ops.pin(&[PathBuf::from("/non/existent/path/12345")]).await;

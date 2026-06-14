@@ -19,6 +19,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"
 moka = { version = "0.12", features = ["future"] }
+figment = { version = "0.10", features = ["toml", "env"] }
 indicatif = "0.17"
 toml = "0.8"
 dirs = "5.0"

@@ -1,19 +1,22 @@
 # Pinner Project Context
 
 ## Project Overview
-`pinner` is a high-performance Rust CLI utility designed to hash-pin GitHub Actions in workflow files. It automates the security best practice of replacing mutable tags (like `@v1`) with immutable commit SHA-1 hashes (e.g., `@a1b2c3d...`) to prevent supply chain attacks.
+`pinner` is a high-performance Rust CLI utility designed to hash-pin actions and Docker images in CI/CD workflow files. It automates the security best practice of replacing mutable tags (like `@v1` or `:latest`) with immutable commit SHA-1 hashes or digest hashes to prevent supply chain attacks. It supports multiple platforms including GitHub, GitLab, Bitbucket, Forgejo, and OCI registries.
 
-- **Status**: Production-ready core with comprehensive tests.
+- **Status**: Production-ready core with comprehensive tests and multi-platform support.
 - **Architecture**: Separated into a testable library (`src/lib.rs`) and a thin CLI wrapper (`src/main.rs`).
-- **Parsing Strategy**: Uses Regex-based surgical replacement to ensure 100% preservation of YAML comments, indentation, and formatting.
-- **Dependency Injection**: Uses the `GithubProvider` trait to allow full offline testing via `MockGithubProvider`.
+- **Parsing Strategy**: Uses `tree-sitter-yaml` for AST-based surgical replacement to ensure 100% preservation of YAML comments, indentation, and formatting while robustly identifying action/image references.
+- **Dependency Injection**: Uses the `GithubProvider` (and other forge traits) via a `UnifiedProvider` to allow full offline testing via mocks.
 
 ## Technology Stack
 - **Language**: Rust (2021 Edition)
 - **CLI**: `clap` (v4 with derive)
 - **Runtime**: `tokio` (Async)
-- **HTTP**: `reqwest`
-- **Testing**: `mockall` (Mocking), `mockito` (HTTP Interception), `tempfile` (File system isolation).
+- **HTTP**: `reqwest` with `reqwest-middleware` and `reqwest-retry`.
+- **Parsing**: `tree-sitter` and `tree-sitter-yaml`.
+- **Caching**: `moka` for API response caching.
+- **Error Handling**: `anyhow` for application-level context and `thiserror` for domain-specific errors.
+- **Testing**: `mockall` (Mocking), `mockito` (HTTP Interception), `tempfile` (File system isolation), `serial_test`.
 - **Automation**: `cargo-husky` for local git hooks.
 
 ## Building and Running
@@ -30,18 +33,22 @@
 - **Customization**: Hooks are defined in `.cargo-husky/hooks/`.
 
 ### Subcommands
-- `pin`: Automatically converts all action tags in `.github/workflows/` (or specified paths) to hashes.
-- `upgrade`: Re-pins all actions to the latest commit on their `main` branch (or latest release).
+- `pin`: Automatically converts all action tags and container images to hashes.
+- `upgrade`: Upgrades actions to newer versions based on the selected strategy (latest, major, minor, or commit).
+- `verify`: Checks if all actions/images are pinned to hashes.
 - `set <action> <hash>`: Forcibly updates a specific action across all workflows to a provided SHA.
+- `generate-completion`: Generates shell completions for bash, zsh, fish, etc.
 
 ### Global Options
-- `--workflow` (`-w`): Specify one or more files or directories to process. Defaults to `.github/workflows/`.
+- `--workflows` (`-w`): Specify one or more files or directories to process. Defaults to standard CI paths.
 - `--yes` (`-y`): Automatically confirm all replacements.
 - `--dry-run`: Show diff without writing changes.
 - `--quiet` (`-q`): Suppress console output.
+- `--verbose`: Enable debug logging.
+- `--json`: Output results in JSON format.
 
 ## Development Conventions
 - **Clean Code**: Logic is decoupled from side effects.
-- **Safety**: GitHub API requests include a mandatory User-Agent.
+- **Safety**: API requests include mandatory User-Agents and follow retry policies.
 - **Tag Preservation**: Replacements must append the original tag as a comment (e.g., `@hash # v2`).
-- **Error Handling**: Uses `Result<T, String>` for propagation, focusing on clear CLI feedback.
+- **Error Handling**: Uses `anyhow::Result` for application flow and `PinnerError` for specific failure modes.

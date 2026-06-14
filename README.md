@@ -67,6 +67,7 @@ Update pinned actions to their latest versions based on a strategy.
 pinner upgrade
 ```
 
+```bash
 # Upgrade only within the current major version (e.g., v2.1.0 -> v2.4.5)
 pinner upgrade --upgrade-strategy major
 ```
