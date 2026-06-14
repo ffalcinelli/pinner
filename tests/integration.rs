@@ -1,6 +1,8 @@
+use clap::Parser;
 use mockito::Server;
+use pinner::providers::{UnifiedProvider, UnifiedProviderConfig};
+use pinner::{run, Cli, OciRegistryProvider};
 use std::fs;
-use std::process::Command;
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -16,22 +18,35 @@ async fn test_full_pin_cycle() {
     let dir = tempdir().unwrap();
     let workflows = dir.path().join(".github/workflows");
     fs::create_dir_all(&workflows).unwrap();
-    fs::write(workflows.join("ci.yml"), "uses: actions/checkout@v3").unwrap();
+    let wf_path = workflows.join("ci.yml");
+    fs::write(&wf_path, "uses: actions/checkout@v3").unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .arg("--github-url")
-        .arg(github_server.url())
-        .arg("--workflows")
-        .arg(workflows.to_str().unwrap()) // Point directly to workflows dir
-        .arg("--yes")
-        .arg("pin")
-        .status()
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--github-url",
+        &github_server.url(),
+        "--workflows",
+        workflows.to_str().unwrap(),
+        "--yes",
+        "pin",
+    ])
+    .unwrap();
 
-    assert!(status.success());
-    let content = fs::read_to_string(workflows.join("ci.yml")).unwrap();
+    let provider = UnifiedProvider::new(UnifiedProviderConfig {
+        github_url: cli.github_url.clone(),
+        github_token: cli.github_token.clone(),
+        bitbucket_url: cli.bitbucket_url.clone(),
+        bitbucket_token: cli.bitbucket_token.clone(),
+        gitlab_url: cli.gitlab_url.clone(),
+        gitlab_token: cli.gitlab_token.clone(),
+        forgejo_url: cli.forgejo_url.clone(),
+        forgejo_token: cli.forgejo_token.clone(),
+    });
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![workflows]).await.unwrap();
+
+    let content = fs::read_to_string(wf_path).unwrap();
     assert!(content.contains("actions/checkout@hashv3 # v3"));
 }
 
@@ -42,18 +57,28 @@ async fn test_verify_command() {
     fs::create_dir_all(&workflows).unwrap();
 
     // Unpinned
-    fs::write(workflows.join("unpinned.yml"), "uses: actions/checkout@v3").unwrap();
+    let unpinned_path = workflows.join("unpinned.yml");
+    fs::write(&unpinned_path, "uses: actions/checkout@v3").unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .arg("--workflows")
-        .arg(workflows.to_str().unwrap())
-        .arg("verify")
-        .status()
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--workflows",
+        workflows.to_str().unwrap(),
+        "verify",
+    ])
+    .unwrap();
 
-    assert!(!status.success());
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default());
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(
+        cli,
+        provider.clone(),
+        registry.clone(),
+        vec![workflows.clone()],
+    )
+    .await;
+    assert!(res.is_err());
 
     // Pinned
     fs::write(
@@ -61,18 +86,17 @@ async fn test_verify_command() {
         "uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
     )
     .unwrap();
-    fs::remove_file(workflows.join("unpinned.yml")).unwrap();
+    fs::remove_file(unpinned_path).unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .arg("--workflows")
-        .arg(workflows.to_str().unwrap())
-        .arg("verify")
-        .status()
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--workflows",
+        workflows.to_str().unwrap(),
+        "verify",
+    ])
+    .unwrap();
 
-    assert!(status.success());
+    run(cli, provider, registry, vec![workflows]).await.unwrap();
 }
 
 #[tokio::test]
@@ -108,16 +132,18 @@ jobs:
 
     fs::write(workflows.join("release.yml"), yaml).unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .arg("--workflows")
-        .arg(workflows.to_str().unwrap())
-        .arg("verify")
-        .status()
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--workflows",
+        workflows.to_str().unwrap(),
+        "verify",
+    ])
+    .unwrap();
 
-    assert!(status.success());
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default());
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![workflows]).await.unwrap();
 }
 
 #[tokio::test]
@@ -134,19 +160,21 @@ async fn test_github_url_env() {
     let f = dir.path().join("f.yml");
     fs::write(&f, "uses: o/r@v1").unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .env("GITHUB_URL", server.url())
-        .arg("--workflows")
-        .arg(&f)
-        .arg("--yes")
-        .arg("pin")
-        .status()
+    std::env::set_var("GITHUB_URL", server.url());
+
+    let cli = Cli::try_parse_from(["pinner", "--workflows", f.to_str().unwrap(), "--yes", "pin"])
         .unwrap();
 
-    assert!(status.success());
+    let provider = UnifiedProvider::new(UnifiedProviderConfig {
+        github_url: cli.github_url.clone(),
+        ..Default::default()
+    });
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![f.clone()]).await.unwrap();
+
     assert!(fs::read_to_string(&f).unwrap().contains("o/r@h"));
+    std::env::remove_var("GITHUB_URL");
 }
 
 #[tokio::test]
@@ -169,19 +197,27 @@ async fn test_upgrade_command() {
     let wf = dir.path().join("ci.yml");
     fs::write(&wf, "uses: actions/checkout@v3").unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .arg("--github-url")
-        .arg(github_server.url())
-        .arg("--workflows")
-        .arg(wf.to_str().unwrap())
-        .arg("--yes")
-        .arg("upgrade")
-        .status()
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--github-url",
+        &github_server.url(),
+        "--workflows",
+        wf.to_str().unwrap(),
+        "--yes",
+        "upgrade",
+    ])
+    .unwrap();
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig {
+        github_url: cli.github_url.clone(),
+        ..Default::default()
+    });
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![wf.clone()])
+        .await
         .unwrap();
 
-    assert!(status.success());
     let content = fs::read_to_string(&wf).unwrap();
     assert!(content.contains("actions/checkout@hashv4 # v4"));
 }
@@ -192,19 +228,24 @@ async fn test_set_command() {
     let wf = dir.path().join("ci.yml");
     fs::write(&wf, "uses: actions/checkout@v3").unwrap();
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .arg("--")
-        .arg("--workflows")
-        .arg(wf.to_str().unwrap())
-        .arg("--yes")
-        .arg("set")
-        .arg("actions/checkout")
-        .arg("fixedhash")
-        .status()
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--workflows",
+        wf.to_str().unwrap(),
+        "--yes",
+        "set",
+        "actions/checkout",
+        "fixedhash",
+    ])
+    .unwrap();
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default());
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![wf.clone()])
+        .await
         .unwrap();
 
-    assert!(status.success());
     let content = fs::read_to_string(&wf).unwrap();
     assert!(content.contains("actions/checkout@fixedhash"));
 }

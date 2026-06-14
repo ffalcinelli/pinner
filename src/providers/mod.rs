@@ -966,6 +966,7 @@ impl RemoteProvider for ReqwestForgejoProvider {
 }
 
 /// Supported provider types.
+#[derive(Clone)]
 pub enum ProviderType {
     GitHub(Arc<ReqwestGithubProvider>),
     Bitbucket(Arc<ReqwestBitbucketProvider>),
@@ -974,6 +975,7 @@ pub enum ProviderType {
 }
 
 /// Configuration for the UnifiedProvider.
+#[derive(Clone)]
 pub struct UnifiedProviderConfig {
     pub github_url: String,
     pub github_token: Option<String>,
@@ -985,7 +987,23 @@ pub struct UnifiedProviderConfig {
     pub forgejo_token: Option<String>,
 }
 
+impl Default for UnifiedProviderConfig {
+    fn default() -> Self {
+        Self {
+            github_url: "https://api.github.com".to_string(),
+            github_token: None,
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            bitbucket_token: None,
+            gitlab_url: "https://gitlab.com".to_string(),
+            gitlab_token: None,
+            forgejo_url: "https://codeberg.org".to_string(),
+            forgejo_token: None,
+        }
+    }
+}
+
 /// A provider that dispatches to various CI providers based on the YAML key.
+#[derive(Clone)]
 pub struct UnifiedProvider {
     pub providers: Vec<ProviderType>,
 }
