@@ -22,7 +22,7 @@ moka = { version = "0.12", features = ["future"] }
 figment = { version = "0.10", features = ["toml", "env"] }
 indicatif = "0.17"
 toml = "0.8"
-dirs = "5.0"
+dirs = "6.0"
 regex = "1.10"
 async-trait = "0.1"
 mockall = "0.12"
