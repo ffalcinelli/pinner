@@ -175,7 +175,12 @@ pub struct BaseHttpClient {
 }
 
 impl BaseHttpClient {
-    pub fn new(base_url: String, token: Option<String>, token_prefix: &str, env_var: &str) -> Result<Self, PinnerError> {
+    pub fn new(
+        base_url: String,
+        token: Option<String>,
+        token_prefix: &str,
+        env_var: &str,
+    ) -> Result<Self, PinnerError> {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
 
@@ -194,7 +199,8 @@ impl BaseHttpClient {
 
         let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
-            .build().map_err(|e| PinnerError::Api(format!("Failed to build reqwest client: {}", e)))?;
+            .build()
+            .map_err(|e| PinnerError::Api(format!("Failed to build reqwest client: {}", e)))?;
 
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest_client)
@@ -424,7 +430,11 @@ impl ReqwestBitbucketProvider {
         Self::with_type(base_url, token, is_cloud)
     }
 
-    pub fn with_type(base_url: String, token: Option<String>, is_cloud: bool) -> Result<Self, PinnerError> {
+    pub fn with_type(
+        base_url: String,
+        token: Option<String>,
+        is_cloud: bool,
+    ) -> Result<Self, PinnerError> {
         Ok(Self {
             base: BaseHttpClient::new(base_url, token, "Bearer", "BITBUCKET_TOKEN").unwrap(),
             sha_cache: Cache::builder()
@@ -1348,7 +1358,8 @@ mod tests {
             gitlab_token: None,
             forgejo_url: server.url(),
             forgejo_token: None,
-        }).unwrap();
+        })
+        .unwrap();
 
         let rel = unified
             .get_latest_release(&DependencyName::from("o/r"), "uses")
@@ -1380,7 +1391,8 @@ mod tests {
             gitlab_token: None,
             forgejo_url: "http://invalid".into(),
             forgejo_token: None,
-        }).unwrap();
+        })
+        .unwrap();
         let res = unified
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await;
@@ -1664,7 +1676,8 @@ mod tests {
         let _provider2 = ReqwestGithubProvider::new(
             "https://api.github.com".into(),
             Some("manual_token".into()),
-        ).unwrap();
+        )
+        .unwrap();
         // Covered Some(t) path.
     }
 
@@ -1763,7 +1776,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_bitbucket_dc_invalid_format() {
-        let provider = ReqwestBitbucketProvider::with_type("http://bb.local".into(), None, false).unwrap();
+        let provider =
+            ReqwestBitbucketProvider::with_type("http://bb.local".into(), None, false).unwrap();
         let res = provider
             .get_commit_sha(&DependencyName::from("invalid-format"), "v1", "pipe")
             .await;
@@ -1800,7 +1814,8 @@ mod tests {
             gitlab_token: None,
             forgejo_url: server.url(),
             forgejo_token: None,
-        }).unwrap();
+        })
+        .unwrap();
 
         let sha1 = unified
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
@@ -1822,7 +1837,8 @@ mod tests {
             None,
             "Bearer",
             "GITHUB_TOKEN",
-        ).unwrap();
+        )
+        .unwrap();
         let action = DependencyName::from("actions/checkout");
 
         // Test 403 with x-ratelimit-reset

@@ -41,7 +41,8 @@ async fn test_full_pin_cycle() {
         gitlab_token: cli.gitlab_token.clone(),
         forgejo_url: cli.forgejo_url.clone(),
         forgejo_token: cli.forgejo_token.clone(),
-    }).unwrap();
+    })
+    .unwrap();
     let registry = OciRegistryProvider::new(None, None);
 
     run(cli, provider, registry, vec![workflows]).await.unwrap();
@@ -168,7 +169,8 @@ async fn test_github_url_env() {
     let provider = UnifiedProvider::new(UnifiedProviderConfig {
         github_url: cli.github_url.clone(),
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
     let registry = OciRegistryProvider::new(None, None);
 
     run(cli, provider, registry, vec![f.clone()]).await.unwrap();
@@ -211,7 +213,8 @@ async fn test_upgrade_command() {
     let provider = UnifiedProvider::new(UnifiedProviderConfig {
         github_url: cli.github_url.clone(),
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
     let registry = OciRegistryProvider::new(None, None);
 
     run(cli, provider, registry, vec![wf.clone()])
