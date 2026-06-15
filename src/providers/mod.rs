@@ -1832,4 +1832,29 @@ mod tests {
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(err.to_string().contains("HTTP 500"));
     }
+
+    #[tokio::test]
+    async fn test_unified_provider_fallback() {
+        let unified = UnifiedProvider { providers: vec![] };
+        let action = DependencyName::from("o/r");
+        let key = "unknown";
+
+        let res_commit = unified.get_commit_sha(&action, "v1", key).await;
+        assert!(
+            matches!(res_commit, Err(PinnerError::Api(ref msg)) if msg.contains("No provider found for key: unknown"))
+        );
+
+        let res_release = unified.get_latest_release(&action, key).await;
+        assert!(
+            matches!(res_release, Err(PinnerError::Api(ref msg)) if msg.contains("No provider found for key: unknown"))
+        );
+
+        let res_tags = unified.list_tags(&action, key).await;
+        assert!(
+            matches!(res_tags, Err(PinnerError::Api(ref msg)) if msg.contains("No provider found for key: unknown"))
+        );
+
+        let res_branch = unified.get_default_branch(&action, key).await;
+        assert_eq!(res_branch.unwrap().0, "main");
+    }
 }
