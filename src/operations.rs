@@ -346,43 +346,45 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         PinnerError::Parse(format!("Failed to parse {}", path.display()))
                     })?;
 
-                let provider = CiProvider::from_path(&path);
-                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+                    let provider = CiProvider::from_path(&path);
+                    let uses_nodes =
+                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
 
-                let mut local_unpinned = Vec::new();
-                for node in uses_nodes {
-                    if node.key == "include" || node.key == "project" {
-                        continue;
+                    let mut local_unpinned = Vec::new();
+                    for node in uses_nodes {
+                        if node.key == "include" || node.key == "project" {
+                            continue;
+                        }
+                        if node.value.starts_with("./") {
+                            continue;
+                        }
+
+                        let (action_part, tag) =
+                            node.value.split_once('@').unwrap_or((&node.value, ""));
+                        let action = DependencyName::from(action_part);
+
+                        if self.is_ignored(&action) {
+                            continue;
+                        }
+
+                        let is_pinned = if tag.is_empty() {
+                            false
+                        } else {
+                            (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
+                                || (node.value.contains("@sha256:")
+                                    && node
+                                        .value
+                                        .split_once("@sha256:")
+                                        .is_some_and(|(_, s)| s.len() == 64))
+                        };
+
+                        if !is_pinned {
+                            local_unpinned.push((path.clone(), node.value));
+                        }
                     }
-                    if node.value.starts_with("./") {
-                        continue;
-                    }
-
-                    let (action_part, tag) =
-                        node.value.split_once('@').unwrap_or((&node.value, ""));
-                    let action = DependencyName::from(action_part);
-
-                    if self.is_ignored(&action) {
-                        continue;
-                    }
-
-                    let is_pinned = if tag.is_empty() {
-                        false
-                    } else {
-                        (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                            || (node.value.contains("@sha256:")
-                                && node
-                                    .value
-                                    .split_once("@sha256:")
-                                    .is_some_and(|(_, s)| s.len() == 64))
-                    };
-
-                    if !is_pinned {
-                        local_unpinned.push((path.clone(), node.value));
-                    }
-                }
-                Ok(local_unpinned)
-            })
+                    Ok(local_unpinned)
+                },
+            )
             .collect::<Result<Vec<Vec<(PathBuf, String)>>, PinnerError>>()?
             .into_iter()
             .flatten()
@@ -452,49 +454,51 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         PinnerError::Parse(format!("Failed to parse {}", path.display()))
                     })?;
 
-                let provider = CiProvider::from_path(&path);
-                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+                    let provider = CiProvider::from_path(&path);
+                    let uses_nodes =
+                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
 
-                let mut tasks = Vec::new();
-                for node in uses_nodes {
-                    if node.key == "include" || node.key == "project" {
-                        continue;
+                    let mut tasks = Vec::new();
+                    for node in uses_nodes {
+                        if node.key == "include" || node.key == "project" {
+                            continue;
+                        }
+                        if node.value.starts_with("./") {
+                            continue;
+                        }
+                        let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
+                            (a, Some(t))
+                        } else if node.value.starts_with("docker://") && node.value.contains(':') {
+                            let last_colon = node.value.rfind(':').unwrap();
+                            (
+                                &node.value[..last_colon],
+                                Some(&node.value[last_colon + 1..]),
+                            )
+                        } else if let Some((a, t)) = node.value.split_once(':') {
+                            (a, Some(t))
+                        } else {
+                            (node.value.as_str(), None)
+                        };
+
+                        let action = DependencyName::from(action_part);
+
+                        if self.is_ignored(&action) {
+                            continue;
+                        }
+
+                        tasks.push(UpdateTask {
+                            path: path.clone(),
+                            start: node.start,
+                            end: node.end,
+                            action,
+                            current_tag: tag.map(|s| s.to_string()),
+                            comment: node.comment,
+                            key: node.key,
+                        });
                     }
-                    if node.value.starts_with("./") {
-                        continue;
-                    }
-                    let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
-                        (a, Some(t))
-                    } else if node.value.starts_with("docker://") && node.value.contains(':') {
-                        let last_colon = node.value.rfind(':').unwrap();
-                        (
-                            &node.value[..last_colon],
-                            Some(&node.value[last_colon + 1..]),
-                        )
-                    } else if let Some((a, t)) = node.value.split_once(':') {
-                        (a, Some(t))
-                    } else {
-                        (node.value.as_str(), None)
-                    };
-
-                    let action = DependencyName::from(action_part);
-
-                    if self.is_ignored(&action) {
-                        continue;
-                    }
-
-                    tasks.push(UpdateTask {
-                        path: path.clone(),
-                        start: node.start,
-                        end: node.end,
-                        action,
-                        current_tag: tag.map(|s| s.to_string()),
-                        comment: node.comment,
-                        key: node.key,
-                    });
-                }
-                Ok((tasks, (path, content)))
-            })
+                    Ok((tasks, (path, content)))
+                },
+            )
             .collect();
 
         let mut final_tasks = Vec::new();
