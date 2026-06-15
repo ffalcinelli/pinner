@@ -469,11 +469,14 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                         let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
                             (a, Some(t))
                         } else if node.value.starts_with("docker://") && node.value.contains(':') {
-                            let last_colon = node.value.rfind(':').unwrap();
-                            (
-                                &node.value[..last_colon],
-                                Some(&node.value[last_colon + 1..]),
-                            )
+                            if let Some(last_colon) = node.value.rfind(':') {
+                                (
+                                    &node.value[..last_colon],
+                                    Some(&node.value[last_colon + 1..]),
+                                )
+                            } else {
+                                (node.value.as_str(), None)
+                            }
                         } else if let Some((a, t)) = node.value.split_once(':') {
                             (a, Some(t))
                         } else {
