@@ -181,14 +181,6 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             })
     }
 
-    /// Returns true if the action should be ignored.
-    fn is_ignored(&self, action: &DependencyName) -> bool {
-        self.config
-            .ignore
-            .iter()
-            .any(|pattern| action.0.contains(pattern))
-    }
-
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let github = self.github.clone();
         let registry = self.registry.clone();
@@ -336,63 +328,76 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             }
         }
 
-        use rayon::prelude::*;
-        let unpinned: Vec<(PathBuf, String)> = all_paths
-            .into_par_iter()
-            .map(|path| {
-                let content = fs::read_to_string(&path)?;
+        let ignore_list = self.config.ignore.clone();
 
-                let tree = PARSER
-                    .with(|parser| {
-                        let mut parser = parser.borrow_mut();
-                        parser.reset();
-                        parser.parse(&content, None)
-                    })
-                    .ok_or_else(|| {
-                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                    })?;
+        let unpinned = tokio::task::spawn_blocking(move || {
+            use rayon::prelude::*;
+            let unpinned: Vec<(PathBuf, String)> = all_paths
+                .into_par_iter()
+                .map(|path| {
+                    let content = fs::read_to_string(&path)?;
 
-                let provider = CiProvider::from_path(&path);
-                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
+                    let tree = PARSER
+                        .with(|parser| {
+                            let mut parser = parser.borrow_mut();
+                            parser.reset();
+                            parser.parse(&content, None)
+                        })
+                        .ok_or_else(|| {
+                            PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                        })?;
 
-                let mut local_unpinned = Vec::new();
-                for node in uses_nodes {
-                    if node.key == "include" || node.key == "project" {
-                        continue;
+                    let provider = CiProvider::from_path(&path);
+                    let uses_nodes =
+                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
+
+                    let mut local_unpinned = Vec::new();
+                    for node in uses_nodes {
+                        if node.key == "include" || node.key == "project" {
+                            continue;
+                        }
+                        if node.value.starts_with("./") {
+                            continue;
+                        }
+
+                        let (action_part, tag) =
+                            node.value.split_once('@').unwrap_or((&node.value, ""));
+                        let action = DependencyName::from(action_part);
+
+                        if ignore_list.iter().any(|pattern| action.0.contains(pattern)) {
+                            continue;
+                        }
+
+                        let is_pinned = if tag.is_empty() {
+                            false
+                        } else {
+                            (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
+                                || (node.value.contains("@sha256:")
+                                    && node
+                                        .value
+                                        .split_once("@sha256:")
+                                        .is_some_and(|(_, s)| s.len() == 64))
+                        };
+
+                        if !is_pinned {
+                            local_unpinned.push((path.clone(), node.value));
+                        }
                     }
-                    if node.value.starts_with("./") {
-                        continue;
-                    }
-
-                    let (action_part, tag) =
-                        node.value.split_once('@').unwrap_or((&node.value, ""));
-                    let action = DependencyName::from(action_part);
-
-                    if self.is_ignored(&action) {
-                        continue;
-                    }
-
-                    let is_pinned = if tag.is_empty() {
-                        false
-                    } else {
-                        (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                            || (node.value.contains("@sha256:")
-                                && node
-                                    .value
-                                    .split_once("@sha256:")
-                                    .is_some_and(|(_, s)| s.len() == 64))
-                    };
-
-                    if !is_pinned {
-                        local_unpinned.push((path.clone(), node.value));
-                    }
-                }
-                Ok(local_unpinned)
-            })
-            .collect::<Result<Vec<Vec<(PathBuf, String)>>, PinnerError>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+                    Ok(local_unpinned)
+                })
+                .collect::<Result<Vec<Vec<(PathBuf, String)>>, PinnerError>>()?
+                .into_iter()
+                .flatten()
+                .collect();
+            Ok::<Vec<(PathBuf, String)>, PinnerError>(unpinned)
+        })
+        .await
+        .unwrap_or_else(|e| {
+            Err(PinnerError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))
+        })?;
 
         if !unpinned.is_empty() {
             if !self.quiet {
@@ -439,70 +444,83 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             }
         }
 
-        use rayon::prelude::*;
-        type CollectResult = Result<(Vec<UpdateTask>, (PathBuf, String)), PinnerError>;
-        let results: Vec<CollectResult> = all_paths
-            .into_par_iter()
-            .map(|path| {
-                let content = fs::read_to_string(&path)?;
+        let ignore_list = self.config.ignore.clone();
 
-                let tree = PARSER
-                    .with(|parser| {
-                        let mut parser = parser.borrow_mut();
-                        parser.reset();
-                        parser.parse(&content, None)
-                    })
-                    .ok_or_else(|| {
-                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                    })?;
+        let results = tokio::task::spawn_blocking(move || {
+            use rayon::prelude::*;
+            type CollectResult = Result<(Vec<UpdateTask>, (PathBuf, String)), PinnerError>;
+            let results: Vec<CollectResult> = all_paths
+                .into_par_iter()
+                .map(|path| {
+                    let content = fs::read_to_string(&path)?;
 
-                let provider = CiProvider::from_path(&path);
-                let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
+                    let tree = PARSER
+                        .with(|parser| {
+                            let mut parser = parser.borrow_mut();
+                            parser.reset();
+                            parser.parse(&content, None)
+                        })
+                        .ok_or_else(|| {
+                            PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                        })?;
 
-                let mut tasks = Vec::new();
-                for node in uses_nodes {
-                    if node.key == "include" || node.key == "project" {
-                        continue;
-                    }
-                    if node.value.starts_with("./") {
-                        continue;
-                    }
-                    let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
-                        (a, Some(t))
-                    } else if node.value.starts_with("docker://") && node.value.contains(':') {
-                        if let Some(last_colon) = node.value.rfind(':') {
-                            (
-                                &node.value[..last_colon],
-                                Some(&node.value[last_colon + 1..]),
-                            )
+                    let provider = CiProvider::from_path(&path);
+                    let uses_nodes =
+                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
+
+                    let mut tasks = Vec::new();
+                    for node in uses_nodes {
+                        if node.key == "include" || node.key == "project" {
+                            continue;
+                        }
+                        if node.value.starts_with("./") {
+                            continue;
+                        }
+                        let (action_part, tag) = if let Some((a, t)) = node.value.split_once('@') {
+                            (a, Some(t))
+                        } else if node.value.starts_with("docker://") && node.value.contains(':') {
+                            if let Some(last_colon) = node.value.rfind(':') {
+                                (
+                                    &node.value[..last_colon],
+                                    Some(&node.value[last_colon + 1..]),
+                                )
+                            } else {
+                                (node.value.as_str(), None)
+                            }
+                        } else if let Some((a, t)) = node.value.split_once(':') {
+                            (a, Some(t))
                         } else {
                             (node.value.as_str(), None)
+                        };
+
+                        let action = DependencyName::from(action_part);
+
+                        if ignore_list.iter().any(|pattern| action.0.contains(pattern)) {
+                            continue;
                         }
-                    } else if let Some((a, t)) = node.value.split_once(':') {
-                        (a, Some(t))
-                    } else {
-                        (node.value.as_str(), None)
-                    };
 
-                    let action = DependencyName::from(action_part);
-
-                    if self.is_ignored(&action) {
-                        continue;
+                        tasks.push(UpdateTask {
+                            path: path.clone(),
+                            start: node.start,
+                            end: node.end,
+                            action,
+                            current_tag: tag.map(|s| s.to_string()),
+                            comment: node.comment,
+                            key: node.key,
+                        });
                     }
-
-                    tasks.push(UpdateTask {
-                        path: path.clone(),
-                        start: node.start,
-                        end: node.end,
-                        action,
-                        current_tag: tag.map(|s| s.to_string()),
-                        comment: node.comment,
-                        key: node.key,
-                    });
-                }
-                Ok((tasks, (path, content)))
-            })
-            .collect();
+                    Ok((tasks, (path, content)))
+                })
+                .collect();
+            results
+        })
+        .await
+        .unwrap_or_else(|e| {
+            vec![Err(PinnerError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )))]
+        });
 
         let mut final_tasks = Vec::new();
         let mut final_file_contents = std::collections::HashMap::new();
