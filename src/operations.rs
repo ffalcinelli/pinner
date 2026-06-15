@@ -903,6 +903,18 @@ mod tests {
         assert!(res.is_err());
     }
 
+    #[test]
+    fn test_load_config_from_path_json_error() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("invalid.json");
+        fs::write(&f, "{\"invalid\": \"json\"}").unwrap();
+        let res = Operations::<MockRemoteProvider, OciRegistryProvider>::load_config_from_path(&f);
+        assert!(res.is_err());
+        if let Err(e) = res {
+            assert!(matches!(e, PinnerError::Config(_)));
+        }
+    }
+
     #[tokio::test]
     async fn test_operations_upgrade_strategy_commit() {
         let dir = tempdir().unwrap();
