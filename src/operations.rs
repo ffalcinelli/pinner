@@ -611,7 +611,8 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         }
 
         static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*").unwrap()
+            Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
+                .expect("Failed to compile COMMENT_REGEX: invalid regex pattern")
         });
 
         let mut all_json_updates = Vec::new();
