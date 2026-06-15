@@ -122,7 +122,7 @@ mod tests {
     use tree_sitter::Parser as TSParser;
 
     #[tokio::test]
-    async fn test_all() {
+    async fn test_reqwest_github_provider() {
         let mut s = Server::new_async().await;
         let _m = s
             .mock("GET", "/repos/o/r/commits/v1")
@@ -134,12 +134,6 @@ mod tests {
             .mock("GET", "/repos/o/r/releases/latest")
             .with_status(200)
             .with_body(r#"{"tag_name":"v2"}"#)
-            .create_async()
-            .await;
-        let _m3 = s
-            .mock("GET", "/repos/o/r/commits/v2")
-            .with_status(200)
-            .with_body(r#"{"sha":"692973e3d937129bcbf40652eb9f2f61becf3332"}"#)
             .create_async()
             .await;
 
@@ -154,7 +148,10 @@ mod tests {
                 .unwrap(),
             "v2"
         );
+    }
 
+    #[tokio::test]
+    async fn test_operations_pin() {
         let mut mock = MockRemoteProvider::new();
         mock.expect_get_commit_sha().returning(|_, _, _| {
             Ok(DependencyRef::from(
@@ -168,7 +165,6 @@ mod tests {
         let wd = dir.path().join("w");
         fs::create_dir_all(&wd).unwrap();
         fs::write(wd.join("f.yml"), "uses: o/r@v1").unwrap();
-        fs::write(wd.join("untagged.yml"), "uses: actions/checkout").unwrap();
         fs::write(wd.join("with_comment.yml"), "uses: o/r@v1 # keep me").unwrap();
         fs::write(
             wd.join("already_pinned.yml"),
@@ -201,6 +197,14 @@ mod tests {
 
         let already_pinned = fs::read_to_string(wd.join("already_pinned.yml")).unwrap();
         assert!(already_pinned.contains("uses: o/r@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 # v1"));
+    }
+
+    #[tokio::test]
+    async fn test_operations_upgrade() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("w");
+        fs::create_dir_all(&wd).unwrap();
+        fs::write(wd.join("untagged.yml"), "uses: actions/checkout").unwrap();
 
         let mut mock2 = MockRemoteProvider::new();
         mock2
@@ -229,6 +233,14 @@ mod tests {
         ops.upgrade(std::slice::from_ref(&wd)).await.unwrap();
         let ut = fs::read_to_string(wd.join("untagged.yml")).unwrap();
         assert!(ut.contains("actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v3"));
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_success() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("w");
+        fs::create_dir_all(&wd).unwrap();
+        fs::write(wd.join("f.yml"), "uses: o/r@v1").unwrap();
 
         let mut mock3 = MockRemoteProvider::new();
         mock3
@@ -264,6 +276,10 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_failure() {
         assert!(run(
             Cli {
                 command: Commands::Pin,
