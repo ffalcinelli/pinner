@@ -137,7 +137,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = ReqwestGithubProvider::new(s.url(), None);
+        let p = ReqwestGithubProvider::new(s.url(), None).unwrap();
         assert!(p
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await
@@ -343,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn test_github_provider_errors() {
         let mut s = Server::new_async().await;
-        let p = ReqwestGithubProvider::new(s.url(), None);
+        let p = ReqwestGithubProvider::new(s.url(), None).unwrap();
 
         let _m = s
             .mock("GET", "/repos/o/r/commits/v1")
@@ -365,7 +365,7 @@ mod tests {
             .await
             .is_err());
 
-        let p_bad_url = ReqwestGithubProvider::new("http://127.0.0.1:0".to_string(), None);
+        let p_bad_url = ReqwestGithubProvider::new("http://127.0.0.1:0".to_string(), None).unwrap();
         assert!(p_bad_url
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await
