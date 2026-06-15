@@ -62,7 +62,7 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
             gitlab_token: cli.gitlab_token.clone(),
             forgejo_url: cli.forgejo_url.clone(),
             forgejo_token: cli.forgejo_token.clone(),
-        });
+        })?;
     let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone());
 
     // Determine the workflows directory to process

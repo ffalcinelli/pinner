@@ -175,7 +175,12 @@ pub struct BaseHttpClient {
 }
 
 impl BaseHttpClient {
-    pub fn new(base_url: String, token: Option<String>, token_prefix: &str, env_var: &str) -> Self {
+    pub fn new(
+        base_url: String,
+        token: Option<String>,
+        token_prefix: &str,
+        env_var: &str,
+    ) -> Result<Self, PinnerError> {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
 
@@ -195,14 +200,14 @@ impl BaseHttpClient {
         let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
             .build()
-            .expect("Failed to build reqwest client");
+            .map_err(|e| PinnerError::Api(format!("Failed to build reqwest client: {}", e)))?;
 
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest_client)
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
-        Self { client, base_url }
+        Ok(Self { client, base_url })
     }
 
     pub fn handle_error(&self, resp: reqwest::Response, action: &DependencyName) -> PinnerError {
@@ -253,15 +258,15 @@ pub struct ReqwestGithubProvider {
 #[cfg(not(tarpaulin))]
 impl Default for ReqwestGithubProvider {
     fn default() -> Self {
-        Self::new("https://api.github.com".to_string(), None)
+        Self::new("https://api.github.com".to_string(), None).unwrap()
     }
 }
 
 impl ReqwestGithubProvider {
     /// Creates a new [`ReqwestGithubProvider`] with the specified base URL and optional token.
-    pub fn new(base_url: String, token: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(base_url, token, "Bearer", "GITHUB_TOKEN"),
+    pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
+        Ok(Self {
+            base: BaseHttpClient::new(base_url, token, "Bearer", "GITHUB_TOKEN").unwrap(),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
@@ -274,7 +279,7 @@ impl ReqwestGithubProvider {
                 .max_capacity(500)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
-        }
+        })
     }
 }
 
@@ -420,20 +425,24 @@ pub struct ReqwestBitbucketProvider {
 }
 
 impl ReqwestBitbucketProvider {
-    pub fn new(base_url: String, token: Option<String>) -> Self {
+    pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
         let is_cloud = base_url.contains("bitbucket.org");
         Self::with_type(base_url, token, is_cloud)
     }
 
-    pub fn with_type(base_url: String, token: Option<String>, is_cloud: bool) -> Self {
-        Self {
-            base: BaseHttpClient::new(base_url, token, "Bearer", "BITBUCKET_TOKEN"),
+    pub fn with_type(
+        base_url: String,
+        token: Option<String>,
+        is_cloud: bool,
+    ) -> Result<Self, PinnerError> {
+        Ok(Self {
+            base: BaseHttpClient::new(base_url, token, "Bearer", "BITBUCKET_TOKEN").unwrap(),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
             is_cloud,
-        }
+        })
     }
 }
 
@@ -653,14 +662,14 @@ pub struct ReqwestGitLabProvider {
 }
 
 impl ReqwestGitLabProvider {
-    pub fn new(base_url: String, token: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(base_url, token, "Bearer", "GITLAB_TOKEN"),
+    pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
+        Ok(Self {
+            base: BaseHttpClient::new(base_url, token, "Bearer", "GITLAB_TOKEN").unwrap(),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
-        }
+        })
     }
 }
 
@@ -821,14 +830,14 @@ pub struct ReqwestForgejoProvider {
 }
 
 impl ReqwestForgejoProvider {
-    pub fn new(base_url: String, token: Option<String>) -> Self {
-        Self {
-            base: BaseHttpClient::new(base_url, token, "token", "FORGEJO_TOKEN"),
+    pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
+        Ok(Self {
+            base: BaseHttpClient::new(base_url, token, "token", "FORGEJO_TOKEN").unwrap(),
             sha_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
-        }
+        })
     }
 }
 
@@ -1009,27 +1018,27 @@ pub struct UnifiedProvider {
 }
 
 impl UnifiedProvider {
-    pub fn new(config: UnifiedProviderConfig) -> Self {
-        Self {
+    pub fn new(config: UnifiedProviderConfig) -> Result<Self, PinnerError> {
+        Ok(Self {
             providers: vec![
                 ProviderType::GitHub(Arc::new(ReqwestGithubProvider::new(
                     config.github_url,
                     config.github_token,
-                ))),
+                )?)),
                 ProviderType::Bitbucket(Arc::new(ReqwestBitbucketProvider::new(
                     config.bitbucket_url,
                     config.bitbucket_token,
-                ))),
+                )?)),
                 ProviderType::GitLab(Arc::new(ReqwestGitLabProvider::new(
                     config.gitlab_url,
                     config.gitlab_token,
-                ))),
+                )?)),
                 ProviderType::Forgejo(Arc::new(ReqwestForgejoProvider::new(
                     config.forgejo_url,
                     config.forgejo_token,
-                ))),
+                )?)),
             ],
-        }
+        })
     }
 
     fn get_provider(&self, key: &str, _action: &DependencyName) -> Option<&ProviderType> {
@@ -1153,7 +1162,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_api_error() {
-        let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);
+        let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None).unwrap();
         let action = DependencyName::from("o/r");
 
         let resp = Response::from(
@@ -1204,7 +1213,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_rate_limit_headers() {
-        let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);
+        let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None).unwrap();
         let action = DependencyName::from("o/r");
 
         // Test x-ratelimit-reset
@@ -1241,7 +1250,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
         let tags = provider
             .list_tags(&DependencyName::from("o/r"), "uses")
             .await
@@ -1258,7 +1267,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
         let res = provider
             .list_tags(&DependencyName::from("o/r"), "uses")
             .await;
@@ -1280,7 +1289,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
         let tag = provider
             .get_latest_release(&DependencyName::from("o/r"), "uses")
             .await
@@ -1297,7 +1306,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGithubProvider::new(server.url(), None);
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
         let branch = provider
             .get_default_branch(&DependencyName::from("o/r"), "uses")
             .await
@@ -1349,7 +1358,8 @@ mod tests {
             gitlab_token: None,
             forgejo_url: server.url(),
             forgejo_token: None,
-        });
+        })
+        .unwrap();
 
         let rel = unified
             .get_latest_release(&DependencyName::from("o/r"), "uses")
@@ -1381,7 +1391,8 @@ mod tests {
             gitlab_token: None,
             forgejo_url: "http://invalid".into(),
             forgejo_token: None,
-        });
+        })
+        .unwrap();
         let res = unified
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await;
@@ -1397,7 +1408,7 @@ mod tests {
             .create_async()
             .await;
 
-        let gitlab = ReqwestGitLabProvider::new(server.url(), None);
+        let gitlab = ReqwestGitLabProvider::new(server.url(), None).unwrap();
         assert!(gitlab
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
             .await
@@ -1416,7 +1427,7 @@ mod tests {
             "main"
         );
 
-        let forgejo = ReqwestForgejoProvider::new(server.url(), None);
+        let forgejo = ReqwestForgejoProvider::new(server.url(), None).unwrap();
         assert!(forgejo
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
             .await
@@ -1435,7 +1446,7 @@ mod tests {
             "main"
         );
 
-        let bb_cloud = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        let bb_cloud = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
         assert!(bb_cloud
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
             .await
@@ -1449,7 +1460,7 @@ mod tests {
             "main"
         );
 
-        let bb_dc = ReqwestBitbucketProvider::with_type(server.url(), None, false);
+        let bb_dc = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
         assert!(bb_dc
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "")
             .await
@@ -1474,7 +1485,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGitLabProvider::new(server.url(), None);
+        let provider = ReqwestGitLabProvider::new(server.url(), None).unwrap();
         let rel = provider
             .get_latest_release(&DependencyName::from("o/r"), "")
             .await
@@ -1498,7 +1509,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestForgejoProvider::new(server.url(), None);
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
         assert_eq!(
             provider
                 .get_latest_release(&DependencyName::from("o/r"), "")
@@ -1525,7 +1536,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGitLabProvider::new(server.url(), None);
+        let provider = ReqwestGitLabProvider::new(server.url(), None).unwrap();
         let sha = provider
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "include")
             .await
@@ -1542,7 +1553,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGitLabProvider::new(server.url(), None);
+        let provider = ReqwestGitLabProvider::new(server.url(), None).unwrap();
         let res = provider
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "include")
             .await;
@@ -1561,7 +1572,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestForgejoProvider::new(server.url(), None);
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
         let sha = provider
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await
@@ -1578,7 +1589,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestForgejoProvider::new(server.url(), None);
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
         let res = provider
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
             .await;
@@ -1602,7 +1613,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
         let sha = provider
             .get_commit_sha(&DependencyName::from("o/p"), "v1", "pipe")
             .await
@@ -1620,7 +1631,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
         let sha = provider
             .get_commit_sha(&DependencyName::from("o/p"), "v1", "pipe")
             .await
@@ -1646,7 +1657,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false);
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
         let sha = provider
             .get_commit_sha(&DependencyName::from("PROJ/repo"), "v1", "pipe")
             .await
@@ -1658,14 +1669,15 @@ mod tests {
     #[serial_test::serial]
     fn test_token_injection() {
         std::env::set_var("GITHUB_TOKEN", "env_token");
-        let _provider = ReqwestGithubProvider::new("https://api.github.com".into(), None);
+        let _provider = ReqwestGithubProvider::new("https://api.github.com".into(), None).unwrap();
         // We can't easily check the private client headers, but we covered the line.
         std::env::remove_var("GITHUB_TOKEN");
 
         let _provider2 = ReqwestGithubProvider::new(
             "https://api.github.com".into(),
             Some("manual_token".into()),
-        );
+        )
+        .unwrap();
         // Covered Some(t) path.
     }
 
@@ -1680,7 +1692,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGithubProvider::new(s.url(), None);
+        let provider = ReqwestGithubProvider::new(s.url(), None).unwrap();
         let action = DependencyName::from("o/r");
 
         let sha1 = provider
@@ -1733,7 +1745,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true);
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
         let sha = provider
             .get_commit_sha(&DependencyName::from("o/p"), "v1", "pipe")
             .await
@@ -1752,7 +1764,7 @@ mod tests {
             .await;
 
         // Base URL doesn't contain bitbucket.org
-        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false);
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
         assert!(!provider.is_cloud);
 
         let sha = provider
@@ -1764,7 +1776,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_bitbucket_dc_invalid_format() {
-        let provider = ReqwestBitbucketProvider::with_type("http://bb.local".into(), None, false);
+        let provider =
+            ReqwestBitbucketProvider::with_type("http://bb.local".into(), None, false).unwrap();
         let res = provider
             .get_commit_sha(&DependencyName::from("invalid-format"), "v1", "pipe")
             .await;
@@ -1801,7 +1814,8 @@ mod tests {
             gitlab_token: None,
             forgejo_url: server.url(),
             forgejo_token: None,
-        });
+        })
+        .unwrap();
 
         let sha1 = unified
             .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
@@ -1823,7 +1837,8 @@ mod tests {
             None,
             "Bearer",
             "GITHUB_TOKEN",
-        );
+        )
+        .unwrap();
         let action = DependencyName::from("actions/checkout");
 
         // Test 403 with x-ratelimit-reset

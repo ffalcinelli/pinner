@@ -822,7 +822,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     /// use std::sync::Arc;
     ///
     /// let ops = Operations::new(
-    ///     Arc::new(ReqwestGithubProvider::new("https://api.github.com".to_string(), None)),
+    ///     Arc::new(ReqwestGithubProvider::new("https://api.github.com".to_string(), None).unwrap()),
     ///     Arc::new(OciRegistryProvider::new(None, None)),
     ///     OperationsOptions {
     ///         yes: true,
