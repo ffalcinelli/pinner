@@ -60,7 +60,7 @@ pub struct DependencyNode {
     pub key: String,
 }
 
-static USES_QUERY: LazyLock<Query> = LazyLock::new(|| {
+static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
     Query::new(
         tree_sitter_yaml::language(),
         r#"
@@ -74,7 +74,7 @@ static USES_QUERY: LazyLock<Query> = LazyLock::new(|| {
         (comment) @comment
         "#,
     )
-    .expect("Failed to create tree-sitter query")
+    .map_err(|e| format!("Failed to create tree-sitter query: {:?}", e))
 });
 
 fn unquote(s: &str) -> String {
@@ -110,18 +110,22 @@ pub fn find_uses_nodes(
     node: tree_sitter::Node,
     content: &[u8],
     provider: CiProvider,
-) -> Vec<DependencyNode> {
+) -> Result<Vec<DependencyNode>, crate::error::PinnerError> {
     let mut results = Vec::new();
-    let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(&USES_QUERY, node, content);
+    let query = USES_QUERY
+        .as_ref()
+        .map_err(|e| crate::error::PinnerError::Parse(e.clone()))?;
 
-    let key_idx = USES_QUERY
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(query, node, content);
+
+    let key_idx = query
         .capture_index_for_name("key")
-        .expect("key capture missing");
-    let value_idx = USES_QUERY
+        .ok_or_else(|| crate::error::PinnerError::Parse("key capture missing".to_string()))?;
+    let value_idx = query
         .capture_index_for_name("value")
-        .expect("value capture missing");
-    let comment_idx = USES_QUERY.capture_index_for_name("comment");
+        .ok_or_else(|| crate::error::PinnerError::Parse("value capture missing".to_string()))?;
+    let comment_idx = query.capture_index_for_name("comment");
 
     let mut last_value: Option<(usize, usize, String, usize, String)> = None;
 
@@ -200,7 +204,7 @@ pub fn find_uses_nodes(
             key,
         });
     }
-    results
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -221,7 +225,7 @@ mod tests {
     fn test_find_uses_nodes() {
         let yaml = "uses: actions/checkout@v3";
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].value, "actions/checkout@v3");
@@ -232,7 +236,7 @@ mod tests {
     fn test_find_uses_with_quotes() {
         let yaml = "uses: \"actions/checkout@v3\"";
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].value, "actions/checkout@v3");
@@ -242,7 +246,7 @@ mod tests {
     fn test_find_uses_with_comment() {
         let yaml = "uses: actions/checkout@hash # v3";
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].value, "actions/checkout@hash");
@@ -259,7 +263,7 @@ orbs:
   node: circleci/node@5.0.0
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::Unknown);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::Unknown).unwrap();
 
         let keys: Vec<String> = results.iter().map(|r| r.key.clone()).collect();
         assert!(keys.contains(&"image".to_string()));
@@ -277,7 +281,7 @@ include:
     file: '/templates/.gitlab-ci.yml'
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitLab);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitLab).unwrap();
 
         // We expect "my-group/my-project@v1.0.0" for the 'ref' key
         let ref_node = results.iter().find(|r| r.key == "ref").unwrap();
@@ -293,7 +297,7 @@ strategy:
       - os: ubuntu-latest
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
 
         assert!(results.is_empty());
     }
@@ -316,7 +320,7 @@ uses: actions/checkout@v3
 # unrelated comment
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub);
+        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].comment, None);
