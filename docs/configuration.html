@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration & Options - Pinner</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+        .hero-gradient {
+            background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.05) 0%, rgba(13, 17, 23, 0) 50%);
+        }
+        .card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+        }
+        .terminal {
+            background-color: #010409;
+            border: 1px solid #30363d;
+        }
+        pre {
+            background-color: #010409 !important;
+            border: 1px solid #30363d;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            overflow-x: auto;
+        }
+        code {
+            color: #38bdf8;
+        }
+    </style>
+</head>
+<body class="font-sans antialiased overflow-x-hidden">
+    <!-- Navbar -->
+    <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+        <div class="flex items-center space-x-2">
+            <a href="index.html" class="flex items-center space-x-2 group">
+                <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
+                <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
+            </a>
+        </div>
+        <div class="flex items-center space-x-6 text-sm font-medium">
+            <a href="configuration.html" class="text-sky-400 transition-colors font-bold"><i class="fas fa-cog mr-2"></i>Configuration</a>
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
+            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors"><i class="fas fa-book mr-2"></i>API Docs</a>
+        </div>
+    </nav>
+
+    <!-- Header Section -->
+    <section class="relative pt-16 pb-12 hero-gradient border-b border-gray-800/50">
+        <div class="max-w-4xl mx-auto px-4">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-white mb-6">
+                Configuration & <span class="text-sky-400">Options</span>
+            </h1>
+            <p class="text-xl text-gray-400">
+                A comprehensive guide to CLI flags, environment variables, and the <code>.pinner.toml</code> configuration file.
+            </p>
+        </div>
+    </section>
+
+    <!-- Content -->
+    <main class="max-w-4xl mx-auto px-4 py-16 relative">
+        
+        <!-- Global Options -->
+        <div class="mb-20">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <i class="fas fa-globe text-sky-400 mr-4"></i> Global Options
+            </h2>
+            <p class="text-gray-400 mb-8">These options can be used with any subcommand to modify Pinner's behavior.</p>
+            
+            <div class="grid grid-cols-1 gap-6">
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">-w, --workflows &lt;PATH&gt;</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Default: GitHub/GitLab/etc paths</span>
+                    </div>
+                    <p class="text-gray-400">Specify workflow files or directories to process. Can be used multiple times.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">-y, --yes</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Flag</span>
+                    </div>
+                    <p class="text-gray-400">Automatically confirm all replacements without prompting. Ideal for non-interactive environments.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">-d, --dry-run</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Flag</span>
+                    </div>
+                    <p class="text-gray-400">Print what would be changed without actually modifying any files.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">--format &lt;TYPE&gt;</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Values: text, json, markdown</span>
+                    </div>
+                    <p class="text-gray-400">Output results in the specified format. <code>--json</code> is a deprecated alias for <code>--format json</code>.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">--concurrency &lt;NUM&gt;</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Default: 10</span>
+                    </div>
+                    <p class="text-gray-400">Number of concurrent API requests to make. Increase for large projects, decrease to avoid rate limits.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">--ignore &lt;PATTERN&gt;</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Multiple</span>
+                    </div>
+                    <p class="text-gray-400">Actions or images to ignore (e.g., "actions/checkout"). Can be used multiple times.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subcommands -->
+        <div class="mb-20">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <i class="fas fa-terminal text-sky-400 mr-4"></i> Subcommands
+            </h2>
+            
+            <div class="space-y-8">
+                <div class="border-l-2 border-sky-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">pin</h3>
+                    <p class="text-gray-400">Scans your workflows and replaces all mutable tags with immutable commit SHAs. This is the primary command for securing your supply chain.</p>
+                </div>
+
+                <div class="border-l-2 border-emerald-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">upgrade</h3>
+                    <p class="text-gray-400 mb-4">Updates pinned actions to their latest versions based on the selected <code>--upgrade-strategy</code>.</p>
+                    <div class="bg-amber-400/5 p-4 rounded-lg border border-amber-400/10 text-xs text-amber-400/80">
+                        <i class="fas fa-exclamation-triangle mr-2"></i> Always review changes after an upgrade to maintain security.
+                    </div>
+                </div>
+
+                <div class="border-l-2 border-purple-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">verify</h3>
+                    <p class="text-gray-400">Checks if all actions in your workflows are pinned. Returns a non-zero exit code if unpinned actions are found. Perfect for CI/CD.</p>
+                </div>
+
+                <div class="border-l-2 border-blue-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">set &lt;ACTION&gt; &lt;HASH&gt;</h3>
+                    <p class="text-gray-400">Forcibly sets a specific action to a provided hash across all matching occurrences in your workflows.</p>
+                </div>
+
+                <div class="border-l-2 border-gray-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">generate-completion &lt;SHELL&gt;</h3>
+                    <p class="text-gray-400">Generates shell completion scripts for Bash, Zsh, Fish, Powershell, or Elvish.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Environment Variables -->
+        <div class="mb-20">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <i class="fas fa-key text-sky-400 mr-4"></i> Environment Variables
+            </h2>
+            
+            <p class="text-gray-400 mb-8">Pinner automatically reads these variables for authentication and configuration.</p>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-800 card">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="bg-gray-800/50 text-white border-b border-gray-800">
+                        <tr>
+                            <th class="px-6 py-4 font-bold">Variable</th>
+                            <th class="px-6 py-4 font-bold">Description</th>
+                            <th class="px-6 py-4 font-bold">Default</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800 text-gray-400">
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>GITHUB_TOKEN</code></td>
+                            <td class="px-6 py-4">Auth token for GitHub API</td>
+                            <td class="px-6 py-4">-</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>GITLAB_TOKEN</code></td>
+                            <td class="px-6 py-4">Auth token for GitLab API</td>
+                            <td class="px-6 py-4">-</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>BITBUCKET_TOKEN</code></td>
+                            <td class="px-6 py-4">Auth token for Bitbucket API</td>
+                            <td class="px-6 py-4">-</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>FORGEJO_TOKEN</code></td>
+                            <td class="px-6 py-4">Auth token for Forgejo/Gitea API</td>
+                            <td class="px-6 py-4">-</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>GITHUB_URL</code></td>
+                            <td class="px-6 py-4">Custom GitHub API URL</td>
+                            <td class="px-6 py-4">https://api.github.com</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>OCI_USERNAME</code></td>
+                            <td class="px-6 py-4">Username for OCI Registries</td>
+                            <td class="px-6 py-4">-</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>OCI_PASSWORD</code></td>
+                            <td class="px-6 py-4">Password for OCI Registries</td>
+                            <td class="px-6 py-4">-</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Configuration File -->
+        <div class="mb-20">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <i class="fas fa-file-code text-sky-400 mr-4"></i> Configuration File
+            </h2>
+            
+            <p class="text-gray-400 mb-8">
+                Create a <code>.pinner.toml</code> file in your repository root to persist settings and share them with your team.
+            </p>
+
+            <div class="card p-8 rounded-xl">
+                <h3 class="text-lg font-bold text-white mb-4">Example .pinner.toml</h3>
+                <pre class="text-sm"><code># Actions to exclude from processing
+ignore = ["actions/checkout", "my-org/private-repo"]
+
+# Execution settings
+concurrency = 5
+format = "text"
+
+# API URL overrides (for Enterprise)
+github_url = "https://github.mycompany.com/api/v3"
+gitlab_url = "https://gitlab.mycompany.com/api/v4"
+
+# Upgrade strategy
+upgrade_strategy = "major"</code></pre>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="py-16 text-center text-gray-500">
+        <div class="flex items-center justify-center space-x-4 mb-6">
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-white transition-colors"><i class="fab fa-github text-xl"></i></a>
+            <div class="h-4 w-px bg-gray-800"></div>
+            <a href="https://docs.rs/pinner" class="hover:text-white transition-colors text-sm font-bold uppercase tracking-tighter">Docs.rs</a>
+        </div>
+        <p class="text-xs">&copy; 2026 Fabio Falcinelli. Released under the MIT License.</p>
+    </footer>
+</body>
+</html>
