@@ -1529,6 +1529,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_gitlab_provider_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v4/projects/o%2Fr/repository/commits/v1")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGitLabProvider::new(server.url(), None);
+        let res = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "include")
+            .await;
+
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("HTTP 404"));
+    }
+
+    #[tokio::test]
     async fn test_forgejo_provider() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
