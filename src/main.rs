@@ -77,64 +77,41 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
 }
 
 pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
-    if cli_workflows.is_empty() {
-        let mut defaults = Vec::new();
+    if !cli_workflows.is_empty() {
+        return cli_workflows.to_vec();
+    }
 
-        // Check for GitHub Actions
-        let github_workflows = Path::new(".github/workflows");
-        if github_workflows.exists() {
-            defaults.push(github_workflows.to_path_buf());
-        }
+    let default_paths = [
+        ".github/workflows",
+        "bitbucket-pipelines.yml",
+        "bitbucket-pipelines.yaml",
+        ".gitlab-ci.yml",
+        ".circleci/config.yml",
+        ".travis.yml",
+        "appveyor.yml",
+        ".forgejo/workflows",
+    ];
 
-        // Check for Bitbucket Pipelines
-        let bitbucket_yml = Path::new("bitbucket-pipelines.yml");
-        if bitbucket_yml.exists() {
-            defaults.push(bitbucket_yml.to_path_buf());
-        } else {
-            let bitbucket_yaml = Path::new("bitbucket-pipelines.yaml");
-            if bitbucket_yaml.exists() {
-                defaults.push(bitbucket_yaml.to_path_buf());
+    let mut defaults: Vec<PathBuf> = default_paths
+        .iter()
+        .filter_map(|&p| {
+            let path = Path::new(p);
+            if path.exists() {
+                Some(path.to_path_buf())
+            } else {
+                None
             }
-        }
+        })
+        .collect();
 
-        // GitLab CI
-        let gitlab_ci = Path::new(".gitlab-ci.yml");
-        if gitlab_ci.exists() {
-            defaults.push(gitlab_ci.to_path_buf());
-        }
+    if defaults.contains(&PathBuf::from("bitbucket-pipelines.yml")) {
+        defaults.retain(|p| p != Path::new("bitbucket-pipelines.yaml"));
+    }
 
-        // CircleCI
-        let circle_ci = Path::new(".circleci/config.yml");
-        if circle_ci.exists() {
-            defaults.push(circle_ci.to_path_buf());
-        }
-
-        // Travis CI
-        let travis_yml = Path::new(".travis.yml");
-        if travis_yml.exists() {
-            defaults.push(travis_yml.to_path_buf());
-        }
-
-        // AppVeyor
-        let appveyor_yml = Path::new("appveyor.yml");
-        if appveyor_yml.exists() {
-            defaults.push(appveyor_yml.to_path_buf());
-        }
-
-        // Forgejo / Gitea
-        let forgejo_workflows = Path::new(".forgejo/workflows");
-        if forgejo_workflows.exists() {
-            defaults.push(forgejo_workflows.to_path_buf());
-        }
-
-        if defaults.is_empty() {
-            // Fallback to default GitHub path if nothing found
-            vec![Path::new(".github/workflows").to_path_buf()]
-        } else {
-            defaults
-        }
+    if defaults.is_empty() {
+        vec![PathBuf::from(".github/workflows")]
     } else {
-        cli_workflows.to_vec()
+        defaults
     }
 }
 
