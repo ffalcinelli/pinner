@@ -92,6 +92,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_token_auth_error() {
+        let mut server = mockito::Server::new_async().await;
+
+        let provider = OciRegistryProvider {
+            client: reqwest::Client::new(),
+            auth_url: format!("{}/auth", server.url()),
+            base_url_template: format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
+            username: None,
+            password: None,
+        };
+
+        let _m = server
+            .mock("GET", mockito::Matcher::Regex("^/auth".to_string()))
+            .with_status(401)
+            .create_async()
+            .await;
+
+        let result = provider.get_token("docker.io", "library/nginx").await;
+
+        assert!(result.is_err());
+        if let Err(PinnerError::Api(msg)) = result {
+            assert!(msg.contains("Failed to authenticate: 401"));
+        } else {
+            panic!("Expected PinnerError::Api, got something else");
+        }
+    }
+
+    #[tokio::test]
     async fn test_oci_registry_parsing() {
         let provider = OciRegistryProvider::new(None, None);
 
@@ -309,6 +337,13 @@ impl OciRegistryProvider {
             .send()
             .await
             .map_err(|e| PinnerError::Api(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            return Err(PinnerError::Api(format!(
+                "Failed to authenticate: {}",
+                resp.status()
+            )));
+        }
 
         #[derive(Deserialize)]
         struct TokenResponse {
