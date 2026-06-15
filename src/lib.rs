@@ -495,7 +495,8 @@ jobs:
             tree.root_node(),
             content.as_bytes(),
             crate::yaml::CiProvider::GitHub,
-        );
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 2);
         assert!(results
@@ -516,7 +517,8 @@ jobs:
             tree.root_node(),
             content.as_bytes(),
             crate::yaml::CiProvider::GitHub,
-        );
+        )
+        .unwrap();
         assert!(results[0].comment.is_some());
         assert_eq!(results[0].key, "uses");
     }

@@ -348,7 +348,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
                     let provider = CiProvider::from_path(&path);
                     let uses_nodes =
-                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
 
                     let mut local_unpinned = Vec::new();
                     for node in uses_nodes {
@@ -456,7 +456,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
 
                     let provider = CiProvider::from_path(&path);
                     let uses_nodes =
-                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
+                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
 
                     let mut tasks = Vec::new();
                     for node in uses_nodes {
