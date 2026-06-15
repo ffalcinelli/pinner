@@ -331,16 +331,20 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         use rayon::prelude::*;
         let unpinned: Vec<(PathBuf, String)> = all_paths
             .into_par_iter()
-            .map(|path| {
-                let content = fs::read_to_string(&path)?;
-                let mut parser = TSParser::new();
-                parser
-                    .set_language(tree_sitter_yaml::language())
-                    .map_err(|e| PinnerError::Parse(e.to_string()))?;
+            .map_init(
+                || {
+                    let mut parser = TSParser::new();
+                    parser
+                        .set_language(tree_sitter_yaml::language())
+                        .expect("Failed to load YAML grammar");
+                    parser
+                },
+                |parser, path| {
+                    let content = fs::read_to_string(&path)?;
 
-                let tree = parser.parse(&content, None).ok_or_else(|| {
-                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                })?;
+                    let tree = parser.parse(&content, None).ok_or_else(|| {
+                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                    })?;
 
                 let provider = CiProvider::from_path(&path);
                 let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
@@ -433,16 +437,20 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         type CollectResult = Result<(Vec<UpdateTask>, (PathBuf, String)), PinnerError>;
         let results: Vec<CollectResult> = all_paths
             .into_par_iter()
-            .map(|path| {
-                let content = fs::read_to_string(&path)?;
-                let mut parser = TSParser::new();
-                parser
-                    .set_language(tree_sitter_yaml::language())
-                    .map_err(|e| PinnerError::Parse(e.to_string()))?;
+            .map_init(
+                || {
+                    let mut parser = TSParser::new();
+                    parser
+                        .set_language(tree_sitter_yaml::language())
+                        .expect("Failed to load YAML grammar");
+                    parser
+                },
+                |parser, path| {
+                    let content = fs::read_to_string(&path)?;
 
-                let tree = parser.parse(&content, None).ok_or_else(|| {
-                    PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                })?;
+                    let tree = parser.parse(&content, None).ok_or_else(|| {
+                        PinnerError::Parse(format!("Failed to parse {}", path.display()))
+                    })?;
 
                 let provider = CiProvider::from_path(&path);
                 let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider);
