@@ -1005,6 +1005,24 @@ pipelines:
     }
 
     #[test]
+    fn test_install_git_hook_no_git_dir() {
+        let dir = tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let result = install_git_hook();
+        assert!(result.is_err());
+
+        if let Err(PinnerError::Config(msg)) = result {
+            assert_eq!(msg, "Not a git repository (no .git directory found)");
+        } else {
+            panic!("Expected Config error, got {:?}", result);
+        }
+
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
     fn test_install_git_hook() {
         let dir = tempdir().unwrap();
         let original_dir = std::env::current_dir().unwrap();
