@@ -1132,6 +1132,14 @@ mod tests {
             DependencyName::from("a".to_string()),
             DependencyName("a".into())
         );
+        assert_eq!(
+            DependencyName::from(""),
+            DependencyName("".into())
+        );
+        assert_eq!(
+            DependencyName::from("".to_string()),
+            DependencyName("".into())
+        );
     }
 
     #[test]
