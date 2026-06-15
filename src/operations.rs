@@ -392,12 +392,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             Ok::<Vec<(PathBuf, String)>, PinnerError>(unpinned)
         })
         .await
-        .unwrap_or_else(|e| {
-            Err(PinnerError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
-        })?;
+        .unwrap_or_else(|e| Err(PinnerError::Io(std::io::Error::other(e.to_string()))))?;
 
         if !unpinned.is_empty() {
             if !self.quiet {
@@ -515,12 +510,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             results
         })
         .await
-        .unwrap_or_else(|e| {
-            vec![Err(PinnerError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))]
-        });
+        .unwrap_or_else(|e| vec![Err(PinnerError::Io(std::io::Error::other(e.to_string())))]);
 
         let mut final_tasks = Vec::new();
         let mut final_file_contents = std::collections::HashMap::new();
