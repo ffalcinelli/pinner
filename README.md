@@ -4,7 +4,7 @@
 [![CI Status](https://img.shields.io/github/actions/workflow/status/ffalcinelli/pinner/ci.yml?branch=main&style=flat&label=ci)](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml)
 [![Codecov](https://img.shields.io/codecov/c/gh/ffalcinelli/pinner?style=flat)](https://codecov.io/gh/ffalcinelli/pinner)
 [![Docs.rs](https://img.shields.io/docsrs/pinner?style=flat)](https://docs.rs/pinner)
-[![License](https://img.shields.io/crates/l/pinner?style=flat)](https://github.com/ffalcinelli/pinner/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat)](https://github.com/ffalcinelli/pinner/blob/main/LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.80%2B-blue?style=flat)](https://www.rust-lang.org)
 
 A high-performance Rust CLI utility to **hash-pin your CI/CD dependencies**. Secure your supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
