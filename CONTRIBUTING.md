@@ -10,7 +10,7 @@ Thank you for your interest in contributing to Pinner! We welcome all contributi
     git clone https://github.com/ffalcinelli/pinner.git
     cd pinner
     ```
-3.  **Install dependencies**: Ensure you have Rust and Cargo installed (1.70+).
+3.  **Install dependencies**: Ensure you have Rust and Cargo installed (1.80+).
 4.  **Create a new branch** for your work:
     ```bash
     git checkout -b feature/my-new-feature
@@ -54,7 +54,8 @@ This project uses `cargo-husky` to run checks automatically.
 - `src/cli.rs`: CLI argument definition using `clap`.
 - `src/operations.rs`: Orchestration of pinning and upgrading.
 - `src/yaml.rs`: Tree-sitter based YAML parsing.
-- `src/github/`: GitHub API integration.
+- `src/providers/`: Repository forge providers (GitHub, GitLab, etc.).
+- `src/registry/`: Docker/OCI registry providers.
 
 ## Questions? ❓
 

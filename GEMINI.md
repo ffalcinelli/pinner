@@ -36,6 +36,7 @@
 - `pin`: Automatically converts all action tags and container images to hashes.
 - `upgrade`: Upgrades actions to newer versions based on the selected strategy (latest, major, minor, or commit).
 - `verify`: Checks if all actions/images are pinned to hashes.
+- `install-hook`: Installs a git pre-commit hook that runs `verify`.
 - `set <action> <hash>`: Forcibly updates a specific action across all workflows to a provided SHA.
 - `generate-completion`: Generates shell completions for bash, zsh, fish, etc.
 

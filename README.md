@@ -1,11 +1,11 @@
 # Pinner 🧪
 
-[![CI](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml/badge.svg)](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/ffalcinelli/pinner/graph/badge.svg)](https://codecov.io/gh/ffalcinelli/pinner)
-[![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub release](https://img.shields.io/github/v/release/ffalcinelli/pinner)](https://github.com/ffalcinelli/pinner/releases)
-[![Docs.rs](https://docs.rs/pinner/badge.svg)](https://docs.rs/pinner)
+[![Crates.io Version](https://img.shields.io/crates/v/pinner?style=flat-square)](https://crates.io/crates/pinner)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/ffalcinelli/pinner/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/ffalcinelli/pinner/actions/workflows/ci.yml)
+[![Codecov](https://img.shields.io/codecov/c/gh/ffalcinelli/pinner?style=flat-square)](https://codecov.io/gh/ffalcinelli/pinner)
+[![Docs.rs](https://img.shields.io/docsrs/pinner?style=flat-square)](https://docs.rs/pinner)
+[![License](https://img.shields.io/crates/l/pinner?style=flat-square)](https://github.com/ffalcinelli/pinner/blob/main/LICENSE)
+[![Rust Version](https://img.shields.io/badge/rust-1.80%2B-blue?style=flat-square)](https://www.rust-lang.org)
 
 A high-performance Rust CLI utility to **hash-pin your CI/CD dependencies**. Secure your supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
 
@@ -78,13 +78,25 @@ Ensure that all actions in your workflows are pinned. Perfect for CI pipelines.
 pinner verify
 ```
 
+### 4. Install Git Hook
+Automatically install a pre-commit hook to verify pinning before every commit.
+```bash
+pinner install-hook
+```
+
+### 5. Manual Set
+Forcibly update a specific action to a provided hash across all workflows.
+```bash
+pinner set actions/checkout 8f4b7f84864484a7bf31766abe9204da3cbe65b3
+```
+
 ## Configuration ⚙️
 
 Pinner can be configured via a `.pinner.toml` file in your repository root.
 
 ```toml
 # List of actions to ignore during pinning/upgrading
-ignore_actions = ["my-org/private-action"]
+ignore = ["my-org/private-action"]
 
 # Number of concurrent API requests (default: 10)
 concurrency = 5

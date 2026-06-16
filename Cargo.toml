@@ -2,6 +2,7 @@
 name = "pinner"
 version = "0.0.6"
 edition = "2021"
+rust-version = "1.80"
 description = "Secure CI/CD workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments. Supports GitHub, GitLab, Bitbucket, Forgejo, and Docker image pinning."
 authors = ["Fabio Falcinelli"]
 license = "MIT"
