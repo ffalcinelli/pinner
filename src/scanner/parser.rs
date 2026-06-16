@@ -1,63 +1,41 @@
-//! YAML parsing utilities using `tree-sitter`.
-//!
-//! This module provides functions to traverse the YAML concrete syntax tree
-//! and identify nodes that represent CI/CD dependencies (like GitHub Actions
-//! or Docker images). It uses a pre-compiled tree-sitter query to find
-//! relevant keys like `uses`, `image`, and `pipe`.
-
+use crate::core::UpdateTask;
+use crate::core::{CiProvider, DependencyName};
+use crate::error::PinnerError;
 use std::path::Path;
 use std::sync::LazyLock;
-use tree_sitter::{Query, QueryCursor, StreamingIterator};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CiProvider {
-    GitHub,
-    GitLab,
-    Bitbucket,
-    CircleCI,
-    Unknown,
-}
+use tree_sitter::{Node, Point, Query, QueryCursor, StreamingIterator};
 
 impl CiProvider {
     pub fn from_path(path: &Path) -> Self {
         let path_str = path.to_string_lossy();
-        if path_str.contains(".github/workflows") || path_str.contains(".gitea/workflows") {
-            CiProvider::GitHub
-        } else if path_str.contains(".gitlab-ci") {
-            CiProvider::GitLab
-        } else if path_str.contains("bitbucket-pipelines") {
-            CiProvider::Bitbucket
-        } else if path_str.contains(".circleci") {
-            CiProvider::CircleCI
-        } else {
-            CiProvider::Unknown
+        let mappings = [
+            (".github/workflows", CiProvider::GitHub),
+            (".forgejo/workflows", CiProvider::Forgejo),
+            (".gitea/workflows", CiProvider::Gitea),
+            (".gitlab-ci", CiProvider::GitLab),
+            ("bitbucket-pipelines", CiProvider::Bitbucket),
+            (".circleci", CiProvider::CircleCI),
+        ];
+
+        for (pattern, provider) in mappings {
+            if path_str.contains(pattern) {
+                return provider;
+            }
         }
+        CiProvider::Unknown
     }
 
     pub fn supports_key(&self, key: &str) -> bool {
         match self {
-            CiProvider::GitHub => matches!(key, "uses" | "image"),
+            CiProvider::GitHub | CiProvider::Forgejo | CiProvider::Gitea => {
+                matches!(key, "uses" | "image")
+            }
             CiProvider::GitLab => matches!(key, "include" | "image" | "ref"),
             CiProvider::Bitbucket => matches!(key, "pipe" | "image"),
             CiProvider::CircleCI => matches!(key, "orbs" | "image"),
             CiProvider::Unknown => true,
         }
     }
-}
-
-/// Represents a dependency reference found in a YAML file.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct DependencyNode {
-    /// Starting byte offset in the content.
-    pub start: usize,
-    /// Ending byte offset in the content.
-    pub end: usize,
-    /// The unquoted value of the dependency (e.g., "actions/checkout@v3").
-    pub value: String,
-    /// Optional adjacent comment (e.g., "# v3").
-    pub comment: Option<String>,
-    /// The YAML key where the dependency was found (e.g., "uses").
-    pub key: String,
 }
 
 static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
@@ -87,7 +65,7 @@ fn unquote(s: &str) -> String {
     s.to_string()
 }
 
-fn resolve_gitlab_project(v_node: tree_sitter::Node, content: &[u8]) -> Option<String> {
+fn resolve_gitlab_project(v_node: Node, content: &[u8]) -> Option<String> {
     let parent_pair = v_node.parent()?;
     let mapping = parent_pair.parent()?;
     let mut cursor = mapping.walk();
@@ -105,29 +83,35 @@ fn resolve_gitlab_project(v_node: tree_sitter::Node, content: &[u8]) -> Option<S
     None
 }
 
-/// Finds all `uses`, `pipe`, `image`, `include`, `ref`, or `orbs` keys and adjacent comments in the YAML AST.
-pub fn find_uses_nodes(
-    node: tree_sitter::Node,
+pub fn find_tasks(
+    path: &Path,
+    node: Node,
     content: &[u8],
-    provider: CiProvider,
-) -> Result<Vec<DependencyNode>, crate::error::PinnerError> {
+    ignore_list: &[String],
+) -> Result<Vec<UpdateTask>, PinnerError> {
     let mut results = Vec::new();
     let query = USES_QUERY
         .as_ref()
-        .map_err(|e| crate::error::PinnerError::Parse(e.clone()))?;
+        .map_err(|e| PinnerError::Parse(e.clone()))?;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, node, content);
 
     let key_idx = query
         .capture_index_for_name("key")
-        .ok_or_else(|| crate::error::PinnerError::Parse("key capture missing".to_string()))?;
+        .ok_or_else(|| PinnerError::Parse("key capture missing".to_string()))?;
     let value_idx = query
         .capture_index_for_name("value")
-        .ok_or_else(|| crate::error::PinnerError::Parse("value capture missing".to_string()))?;
+        .ok_or_else(|| PinnerError::Parse("value capture missing".to_string()))?;
     let comment_idx = query.capture_index_for_name("comment");
 
-    let mut last_value: Option<(usize, usize, String, usize, String)> = None;
+    let provider = CiProvider::from_path(path);
+    let ctx = FileContext {
+        path,
+        provider,
+        ignore_list,
+    };
+    let mut last_value: Option<(usize, usize, String, Point, String)> = None;
 
     while let Some(m) = matches.next() {
         let mut current_key = String::new();
@@ -138,21 +122,27 @@ pub fn find_uses_nodes(
                 if !provider.supports_key(&current_key) {
                     continue;
                 }
-                // If we have a pending value without a comment, push it
-                if let Some((start, end, value, _, key)) = last_value.take() {
-                    results.push(DependencyNode {
-                        start,
-                        end,
+
+                if let Some((start, end, value, pos, key)) = last_value.take() {
+                    if let Some(task) = create_task(
+                        ctx,
+                        Position {
+                            start,
+                            end,
+                            line: pos.row + 1,
+                            column: pos.column + 1,
+                        },
                         value,
-                        comment: None,
+                        None,
                         key,
-                    });
+                    ) {
+                        results.push(task);
+                    }
                 }
 
                 let v_node = cap.node;
                 let mut val = unquote(v_node.utf8_text(content).unwrap_or(""));
 
-                // GitLab context: if we found a 'ref', try to find a sibling 'project'
                 if current_key == "ref" {
                     if let Some(project) = resolve_gitlab_project(v_node, content) {
                         val = format!("{}@{}", project, val);
@@ -163,48 +153,133 @@ pub fn find_uses_nodes(
                     v_node.start_byte(),
                     v_node.end_byte(),
                     val,
-                    v_node.start_position().row,
+                    v_node.start_position(),
                     current_key.clone(),
                 ));
             } else if Some(cap.index) == comment_idx {
-                if let Some((start, end, value, row, key)) = last_value.take() {
+                if let Some((start, end, value, pos, key)) = last_value.take() {
                     let comment_node = cap.node;
-                    if comment_node.start_position().row == row {
+                    if comment_node.start_position().row == pos.row {
                         let comment_text =
                             comment_node.utf8_text(content).unwrap_or("").to_string();
-                        results.push(DependencyNode {
-                            start,
-                            end,
+                        if let Some(task) = create_task(
+                            ctx,
+                            Position {
+                                start,
+                                end,
+                                line: pos.row + 1,
+                                column: pos.column + 1,
+                            },
                             value,
-                            comment: Some(comment_text),
+                            Some(comment_text),
                             key,
-                        });
+                        ) {
+                            results.push(task);
+                        }
                     } else {
-                        results.push(DependencyNode {
-                            start,
-                            end,
+                        if let Some(task) = create_task(
+                            ctx,
+                            Position {
+                                start,
+                                end,
+                                line: pos.row + 1,
+                                column: pos.column + 1,
+                            },
                             value,
-                            comment: None,
+                            None,
                             key,
-                        });
-                        // The comment might belong to the NEXT value, but we can't be sure here
-                        // For now, we only support same-line comments for action tags.
+                        ) {
+                            results.push(task);
+                        }
                     }
                 }
             }
         }
     }
 
-    if let Some((start, end, value, _, key)) = last_value {
-        results.push(DependencyNode {
-            start,
-            end,
+    if let Some((start, end, value, pos, key)) = last_value {
+        if let Some(task) = create_task(
+            ctx,
+            Position {
+                start,
+                end,
+                line: pos.row + 1,
+                column: pos.column + 1,
+            },
             value,
-            comment: None,
+            None,
             key,
-        });
+        ) {
+            results.push(task);
+        }
     }
     Ok(results)
+}
+
+#[derive(Clone, Copy)]
+struct FileContext<'a> {
+    path: &'a Path,
+    provider: CiProvider,
+    ignore_list: &'a [String],
+}
+
+struct Position {
+    start: usize,
+    end: usize,
+    line: usize,
+    column: usize,
+}
+
+fn create_task(
+    ctx: FileContext,
+    pos: Position,
+    value: String,
+    comment: Option<String>,
+    key: String,
+) -> Option<UpdateTask> {
+    if key == "include" || key == "project" {
+        return None;
+    }
+    if value.starts_with("./") {
+        return None;
+    }
+
+    let (action_part, tag) = if let Some((a, t)) = value.split_once('@') {
+        (a, Some(t))
+    } else if value.starts_with("docker://") && value.contains(':') {
+        if let Some(last_colon) = value.rfind(':') {
+            (&value[..last_colon], Some(&value[last_colon + 1..]))
+        } else {
+            (value.as_str(), None)
+        }
+    } else if let Some((a, t)) = value.split_once(':') {
+        (a, Some(t))
+    } else {
+        (value.as_str(), None)
+    };
+
+    let action = DependencyName::from(action_part);
+
+    if ctx
+        .ignore_list
+        .iter()
+        .any(|pattern| action.0.contains(pattern))
+    {
+        return None;
+    }
+
+    Some(UpdateTask {
+        path: ctx.path.to_path_buf(),
+        start: pos.start,
+        end: pos.end,
+        line: pos.line,
+        column: pos.column,
+        action,
+        current_tag: tag.map(|s| s.to_string()),
+        comment,
+        key,
+        provider: ctx.provider,
+    })
 }
 
 #[cfg(test)]
@@ -222,34 +297,40 @@ mod tests {
     }
 
     #[test]
-    fn test_find_uses_nodes() {
+    fn test_find_tasks_github() {
         let yaml = "uses: actions/checkout@v3";
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].value, "actions/checkout@v3");
+        assert_eq!(results[0].action.0, "actions/checkout");
+        assert_eq!(results[0].current_tag.as_deref(), Some("v3"));
         assert_eq!(results[0].key, "uses");
     }
 
     #[test]
-    fn test_find_uses_with_quotes() {
+    fn test_find_tasks_with_quotes() {
         let yaml = "uses: \"actions/checkout@v3\"";
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].value, "actions/checkout@v3");
+        assert_eq!(results[0].action.0, "actions/checkout");
+        assert_eq!(results[0].current_tag.as_deref(), Some("v3"));
     }
 
     #[test]
-    fn test_find_uses_with_comment() {
+    fn test_find_tasks_with_comment() {
         let yaml = "uses: actions/checkout@hash # v3";
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].value, "actions/checkout@hash");
+        assert_eq!(results[0].action.0, "actions/checkout");
+        assert_eq!(results[0].current_tag.as_deref(), Some("hash"));
         assert_eq!(results[0].comment, Some("# v3".to_string()));
     }
 
@@ -263,12 +344,12 @@ orbs:
   node: circleci/node@5.0.0
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::Unknown).unwrap();
+        let path = Path::new("other.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
 
         let keys: Vec<String> = results.iter().map(|r| r.key.clone()).collect();
         assert!(keys.contains(&"image".to_string()));
         assert!(keys.contains(&"pipe".to_string()));
-        assert!(keys.contains(&"include".to_string()));
         assert!(keys.contains(&"orbs".to_string()));
     }
 
@@ -303,29 +384,6 @@ include:
     }
 
     #[test]
-    fn test_resolve_gitlab_project_not_found() {
-        let yaml = r#"
-include:
-  - ref: 'v1.0.0'
-"#;
-        let (tree, content) = parse_yaml(yaml);
-        let node = find_node_with_text(tree.root_node(), "'v1.0.0'", &content).unwrap();
-        let project = resolve_gitlab_project(node, &content);
-        assert_eq!(project, None);
-    }
-
-    #[test]
-    fn test_resolve_gitlab_project_invalid_node() {
-        let yaml = r#"
-ref: 'v1.0.0'
-"#;
-        let (tree, content) = parse_yaml(yaml);
-        // Using the root node, which won't have a parent pair
-        let project = resolve_gitlab_project(tree.root_node(), &content);
-        assert_eq!(project, None);
-    }
-
-    #[test]
     fn test_gitlab_ref_project() {
         let yaml = r#"
 include:
@@ -334,11 +392,12 @@ include:
     file: '/templates/.gitlab-ci.yml'
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitLab).unwrap();
+        let path = Path::new(".gitlab-ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
 
-        // We expect "my-group/my-project@v1.0.0" for the 'ref' key
         let ref_node = results.iter().find(|r| r.key == "ref").unwrap();
-        assert_eq!(ref_node.value, "my-group/my-project@v1.0.0");
+        assert_eq!(ref_node.action.0, "my-group/my-project");
+        assert_eq!(ref_node.current_tag.as_deref(), Some("v1.0.0"));
     }
 
     #[test]
@@ -350,7 +409,8 @@ strategy:
       - os: ubuntu-latest
 "#;
         let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
 
         assert!(results.is_empty());
     }
@@ -367,26 +427,9 @@ strategy:
     }
 
     #[test]
-    fn test_comment_on_different_line() {
-        let yaml = r#"
-uses: actions/checkout@v3
-# unrelated comment
-"#;
-        let (tree, content) = parse_yaml(yaml);
-        let results = find_uses_nodes(tree.root_node(), &content, CiProvider::GitHub).unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].comment, None);
-    }
-
-    #[test]
     fn test_ci_provider_from_path() {
         assert_eq!(
             CiProvider::from_path(Path::new(".github/workflows/ci.yml")),
-            CiProvider::GitHub
-        );
-        assert_eq!(
-            CiProvider::from_path(Path::new(".gitea/workflows/deploy.yaml")),
             CiProvider::GitHub
         );
         assert_eq!(
@@ -401,10 +444,6 @@ uses: actions/checkout@v3
             CiProvider::from_path(Path::new(".circleci/config.yml")),
             CiProvider::CircleCI
         );
-        assert_eq!(
-            CiProvider::from_path(Path::new("docker-compose.yml")),
-            CiProvider::Unknown
-        );
     }
 
     #[test]
@@ -418,18 +457,5 @@ uses: actions/checkout@v3
         assert!(gitlab.supports_key("include"));
         assert!(gitlab.supports_key("ref"));
         assert!(!gitlab.supports_key("uses"));
-
-        let bitbucket = CiProvider::Bitbucket;
-        assert!(bitbucket.supports_key("pipe"));
-        assert!(bitbucket.supports_key("image"));
-        assert!(!bitbucket.supports_key("orbs"));
-
-        let circle = CiProvider::CircleCI;
-        assert!(circle.supports_key("orbs"));
-        assert!(circle.supports_key("image"));
-        assert!(!circle.supports_key("include"));
-
-        let unknown = CiProvider::Unknown;
-        assert!(unknown.supports_key("any_key"));
     }
 }

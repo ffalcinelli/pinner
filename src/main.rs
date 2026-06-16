@@ -4,7 +4,7 @@
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use pinner::{run, Cli, OciRegistryProvider};
+use pinner::{resolver::OciRegistryProvider, run, Cli};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -13,6 +13,9 @@ use std::process::ExitCode;
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let config = pinner::config::Config::load();
+    let cli = config.merge_with_cli(cli);
+
     if let Err(e) = run_app(cli).await {
         // Check if it's a verification failure (already printed details)
         let is_verification_failure = e
@@ -53,7 +56,7 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         .ok();
 
     let provider =
-        pinner::providers::UnifiedProvider::new(pinner::providers::UnifiedProviderConfig {
+        pinner::resolver::UnifiedProvider::new(pinner::resolver::UnifiedProviderConfig {
             github_url: cli.github_url.clone(),
             github_token: cli.github_token.clone(),
             bitbucket_url: cli.bitbucket_url.clone(),
@@ -118,16 +121,44 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
-    fn test_get_workflows() {
-        // Since we can't easily mock the filesystem here without more complexity,
-        // we just test the cli_workflows priority.
+    fn test_get_workflows_cli_priority() {
         let cli_paths = vec![PathBuf::from("custom/path")];
         assert_eq!(get_workflows(&cli_paths), cli_paths);
+    }
 
-        // Default case (will likely return .github/workflows if it doesn't exist in the current env)
+    #[test]
+    #[serial_test::serial]
+    fn test_get_workflows_discovery() {
+        let dir = tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Initially should return default .github/workflows if nothing exists
         assert_eq!(get_workflows(&[]), vec![PathBuf::from(".github/workflows")]);
+
+        // Create .gitlab-ci.yml
+        fs::write(".gitlab-ci.yml", "").unwrap();
+        assert_eq!(get_workflows(&[]), vec![PathBuf::from(".gitlab-ci.yml")]);
+
+        // Create .github/workflows
+        fs::create_dir_all(".github/workflows").unwrap();
+        let res = get_workflows(&[]);
+        assert!(res.contains(&PathBuf::from(".github/workflows")));
+        assert!(res.contains(&PathBuf::from(".gitlab-ci.yml")));
+
+        // Create bitbucket-pipelines.yml
+        fs::write("bitbucket-pipelines.yml", "").unwrap();
+        fs::write("bitbucket-pipelines.yaml", "").unwrap();
+        let res = get_workflows(&[]);
+        assert!(res.contains(&PathBuf::from("bitbucket-pipelines.yml")));
+        // Should NOT contain .yaml if .yml exists
+        assert!(!res.contains(&PathBuf::from("bitbucket-pipelines.yaml")));
+
+        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[tokio::test]
