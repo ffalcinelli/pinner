@@ -3,7 +3,7 @@ use crate::core::{CiProvider, DependencyName};
 use crate::error::PinnerError;
 use std::path::Path;
 use std::sync::LazyLock;
-use tree_sitter::{Node, Point, Query, QueryCursor};
+use tree_sitter::{Node, Point, Query, QueryCursor, StreamingIterator};
 
 impl CiProvider {
     pub fn from_path(path: &Path) -> Self {
@@ -40,7 +40,7 @@ impl CiProvider {
 
 static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
     Query::new(
-        tree_sitter_yaml::language(),
+        &tree_sitter_yaml::LANGUAGE.into(),
         r#"
         (block_mapping_pair
           key: [
@@ -95,7 +95,7 @@ pub fn find_tasks(
         .map_err(|e| PinnerError::Parse(e.clone()))?;
 
     let mut cursor = QueryCursor::new();
-    let matches = cursor.matches(query, node, content);
+    let mut matches = cursor.matches(query, node, content);
 
     let key_idx = query
         .capture_index_for_name("key")
@@ -113,7 +113,7 @@ pub fn find_tasks(
     };
     let mut last_value: Option<(usize, usize, String, Point, String)> = None;
 
-    for m in matches {
+    while let Some(m) = matches.next() {
         let mut current_key = String::new();
         for cap in m.captures {
             if cap.index == key_idx {
@@ -290,7 +290,7 @@ mod tests {
     fn parse_yaml(content: &str) -> (tree_sitter::Tree, Vec<u8>) {
         let mut parser = TSParser::new();
         parser
-            .set_language(tree_sitter_yaml::language())
+            .set_language(&tree_sitter_yaml::LANGUAGE.into())
             .expect("Error loading YAML grammar");
         let tree = parser.parse(content, None).expect("Error parsing YAML");
         (tree, content.as_bytes().to_vec())
