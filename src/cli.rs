@@ -4,10 +4,12 @@
 //! It includes the main [`Cli`] struct and the [`Commands`] enum for subcommands.
 
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Strategy for upgrading actions to newer versions.
-#[derive(ValueEnum, Clone, Debug, PartialEq)]
+#[derive(ValueEnum, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
     /// Upgrade to the latest available version (default).
     Latest,
@@ -20,7 +22,8 @@ pub enum UpgradeStrategy {
 }
 
 /// Format for the output results.
-#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Standard text output (default).
     #[default]

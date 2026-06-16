@@ -1,6 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Represents the CI/CD platform being used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CiProvider {
+    GitHub,
+    GitLab,
+    Bitbucket,
+    CircleCI,
+    Forgejo,
+    Gitea,
+    Unknown,
+}
+
 /// Represents a dependency name.
 ///
 /// This is a wrapper around a `String` representing the name of a CI/CD dependency,
@@ -14,6 +26,18 @@ use std::fmt;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DependencyName(pub String);
+
+impl DependencyName {
+    /// Returns true if the dependency is a Docker image (starts with docker://).
+    pub fn is_docker(&self) -> bool {
+        self.0.starts_with("docker://")
+    }
+
+    /// Returns the name without the "docker://" prefix if it exists.
+    pub fn trim_docker_prefix(&self) -> &str {
+        self.0.trim_start_matches("docker://")
+    }
+}
 
 impl fmt::Display for DependencyName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -89,5 +113,30 @@ impl fmt::Display for BranchName {
 impl From<String> for BranchName {
     fn from(s: String) -> Self {
         Self(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dependency_name_docker() {
+        let action = DependencyName::from("actions/checkout");
+        assert!(!action.is_docker());
+        assert_eq!(action.trim_docker_prefix(), "actions/checkout");
+
+        let docker = DependencyName::from("docker://alpine");
+        assert!(docker.is_docker());
+        assert_eq!(docker.trim_docker_prefix(), "alpine");
+    }
+
+    #[test]
+    fn test_dependency_ref_parsing() {
+        let git_ref = DependencyRef::from("a1b2c3d4".to_string());
+        assert!(matches!(git_ref, DependencyRef::GitSha(_)));
+
+        let docker_ref = DependencyRef::from("sha256:abcdef".to_string());
+        assert!(matches!(docker_ref, DependencyRef::DockerDigest(_)));
     }
 }

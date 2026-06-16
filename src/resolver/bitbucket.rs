@@ -2,13 +2,10 @@ use crate::core::{BranchName, DependencyName, DependencyRef};
 use crate::error::PinnerError;
 use crate::resolver::provider::{BaseHttpClient, RemoteProvider};
 use async_trait::async_trait;
-use moka::future::Cache;
 use serde::Deserialize;
-use std::time::Duration;
 
 pub struct ReqwestBitbucketProvider {
     pub base: BaseHttpClient,
-    pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
     pub is_cloud: bool,
 }
 
@@ -25,10 +22,6 @@ impl ReqwestBitbucketProvider {
     ) -> Result<Self, PinnerError> {
         Ok(Self {
             base: BaseHttpClient::new(base_url, token, "Bearer", "BITBUCKET_TOKEN")?,
-            sha_cache: Cache::builder()
-                .max_capacity(1000)
-                .time_to_live(Duration::from_secs(3600))
-                .build(),
             is_cloud,
         })
     }
@@ -70,11 +63,6 @@ impl RemoteProvider for ReqwestBitbucketProvider {
         tag: &str,
         _key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&key).await {
-            return Ok(sha);
-        }
-
         let url = if self.is_cloud {
             format!(
                 "{}/repositories/{}/refs/tags/{}",
@@ -116,9 +104,7 @@ impl RemoteProvider for ReqwestBitbucketProvider {
                 res.latest_commit
             };
 
-            let sha = DependencyRef::from(sha);
-            self.sha_cache.insert(key, sha.clone()).await;
-            Ok(sha)
+            Ok(DependencyRef::from(sha))
         } else if self.is_cloud {
             let branch_url = format!(
                 "{}/repositories/{}/refs/branches/{}",
@@ -138,9 +124,7 @@ impl RemoteProvider for ReqwestBitbucketProvider {
                     .json()
                     .await
                     .map_err(|e| PinnerError::Api(e.to_string()))?;
-                let sha = DependencyRef::from(res.target.hash);
-                self.sha_cache.insert(key, sha.clone()).await;
-                Ok(sha)
+                Ok(DependencyRef::from(res.target.hash))
             } else {
                 Err(PinnerError::Api(format!(
                     "Bitbucket API error (HTTP {}): Ref not found: {}",
@@ -178,9 +162,7 @@ impl RemoteProvider for ReqwestBitbucketProvider {
                     .await
                     .map_err(|e| PinnerError::Api(e.to_string()))?;
                 if let Some(val) = res.values.first() {
-                    let sha = DependencyRef::from(val.latest_commit.clone());
-                    self.sha_cache.insert(key, sha.clone()).await;
-                    return Ok(sha);
+                    return Ok(DependencyRef::from(val.latest_commit.clone()));
                 }
             }
             Err(PinnerError::Api(format!(
@@ -201,10 +183,52 @@ impl RemoteProvider for ReqwestBitbucketProvider {
 
     async fn list_tags(
         &self,
-        _action: &DependencyName,
+        action: &DependencyName,
         _key: &str,
     ) -> Result<Vec<String>, PinnerError> {
-        Ok(vec![])
+        let url = if self.is_cloud {
+            format!("{}/repositories/{}/refs/tags", self.base.base_url, action)
+        } else {
+            let Some((project, repo)) = action.0.split_once('/') else {
+                return Ok(vec![]);
+            };
+            format!(
+                "{}/rest/api/1.0/projects/{}/repos/{}/tags",
+                self.base.base_url, project, repo
+            )
+        };
+
+        let resp = self.base.client.get(&url).send().await?;
+
+        if !resp.status().is_success() {
+            return Ok(vec![]);
+        }
+
+        #[derive(Deserialize)]
+        struct BitbucketCloudTagsResponse {
+            values: Vec<BitbucketCloudTag>,
+        }
+        #[derive(Deserialize)]
+        struct BitbucketCloudTag {
+            name: String,
+        }
+
+        #[derive(Deserialize)]
+        struct BitbucketDCTagsResponse {
+            values: Vec<BitbucketDCTag>,
+        }
+        #[derive(Deserialize)]
+        struct BitbucketDCTag {
+            display_id: String,
+        }
+
+        if self.is_cloud {
+            let res: BitbucketCloudTagsResponse = resp.json().await?;
+            Ok(res.values.into_iter().map(|t| t.name).collect())
+        } else {
+            let res: BitbucketDCTagsResponse = resp.json().await?;
+            Ok(res.values.into_iter().map(|t| t.display_id).collect())
+        }
     }
 
     async fn get_default_branch(

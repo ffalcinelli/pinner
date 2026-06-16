@@ -1,6 +1,7 @@
 use crate::core::UpdateTask;
 use crate::error::PinnerError;
 use crate::scanner::parser::find_tasks;
+use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::fs;
@@ -35,7 +36,24 @@ impl Scanner {
                 return Err(PinnerError::PathNotFound(path.display().to_string()));
             }
 
-            for entry in WalkBuilder::new(path).build() {
+            let mut override_builder = OverrideBuilder::new(path);
+            for ignore_pattern in &self.ignore_list {
+                // If the pattern doesn't start with '!', we treat it as an exclusion
+                let pattern = if ignore_pattern.starts_with('!') {
+                    ignore_pattern.clone()
+                } else {
+                    format!("!{}", ignore_pattern)
+                };
+                override_builder
+                    .add(&pattern)
+                    .map_err(|e| PinnerError::Parse(format!("Invalid ignore pattern: {}", e)))?;
+            }
+
+            let overrides = override_builder
+                .build()
+                .map_err(|e| PinnerError::Parse(format!("Failed to build overrides: {}", e)))?;
+
+            for entry in WalkBuilder::new(path).overrides(overrides).build() {
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {

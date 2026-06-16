@@ -1,6 +1,8 @@
 use crate::error::PinnerError;
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use serde::Deserialize;
 
 #[cfg(test)]
@@ -16,7 +18,7 @@ pub trait RegistryProvider: Send + Sync {
 /// Implementation of [`RegistryProvider`] for OCI-compliant registries.
 #[derive(Clone)]
 pub struct OciRegistryProvider {
-    client: reqwest::Client,
+    client: ClientWithMiddleware,
     auth_url: String,
     base_url_template: String,
     username: Option<String>,
@@ -31,8 +33,21 @@ impl Default for OciRegistryProvider {
 
 impl OciRegistryProvider {
     pub fn new(username: Option<String>, password: Option<String>) -> Self {
+        let mut h = HeaderMap::new();
+        h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
+
+        let reqwest_client = reqwest::Client::builder()
+            .default_headers(h)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+        let client = ClientBuilder::new(reqwest_client)
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build();
+
         Self {
-            client: reqwest::Client::new(),
+            client,
             auth_url: "https://auth.docker.io/token".to_string(),
             base_url_template: "https://{registry}/v2/{repository}/manifests/{tag}".to_string(),
             username,
@@ -42,8 +57,13 @@ impl OciRegistryProvider {
 
     #[cfg(test)]
     pub fn with_base_urls(auth_url: String, base_url_template: String) -> Self {
+        let client = ClientBuilder::new(reqwest::Client::new())
+            .with(RetryTransientMiddleware::new_with_policy(
+                ExponentialBackoff::builder().build_with_max_retries(3),
+            ))
+            .build();
         Self {
-            client: reqwest::Client::new(),
+            client,
             auth_url,
             base_url_template,
             username: None,
@@ -69,7 +89,7 @@ impl OciRegistryProvider {
         let resp = rb
             .send()
             .await
-            .map_err(|e| PinnerError::Api(e.to_string()))?;
+            .map_err(|e| PinnerError::Api(format!("Failed to send auth request: {}", e)))?;
 
         if !resp.status().is_success() {
             return Err(PinnerError::Api(format!(
@@ -150,7 +170,7 @@ impl RegistryProvider for OciRegistryProvider {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| PinnerError::Api(e.to_string()))?;
+            .map_err(|e| PinnerError::Api(format!("Failed to fetch manifest: {}", e)))?;
 
         if resp.status().is_success() {
             let digest = resp
@@ -284,7 +304,7 @@ mod tests {
     async fn test_oci_auth_with_credentials() {
         let mut server = mockito::Server::new_async().await;
         let provider = OciRegistryProvider {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::new().into(),
             auth_url: format!("{}/auth", server.url()),
             base_url_template: format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
             username: Some("user".into()),

@@ -5,10 +5,12 @@ use crate::resolver::forgejo::ReqwestForgejoProvider;
 use crate::resolver::github::ReqwestGithubProvider;
 use crate::resolver::gitlab::ReqwestGitLabProvider;
 use async_trait::async_trait;
+use moka::future::Cache;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Trait for interacting with a remote provider (GitHub, Bitbucket, etc.).
 #[cfg_attr(test, mockall::automock)]
@@ -39,6 +41,89 @@ pub trait RemoteProvider: Send + Sync {
         action: &DependencyName,
         key: &str,
     ) -> Result<BranchName, PinnerError>;
+}
+
+/// A decorator that adds caching to any [`RemoteProvider`].
+pub struct CachedProvider<T: RemoteProvider> {
+    inner: T,
+    sha_cache: Cache<(DependencyName, String), DependencyRef>,
+    release_cache: Cache<DependencyName, String>,
+    branch_cache: Cache<DependencyName, BranchName>,
+}
+
+impl<T: RemoteProvider> CachedProvider<T> {
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            sha_cache: Cache::builder()
+                .max_capacity(1000)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+            release_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+            branch_cache: Cache::builder()
+                .max_capacity(500)
+                .time_to_live(Duration::from_secs(3600))
+                .build(),
+        }
+    }
+}
+
+#[async_trait]
+impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
+    async fn get_commit_sha(
+        &self,
+        action: &DependencyName,
+        tag: &str,
+        key: &str,
+    ) -> Result<DependencyRef, PinnerError> {
+        let cache_key = (action.clone(), tag.to_string());
+        if let Some(sha) = self.sha_cache.get(&cache_key).await {
+            return Ok(sha);
+        }
+        let sha = self.inner.get_commit_sha(action, tag, key).await?;
+        self.sha_cache.insert(cache_key, sha.clone()).await;
+        Ok(sha)
+    }
+
+    async fn get_latest_release(
+        &self,
+        action: &DependencyName,
+        key: &str,
+    ) -> Result<String, PinnerError> {
+        if let Some(tag) = self.release_cache.get(action).await {
+            return Ok(tag);
+        }
+        let tag = self.inner.get_latest_release(action, key).await?;
+        self.release_cache.insert(action.clone(), tag.clone()).await;
+        Ok(tag)
+    }
+
+    async fn list_tags(
+        &self,
+        action: &DependencyName,
+        key: &str,
+    ) -> Result<Vec<String>, PinnerError> {
+        // We don't cache tags list for now as it's less frequently used in tight loops
+        self.inner.list_tags(action, key).await
+    }
+
+    async fn get_default_branch(
+        &self,
+        action: &DependencyName,
+        key: &str,
+    ) -> Result<BranchName, PinnerError> {
+        if let Some(branch) = self.branch_cache.get(action).await {
+            return Ok(branch);
+        }
+        let branch = self.inner.get_default_branch(action, key).await?;
+        self.branch_cache
+            .insert(action.clone(), branch.clone())
+            .await;
+        Ok(branch)
+    }
 }
 
 /// Shared HTTP client logic for repository providers.
@@ -135,13 +220,113 @@ pub struct RepoResponse {
     pub default_branch: String,
 }
 
+/// A registry for different remote providers.
+#[derive(Clone)]
+pub struct ProviderRegistry {
+    pub providers: Vec<(Arc<dyn RemoteProvider>, ProviderTypeInfo)>,
+}
+
+#[derive(Clone)]
+pub struct ProviderTypeInfo {
+    pub domains: Vec<String>,
+    pub keys: Vec<String>,
+    pub variant: String,
+}
+
+impl ProviderRegistry {
+    pub fn new(config: UnifiedProviderConfig) -> Result<Self, PinnerError> {
+        let mut registry = Self {
+            providers: Vec::new(),
+        };
+
+        registry.register(
+            Arc::new(CachedProvider::new(ReqwestGithubProvider::new(
+                config.github_url,
+                config.github_token,
+            )?)),
+            ProviderTypeInfo {
+                domains: vec!["github.com".to_string()],
+                keys: vec!["uses".to_string(), "image".to_string()],
+                variant: "GitHub".to_string(),
+            },
+        );
+
+        registry.register(
+            Arc::new(CachedProvider::new(ReqwestBitbucketProvider::new(
+                config.bitbucket_url,
+                config.bitbucket_token,
+            )?)),
+            ProviderTypeInfo {
+                domains: vec!["bitbucket.org".to_string()],
+                keys: vec!["pipe".to_string(), "image".to_string()],
+                variant: "Bitbucket".to_string(),
+            },
+        );
+
+        registry.register(
+            Arc::new(CachedProvider::new(ReqwestGitLabProvider::new(
+                config.gitlab_url,
+                config.gitlab_token,
+            )?)),
+            ProviderTypeInfo {
+                domains: vec!["gitlab.com".to_string()],
+                keys: vec![
+                    "include".to_string(),
+                    "image".to_string(),
+                    "ref".to_string(),
+                ],
+                variant: "GitLab".to_string(),
+            },
+        );
+
+        registry.register(
+            Arc::new(CachedProvider::new(ReqwestForgejoProvider::new(
+                config.forgejo_url,
+                config.forgejo_token,
+            )?)),
+            ProviderTypeInfo {
+                domains: vec!["codeberg.org".to_string(), "forgejo".to_string()],
+                keys: vec!["uses".to_string(), "image".to_string()],
+                variant: "Forgejo".to_string(),
+            },
+        );
+
+        Ok(registry)
+    }
+
+    pub fn register(&mut self, provider: Arc<dyn RemoteProvider>, info: ProviderTypeInfo) {
+        self.providers.push((provider, info));
+    }
+
+    pub fn get_provider(&self, key: &str, action: &DependencyName) -> Arc<dyn RemoteProvider> {
+        let action_str = action.0.as_str();
+
+        // 1. Explicit domain routing
+        for (provider, info) in &self.providers {
+            if info.domains.iter().any(|d| action_str.contains(d)) {
+                return provider.clone();
+            }
+        }
+
+        // 2. Key-based routing
+        for (provider, info) in &self.providers {
+            if info.keys.iter().any(|k| k == key) {
+                return provider.clone();
+            }
+        }
+
+        // Fallback to GitHub (first provider usually)
+        self.providers[0].0.clone()
+    }
+}
+
 /// Supported provider types.
 #[derive(Clone)]
 pub enum ProviderType {
-    GitHub(Arc<ReqwestGithubProvider>),
-    Bitbucket(Arc<ReqwestBitbucketProvider>),
-    GitLab(Arc<ReqwestGitLabProvider>),
-    Forgejo(Arc<ReqwestForgejoProvider>),
+    GitHub(Arc<CachedProvider<ReqwestGithubProvider>>),
+    Bitbucket(Arc<CachedProvider<ReqwestBitbucketProvider>>),
+    GitLab(Arc<CachedProvider<ReqwestGitLabProvider>>),
+    Forgejo(Arc<CachedProvider<ReqwestForgejoProvider>>),
 }
 
 /// Configuration for the UnifiedProvider.
@@ -175,48 +360,14 @@ impl Default for UnifiedProviderConfig {
 /// A provider that dispatches to various CI providers based on the YAML key.
 #[derive(Clone)]
 pub struct UnifiedProvider {
-    pub providers: Vec<ProviderType>,
+    pub registry: ProviderRegistry,
 }
 
 impl UnifiedProvider {
     pub fn new(config: UnifiedProviderConfig) -> Result<Self, PinnerError> {
         Ok(Self {
-            providers: vec![
-                ProviderType::GitHub(Arc::new(ReqwestGithubProvider::new(
-                    config.github_url,
-                    config.github_token,
-                )?)),
-                ProviderType::Bitbucket(Arc::new(ReqwestBitbucketProvider::new(
-                    config.bitbucket_url,
-                    config.bitbucket_token,
-                )?)),
-                ProviderType::GitLab(Arc::new(ReqwestGitLabProvider::new(
-                    config.gitlab_url,
-                    config.gitlab_token,
-                )?)),
-                ProviderType::Forgejo(Arc::new(ReqwestForgejoProvider::new(
-                    config.forgejo_url,
-                    config.forgejo_token,
-                )?)),
-            ],
+            registry: ProviderRegistry::new(config)?,
         })
-    }
-
-    fn get_provider(&self, key: &str, _action: &DependencyName) -> Option<&ProviderType> {
-        match key {
-            "pipe" => self
-                .providers
-                .iter()
-                .find(|p| matches!(p, ProviderType::Bitbucket(_))),
-            "include" => self
-                .providers
-                .iter()
-                .find(|p| matches!(p, ProviderType::GitLab(_))),
-            _ => self
-                .providers
-                .iter()
-                .find(|p| matches!(p, ProviderType::GitHub(_))),
-        }
     }
 }
 
@@ -228,16 +379,10 @@ impl RemoteProvider for UnifiedProvider {
         tag: &str,
         key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        match self.get_provider(key, action) {
-            Some(ProviderType::GitHub(p)) => p.get_commit_sha(action, tag, key).await,
-            Some(ProviderType::Bitbucket(p)) => p.get_commit_sha(action, tag, key).await,
-            Some(ProviderType::GitLab(p)) => p.get_commit_sha(action, tag, key).await,
-            Some(ProviderType::Forgejo(p)) => p.get_commit_sha(action, tag, key).await,
-            None => Err(PinnerError::Api(format!(
-                "No provider found for key: {}",
-                key
-            ))),
-        }
+        self.registry
+            .get_provider(key, action)
+            .get_commit_sha(action, tag, key)
+            .await
     }
 
     async fn get_latest_release(
@@ -245,16 +390,10 @@ impl RemoteProvider for UnifiedProvider {
         action: &DependencyName,
         key: &str,
     ) -> Result<String, PinnerError> {
-        match self.get_provider(key, action) {
-            Some(ProviderType::GitHub(p)) => p.get_latest_release(action, key).await,
-            Some(ProviderType::Bitbucket(p)) => p.get_latest_release(action, key).await,
-            Some(ProviderType::GitLab(p)) => p.get_latest_release(action, key).await,
-            Some(ProviderType::Forgejo(p)) => p.get_latest_release(action, key).await,
-            None => Err(PinnerError::Api(format!(
-                "No provider found for key: {}",
-                key
-            ))),
-        }
+        self.registry
+            .get_provider(key, action)
+            .get_latest_release(action, key)
+            .await
     }
 
     async fn list_tags(
@@ -262,16 +401,10 @@ impl RemoteProvider for UnifiedProvider {
         action: &DependencyName,
         key: &str,
     ) -> Result<Vec<String>, PinnerError> {
-        match self.get_provider(key, action) {
-            Some(ProviderType::GitHub(p)) => p.list_tags(action, key).await,
-            Some(ProviderType::Bitbucket(p)) => p.list_tags(action, key).await,
-            Some(ProviderType::GitLab(p)) => p.list_tags(action, key).await,
-            Some(ProviderType::Forgejo(p)) => p.list_tags(action, key).await,
-            None => Err(PinnerError::Api(format!(
-                "No provider found for key: {}",
-                key
-            ))),
-        }
+        self.registry
+            .get_provider(key, action)
+            .list_tags(action, key)
+            .await
     }
 
     async fn get_default_branch(
@@ -279,13 +412,10 @@ impl RemoteProvider for UnifiedProvider {
         action: &DependencyName,
         key: &str,
     ) -> Result<BranchName, PinnerError> {
-        match self.get_provider(key, action) {
-            Some(ProviderType::GitHub(p)) => p.get_default_branch(action, key).await,
-            Some(ProviderType::Bitbucket(p)) => p.get_default_branch(action, key).await,
-            Some(ProviderType::GitLab(p)) => p.get_default_branch(action, key).await,
-            Some(ProviderType::Forgejo(p)) => p.get_default_branch(action, key).await,
-            None => Ok(BranchName("main".to_string())),
-        }
+        self.registry
+            .get_provider(key, action)
+            .get_default_branch(action, key)
+            .await
     }
 }
 
@@ -859,7 +989,7 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = ReqwestGithubProvider::new(s.url(), None).unwrap();
+        let provider = CachedProvider::new(ReqwestGithubProvider::new(s.url(), None).unwrap());
         let action = DependencyName::from("o/r");
 
         let sha1 = provider
@@ -1040,24 +1170,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_provider_fallback() {
-        let unified = UnifiedProvider { providers: vec![] };
+        let unified = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
         let action = DependencyName::from("o/r");
         let key = "unknown";
 
+        // With the new registry, it falls back to the first provider (GitHub) instead of returning an error
         let res_commit = unified.get_commit_sha(&action, "v1", key).await;
-        assert!(
-            matches!(res_commit, Err(PinnerError::Api(ref msg)) if msg.contains("No provider found for key: unknown"))
-        );
-
-        let res_release = unified.get_latest_release(&action, key).await;
-        assert!(
-            matches!(res_release, Err(PinnerError::Api(ref msg)) if msg.contains("No provider found for key: unknown"))
-        );
-
-        let res_tags = unified.list_tags(&action, key).await;
-        assert!(
-            matches!(res_tags, Err(PinnerError::Api(ref msg)) if msg.contains("No provider found for key: unknown"))
-        );
+        assert!(res_commit.is_err()); // Still fails because http://invalid is not reachable in default config if mocked
 
         let res_branch = unified.get_default_branch(&action, key).await;
         assert_eq!(res_branch.unwrap().0, "main");

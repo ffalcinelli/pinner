@@ -2,23 +2,16 @@ use crate::core::{BranchName, DependencyName, DependencyRef};
 use crate::error::PinnerError;
 use crate::resolver::provider::{BaseHttpClient, RemoteProvider};
 use async_trait::async_trait;
-use moka::future::Cache;
 use serde::Deserialize;
-use std::time::Duration;
 
 pub struct ReqwestGitLabProvider {
     pub base: BaseHttpClient,
-    pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
 }
 
 impl ReqwestGitLabProvider {
     pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
         Ok(Self {
             base: BaseHttpClient::new(base_url, token, "Bearer", "GITLAB_TOKEN")?,
-            sha_cache: Cache::builder()
-                .max_capacity(1000)
-                .time_to_live(Duration::from_secs(3600))
-                .build(),
         })
     }
 }
@@ -31,11 +24,6 @@ impl RemoteProvider for ReqwestGitLabProvider {
         tag: &str,
         _key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&key).await {
-            return Ok(sha);
-        }
-
         let project_id = action.0.replace('/', "%2F");
         let url = format!(
             "{}/api/v4/projects/{}/repository/commits/{}",
@@ -58,15 +46,9 @@ impl RemoteProvider for ReqwestGitLabProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
-            let sha = DependencyRef::from(res.id);
-            self.sha_cache.insert(key, sha.clone()).await;
-            Ok(sha)
+            Ok(DependencyRef::from(res.id))
         } else {
-            Err(PinnerError::Api(format!(
-                "GitLab API error (HTTP {}): project {}",
-                resp.status(),
-                action
-            )))
+            Err(self.base.handle_error(resp, action))
         }
     }
 
@@ -169,5 +151,46 @@ impl RemoteProvider for ReqwestGitLabProvider {
         } else {
             Ok(BranchName("main".to_string()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_gitlab_get_commit_sha() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v4/projects/o%2Fr/repository/commits/v1")
+            .with_status(200)
+            .with_body(r#"{"id":"gitlabsha"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGitLabProvider::new(server.url(), None).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "include")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "gitlabsha");
+    }
+
+    #[tokio::test]
+    async fn test_gitlab_get_default_branch() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v4/projects/o%2Fr")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"develop"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGitLabProvider::new(server.url(), None).unwrap();
+        let branch = provider
+            .get_default_branch(&DependencyName::from("o/r"), "")
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "develop");
     }
 }

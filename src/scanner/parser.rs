@@ -1,38 +1,35 @@
-use crate::core::DependencyName;
 use crate::core::UpdateTask;
+use crate::core::{CiProvider, DependencyName};
 use crate::error::PinnerError;
 use std::path::Path;
 use std::sync::LazyLock;
-use tree_sitter::{Node, Query, QueryCursor};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CiProvider {
-    GitHub,
-    GitLab,
-    Bitbucket,
-    CircleCI,
-    Unknown,
-}
+use tree_sitter::{Node, Point, Query, QueryCursor};
 
 impl CiProvider {
     pub fn from_path(path: &Path) -> Self {
         let path_str = path.to_string_lossy();
-        if path_str.contains(".github/workflows") || path_str.contains(".gitea/workflows") {
-            CiProvider::GitHub
-        } else if path_str.contains(".gitlab-ci") {
-            CiProvider::GitLab
-        } else if path_str.contains("bitbucket-pipelines") {
-            CiProvider::Bitbucket
-        } else if path_str.contains(".circleci") {
-            CiProvider::CircleCI
-        } else {
-            CiProvider::Unknown
+        let mappings = [
+            (".github/workflows", CiProvider::GitHub),
+            (".forgejo/workflows", CiProvider::Forgejo),
+            (".gitea/workflows", CiProvider::Gitea),
+            (".gitlab-ci", CiProvider::GitLab),
+            ("bitbucket-pipelines", CiProvider::Bitbucket),
+            (".circleci", CiProvider::CircleCI),
+        ];
+
+        for (pattern, provider) in mappings {
+            if path_str.contains(pattern) {
+                return provider;
+            }
         }
+        CiProvider::Unknown
     }
 
     pub fn supports_key(&self, key: &str) -> bool {
         match self {
-            CiProvider::GitHub => matches!(key, "uses" | "image"),
+            CiProvider::GitHub | CiProvider::Forgejo | CiProvider::Gitea => {
+                matches!(key, "uses" | "image")
+            }
             CiProvider::GitLab => matches!(key, "include" | "image" | "ref"),
             CiProvider::Bitbucket => matches!(key, "pipe" | "image"),
             CiProvider::CircleCI => matches!(key, "orbs" | "image"),
@@ -109,7 +106,12 @@ pub fn find_tasks(
     let comment_idx = query.capture_index_for_name("comment");
 
     let provider = CiProvider::from_path(path);
-    let mut last_value: Option<(usize, usize, String, usize, String)> = None;
+    let ctx = FileContext {
+        path,
+        provider,
+        ignore_list,
+    };
+    let mut last_value: Option<(usize, usize, String, Point, String)> = None;
 
     for m in matches {
         let mut current_key = String::new();
@@ -121,9 +123,19 @@ pub fn find_tasks(
                     continue;
                 }
 
-                if let Some((start, end, value, _, key)) = last_value.take() {
-                    if let Some(task) = create_task(path, start, end, value, None, key, ignore_list)
-                    {
+                if let Some((start, end, value, pos, key)) = last_value.take() {
+                    if let Some(task) = create_task(
+                        ctx,
+                        Position {
+                            start,
+                            end,
+                            line: pos.row + 1,
+                            column: pos.column + 1,
+                        },
+                        value,
+                        None,
+                        key,
+                    ) {
                         results.push(task);
                     }
                 }
@@ -141,30 +153,42 @@ pub fn find_tasks(
                     v_node.start_byte(),
                     v_node.end_byte(),
                     val,
-                    v_node.start_position().row,
+                    v_node.start_position(),
                     current_key.clone(),
                 ));
             } else if Some(cap.index) == comment_idx {
-                if let Some((start, end, value, row, key)) = last_value.take() {
+                if let Some((start, end, value, pos, key)) = last_value.take() {
                     let comment_node = cap.node;
-                    if comment_node.start_position().row == row {
+                    if comment_node.start_position().row == pos.row {
                         let comment_text =
                             comment_node.utf8_text(content).unwrap_or("").to_string();
                         if let Some(task) = create_task(
-                            path,
-                            start,
-                            end,
+                            ctx,
+                            Position {
+                                start,
+                                end,
+                                line: pos.row + 1,
+                                column: pos.column + 1,
+                            },
                             value,
                             Some(comment_text),
                             key,
-                            ignore_list,
                         ) {
                             results.push(task);
                         }
                     } else {
-                        if let Some(task) =
-                            create_task(path, start, end, value, None, key, ignore_list)
-                        {
+                        if let Some(task) = create_task(
+                            ctx,
+                            Position {
+                                start,
+                                end,
+                                line: pos.row + 1,
+                                column: pos.column + 1,
+                            },
+                            value,
+                            None,
+                            key,
+                        ) {
                             results.push(task);
                         }
                     }
@@ -173,22 +197,45 @@ pub fn find_tasks(
         }
     }
 
-    if let Some((start, end, value, _, key)) = last_value {
-        if let Some(task) = create_task(path, start, end, value, None, key, ignore_list) {
+    if let Some((start, end, value, pos, key)) = last_value {
+        if let Some(task) = create_task(
+            ctx,
+            Position {
+                start,
+                end,
+                line: pos.row + 1,
+                column: pos.column + 1,
+            },
+            value,
+            None,
+            key,
+        ) {
             results.push(task);
         }
     }
     Ok(results)
 }
 
-fn create_task(
-    path: &Path,
+#[derive(Clone, Copy)]
+struct FileContext<'a> {
+    path: &'a Path,
+    provider: CiProvider,
+    ignore_list: &'a [String],
+}
+
+struct Position {
     start: usize,
     end: usize,
+    line: usize,
+    column: usize,
+}
+
+fn create_task(
+    ctx: FileContext,
+    pos: Position,
     value: String,
     comment: Option<String>,
     key: String,
-    ignore_list: &[String],
 ) -> Option<UpdateTask> {
     if key == "include" || key == "project" {
         return None;
@@ -213,18 +260,25 @@ fn create_task(
 
     let action = DependencyName::from(action_part);
 
-    if ignore_list.iter().any(|pattern| action.0.contains(pattern)) {
+    if ctx
+        .ignore_list
+        .iter()
+        .any(|pattern| action.0.contains(pattern))
+    {
         return None;
     }
 
     Some(UpdateTask {
-        path: path.to_path_buf(),
-        start,
-        end,
+        path: ctx.path.to_path_buf(),
+        start: pos.start,
+        end: pos.end,
+        line: pos.line,
+        column: pos.column,
         action,
         current_tag: tag.map(|s| s.to_string()),
         comment,
         key,
+        provider: ctx.provider,
     })
 }
 

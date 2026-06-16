@@ -4,33 +4,16 @@ use crate::resolver::provider::{
     BaseHttpClient, RefResponse, ReleaseResponse, RemoteProvider, RepoResponse,
 };
 use async_trait::async_trait;
-use moka::future::Cache;
-use std::time::Duration;
 
 /// Default implementation of [`RemoteProvider`] for GitHub using `reqwest`.
 pub struct ReqwestGithubProvider {
     pub base: BaseHttpClient,
-    pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
-    pub release_cache: Cache<DependencyName, String>,
-    pub branch_cache: Cache<DependencyName, BranchName>,
 }
 
 impl ReqwestGithubProvider {
     pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
         Ok(Self {
             base: BaseHttpClient::new(base_url, token, "Bearer", "GITHUB_TOKEN")?,
-            sha_cache: Cache::builder()
-                .max_capacity(1000)
-                .time_to_live(Duration::from_secs(3600))
-                .build(),
-            release_cache: Cache::builder()
-                .max_capacity(500)
-                .time_to_live(Duration::from_secs(3600))
-                .build(),
-            branch_cache: Cache::builder()
-                .max_capacity(500)
-                .time_to_live(Duration::from_secs(3600))
-                .build(),
         })
     }
 }
@@ -43,11 +26,6 @@ impl RemoteProvider for ReqwestGithubProvider {
         tag: &str,
         _key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&key).await {
-            return Ok(sha);
-        }
-
         let url = format!("{}/repos/{}/commits/{}", self.base.base_url, action, tag);
         let resp = self
             .base
@@ -62,9 +40,7 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
-            let sha = DependencyRef::from(res.sha);
-            self.sha_cache.insert(key, sha.clone()).await;
-            Ok(sha)
+            Ok(DependencyRef::from(res.sha))
         } else {
             Err(self.base.handle_error(resp, action))
         }
@@ -75,10 +51,6 @@ impl RemoteProvider for ReqwestGithubProvider {
         action: &DependencyName,
         key: &str,
     ) -> Result<String, PinnerError> {
-        if let Some(tag) = self.release_cache.get(action).await {
-            return Ok(tag);
-        }
-
         let url = format!("{}/repos/{}/releases/latest", self.base.base_url, action);
         let resp = self
             .base
@@ -93,9 +65,6 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
-            self.release_cache
-                .insert(action.clone(), rel.tag_name.clone())
-                .await;
             Ok(rel.tag_name)
         } else if resp.status().as_u16() == 404 {
             let default_branch = self.get_default_branch(action, key).await?;
@@ -140,10 +109,6 @@ impl RemoteProvider for ReqwestGithubProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<BranchName, PinnerError> {
-        if let Some(branch) = self.branch_cache.get(action).await {
-            return Ok(branch);
-        }
-
         let url = format!("{}/repos/{}", self.base.base_url, action);
         let resp = self
             .base
@@ -158,13 +123,50 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
-            let branch = BranchName(repo.default_branch);
-            self.branch_cache
-                .insert(action.clone(), branch.clone())
-                .await;
-            Ok(branch)
+            Ok(BranchName(repo.default_branch))
         } else {
             Ok(BranchName("main".to_string()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_github_get_commit_sha() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/o/r/commits/v1")
+            .with_status(200)
+            .with_body(r#"{"sha":"githubsha"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "githubsha");
+    }
+
+    #[tokio::test]
+    async fn test_github_get_latest_release() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/o/r/releases/latest")
+            .with_status(200)
+            .with_body(r#"{"tag_name":"v1.2.3"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
+        let tag = provider
+            .get_latest_release(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(tag, "v1.2.3");
     }
 }

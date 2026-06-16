@@ -161,7 +161,7 @@ async fn test_github_url_env() {
     let f = dir.path().join("f.yml");
     fs::write(&f, "uses: o/r@v1").unwrap();
 
-    std::env::set_var("GITHUB_URL", server.url());
+    std::env::set_var("PINNER_GITHUB_URL", server.url());
 
     let cli = Cli::try_parse_from(["pinner", "--workflows", f.to_str().unwrap(), "--yes", "pin"])
         .unwrap();
@@ -176,7 +176,7 @@ async fn test_github_url_env() {
     run(cli, provider, registry, vec![f.clone()]).await.unwrap();
 
     assert!(fs::read_to_string(&f).unwrap().contains("o/r@h"));
-    std::env::remove_var("GITHUB_URL");
+    std::env::remove_var("PINNER_GITHUB_URL");
 }
 
 #[tokio::test]

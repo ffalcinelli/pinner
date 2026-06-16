@@ -13,6 +13,9 @@ use std::process::ExitCode;
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let config = pinner::config::Config::load();
+    let cli = config.merge_with_cli(cli);
+
     if let Err(e) = run_app(cli).await {
         // Check if it's a verification failure (already printed details)
         let is_verification_failure = e

@@ -2,23 +2,16 @@ use crate::core::{BranchName, DependencyName, DependencyRef};
 use crate::error::PinnerError;
 use crate::resolver::provider::{BaseHttpClient, RemoteProvider};
 use async_trait::async_trait;
-use moka::future::Cache;
 use serde::Deserialize;
-use std::time::Duration;
 
 pub struct ReqwestForgejoProvider {
     pub base: BaseHttpClient,
-    pub sha_cache: Cache<(DependencyName, String), DependencyRef>,
 }
 
 impl ReqwestForgejoProvider {
     pub fn new(base_url: String, token: Option<String>) -> Result<Self, PinnerError> {
         Ok(Self {
             base: BaseHttpClient::new(base_url, token, "token", "FORGEJO_TOKEN")?,
-            sha_cache: Cache::builder()
-                .max_capacity(1000)
-                .time_to_live(Duration::from_secs(3600))
-                .build(),
         })
     }
 }
@@ -31,11 +24,6 @@ impl RemoteProvider for ReqwestForgejoProvider {
         tag: &str,
         _key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&key).await {
-            return Ok(sha);
-        }
-
         let url = format!(
             "{}/api/v1/repos/{}/commits/{}",
             self.base.base_url, action, tag
@@ -57,9 +45,7 @@ impl RemoteProvider for ReqwestForgejoProvider {
                 .json()
                 .await
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
-            let sha = DependencyRef::from(res.sha);
-            self.sha_cache.insert(key, sha.clone()).await;
-            Ok(sha)
+            Ok(DependencyRef::from(res.sha))
         } else {
             Err(self.base.handle_error(resp, action))
         }

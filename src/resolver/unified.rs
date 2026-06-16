@@ -33,33 +33,56 @@ impl Resolver {
         tasks: Vec<UpdateTask>,
         is_pin: bool,
     ) -> Result<Vec<UpdateResult>, PinnerError> {
-        let futs = tasks.into_iter().map(|task| {
+        // Group tasks by (action, current_tag, key) to avoid redundant network requests
+        let mut groups: std::collections::HashMap<
+            (String, Option<String>, String),
+            Vec<UpdateTask>,
+        > = std::collections::HashMap::new();
+
+        for task in tasks {
+            let key = (
+                task.action.0.clone(),
+                task.current_tag.clone(),
+                task.key.clone(),
+            );
+            groups.entry(key).or_default().push(task);
+        }
+
+        let futs = groups.into_values().map(|tasks| {
             let remote = self.remote.clone();
             let registry = self.registry.clone();
             let strategy = self.upgrade_strategy.clone();
+            // We only need to resolve the first task in the group
+            let sample_task = tasks[0].clone();
             async move {
                 let res = if is_pin {
-                    Self::resolve_pin(&task, remote, registry).await
+                    Self::resolve_pin(&sample_task, remote, registry).await
                 } else {
-                    Self::resolve_upgrade(&task, remote, registry, strategy).await
+                    Self::resolve_upgrade(&sample_task, remote, registry, strategy).await
                 };
 
                 match res {
-                    Ok(Some((sha, tag))) => Ok(Some(UpdateResult {
-                        action: task.action.clone(),
-                        path: task.path.clone(),
-                        old_tag: task.current_tag.clone(),
-                        task,
-                        new_sha: sha,
-                        new_tag: tag,
-                    })),
+                    Ok(Some((sha, tag))) => {
+                        let mut results = Vec::new();
+                        for task in tasks {
+                            results.push(UpdateResult {
+                                action: task.action.clone(),
+                                path: task.path.clone(),
+                                old_tag: task.current_tag.clone(),
+                                task,
+                                new_sha: sha.clone(),
+                                new_tag: tag.clone(),
+                            });
+                        }
+                        Ok(Some(results))
+                    }
                     Ok(None) => Ok(None),
                     Err(e) => Err(e),
                 }
             }
         });
 
-        let results: Vec<Result<UpdateResult, PinnerError>> = stream::iter(futs)
+        let results: Vec<Result<Vec<UpdateResult>, PinnerError>> = stream::iter(futs)
             .buffer_unordered(self.concurrency)
             .filter_map(|res| async {
                 match res {
@@ -75,7 +98,11 @@ impl Resolver {
             .collect()
             .await;
 
-        results.into_iter().collect()
+        let mut all_results = Vec::new();
+        for res in results {
+            all_results.extend(res?);
+        }
+        Ok(all_results)
     }
 
     async fn resolve_pin(
@@ -84,9 +111,9 @@ impl Resolver {
         registry: Arc<dyn RegistryProvider>,
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
         if let Some(ver) = &task.current_tag {
-            if task.action.0.starts_with("docker://") || task.key == "image" {
+            if task.action.is_docker() || task.key == "image" {
                 if !ver.starts_with("sha256:") {
-                    let image = task.action.0.trim_start_matches("docker://");
+                    let image = task.action.trim_docker_prefix();
                     let digest = registry.resolve_digest(image, ver).await?;
                     return Ok(Some((DependencyRef::from(digest), Some(ver.clone()))));
                 }
@@ -104,8 +131,8 @@ impl Resolver {
         registry: Arc<dyn RegistryProvider>,
         strategy: UpgradeStrategy,
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
-        if task.action.0.starts_with("docker://") || task.key == "image" {
-            let image = task.action.0.trim_start_matches("docker://");
+        if task.action.is_docker() || task.key == "image" {
+            let image = task.action.trim_docker_prefix();
             let tag = task.current_tag.as_deref().unwrap_or("latest");
             let digest = registry.resolve_digest(image, tag).await?;
             return Ok(Some((DependencyRef::from(digest), Some(tag.to_string()))));
@@ -193,6 +220,9 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             key: "uses".to_string(),
+            line: 1,
+            column: 1,
+            provider: crate::core::CiProvider::GitHub,
         };
 
         let res = Resolver::resolve_pin(&task, Arc::new(remote), Arc::new(registry))
@@ -226,6 +256,9 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             key: "uses".to_string(),
+            line: 1,
+            column: 1,
+            provider: crate::core::CiProvider::GitHub,
         };
 
         let res = Resolver::resolve_upgrade(
@@ -264,6 +297,9 @@ mod tests {
             current_tag: Some("v1.0.0".to_string()),
             comment: None,
             key: "uses".to_string(),
+            line: 1,
+            column: 1,
+            provider: crate::core::CiProvider::GitHub,
         };
 
         let res = Resolver::resolve_upgrade(
@@ -302,6 +338,9 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             key: "uses".to_string(),
+            line: 1,
+            column: 1,
+            provider: crate::core::CiProvider::GitHub,
         };
 
         let res = Resolver::resolve_upgrade(

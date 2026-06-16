@@ -90,3 +90,31 @@ impl Formatter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::OutputFormat;
+
+    #[test]
+    fn test_format_diff() {
+        let formatter = Formatter::new(OutputFormat::Text, false);
+        let old = "line1\nline2\n";
+        let new = "line1\nline3\n";
+        let diff = formatter.format_diff(old, new);
+        assert!(diff.contains("line2"));
+        assert!(diff.contains("line3"));
+    }
+
+    #[test]
+    fn test_format_inline_diff() {
+        let formatter = Formatter::new(OutputFormat::Text, false);
+        let old = "actions/checkout@v2";
+        let new = "actions/checkout@hash";
+        let diff = formatter.format_inline_diff(old, new);
+        assert!(diff.contains("-"));
+        assert!(diff.contains("+"));
+        assert!(diff.contains("v2"));
+        assert!(diff.contains("hash"));
+    }
+}
