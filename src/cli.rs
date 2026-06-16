@@ -8,16 +8,20 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Strategy for upgrading actions to newer versions.
+///
+/// It determines which tags are considered "newer" during an upgrade operation.
 #[derive(ValueEnum, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
     /// Upgrade to the latest available version (default).
     Latest,
     /// Upgrade only within the current major version (e.g., v1.x.x -> v1.y.y).
+    /// This follows semver and avoids breaking changes.
     Major,
     /// Upgrade only within the current minor version (e.g., v1.1.x -> v1.1.y).
+    /// This is the most conservative upgrade strategy.
     Minor,
-    /// Upgrade to the latest commit on the default branch.
+    /// Upgrade to the latest commit on the default branch (ignoring tags).
     Commit,
 }
 
@@ -25,12 +29,12 @@ pub enum UpgradeStrategy {
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
-    /// Standard text output (default).
+    /// Standard text output with colors and diffs (default).
     #[default]
     Text,
-    /// JSON format.
+    /// Machine-readable JSON format.
     Json,
-    /// Markdown table format.
+    /// Markdown table format suitable for PR comments.
     Markdown,
 }
 

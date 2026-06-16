@@ -6,14 +6,25 @@ use crate::resolver::registry::RegistryProvider;
 use futures::stream::{self, StreamExt};
 use std::sync::Arc;
 
+/// The `Resolver` is the high-level engine that maps `UpdateTask`s to `UpdateResult`s.
+///
+/// It orchestrates the network-intensive process of resolving symbolic tags to hashes,
+/// using a `RemoteProvider` for repository-based actions and a `RegistryProvider`
+/// for container images. It handles task grouping to minimize redundant requests
+/// and manages concurrency.
 pub struct Resolver {
+    /// The provider used to fetch data from remote CI platforms.
     pub remote: Arc<dyn RemoteProvider>,
+    /// The provider used to fetch digests from OCI registries.
     pub registry: Arc<dyn RegistryProvider>,
+    /// The strategy to use when upgrading (e.g., Latest, Major, Minor).
     pub upgrade_strategy: UpgradeStrategy,
+    /// Maximum number of concurrent network requests.
     pub concurrency: usize,
 }
 
 impl Resolver {
+    /// Creates a new `Resolver`.
     pub fn new(
         remote: Arc<dyn RemoteProvider>,
         registry: Arc<dyn RegistryProvider>,
@@ -28,12 +39,21 @@ impl Resolver {
         }
     }
 
+    /// Resolves a batch of tasks into results.
+    ///
+    /// This method:
+    /// 1. Groups tasks by action and tag to avoid fetching the same hash multiple times.
+    /// 2. Dispatches resolution tasks to an asynchronous stream.
+    /// 3. Processes tasks concurrently up to the `concurrency` limit.
+    /// 4. Filters out non-fatal errors (e.g., a single action failing to resolve)
+    ///    while propagating fatal errors (e.g., rate limits).
     pub async fn resolve_tasks(
         &self,
         tasks: Vec<UpdateTask>,
         is_pin: bool,
     ) -> Result<Vec<UpdateResult>, PinnerError> {
-        // Group tasks by (action, current_tag, key) to avoid redundant network requests
+        // Group tasks by (action, current_tag, key) to avoid redundant network requests.
+        // For example, if 'actions/checkout@v3' is used in 10 files, we only fetch its hash once.
         let mut groups: std::collections::HashMap<
             (String, Option<String>, String),
             Vec<UpdateTask>,
@@ -52,7 +72,7 @@ impl Resolver {
             let remote = self.remote.clone();
             let registry = self.registry.clone();
             let strategy = self.upgrade_strategy.clone();
-            // We only need to resolve the first task in the group
+            // We only need to resolve the first task in the group to get the new hash/tag.
             let sample_task = tasks[0].clone();
             async move {
                 let res = if is_pin {
@@ -82,6 +102,8 @@ impl Resolver {
             }
         });
 
+        // Use a futures stream to handle concurrency. `buffer_unordered` allows up to `self.concurrency`
+        // tasks to run in parallel, completing in any order.
         let results: Vec<Result<Vec<UpdateResult>, PinnerError>> = stream::iter(futs)
             .buffer_unordered(self.concurrency)
             .filter_map(|res| async {
@@ -90,6 +112,7 @@ impl Resolver {
                     Ok(None) => None,
                     Err(e) if e.is_fatal() => Some(Err(e)),
                     Err(e) => {
+                        // Non-fatal errors are reported as warnings and skipped.
                         eprintln!("Warning: Skipping action due to error: {}", e);
                         None
                     }
@@ -210,7 +233,7 @@ mod tests {
     use crate::core::{BranchName, DependencyName};
     use crate::resolver::provider::MockRemoteProvider;
     use crate::resolver::registry::MockRegistryProvider;
-    use mockall::predicate::*;
+    use mockall::predicate::{always, eq};
 
     #[tokio::test]
     async fn test_resolve_pin_action() {
@@ -410,5 +433,84 @@ mod tests {
             upgrade_res,
             Some((DependencyRef::Version("5.1.0".to_string()), None))
         );
+    }
+
+    #[tokio::test]
+    async fn test_resolver_concurrency_and_grouping() {
+        let mut remote = MockRemoteProvider::new();
+        // We expect only ONE call despite TWO tasks, due to grouping.
+        remote
+            .expect_get_commit_sha()
+            .times(1)
+            .returning(|_, _, _| Ok(DependencyRef::GitSha("hash".to_string())));
+
+        let resolver = Resolver::new(
+            Arc::new(remote),
+            Arc::new(MockRegistryProvider::new()),
+            UpgradeStrategy::Latest,
+            2,
+        );
+
+        let tasks = vec![
+            UpdateTask {
+                path: "f1.yml".into(),
+                action: "a/b".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            UpdateTask {
+                path: "f2.yml".into(),
+                action: "a/b".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let results = resolver.resolve_tasks(tasks, true).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].new_sha.to_string(), "hash");
+        assert_eq!(results[1].new_sha.to_string(), "hash");
+    }
+
+    #[tokio::test]
+    async fn test_resolver_partial_failure() {
+        let mut remote = MockRemoteProvider::new();
+        // One success, one non-fatal failure
+        remote
+            .expect_get_commit_sha()
+            .with(eq(DependencyName::from("success")), always(), always())
+            .returning(|_, _, _| Ok(DependencyRef::GitSha("ok".to_string())));
+        remote
+            .expect_get_commit_sha()
+            .with(eq(DependencyName::from("fail")), always(), always())
+            .returning(|_, _, _| Err(PinnerError::Api("non-fatal".into())));
+
+        let resolver = Resolver::new(
+            Arc::new(remote),
+            Arc::new(MockRegistryProvider::new()),
+            UpgradeStrategy::Latest,
+            2,
+        );
+
+        let tasks = vec![
+            UpdateTask {
+                action: "success".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            UpdateTask {
+                action: "fail".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let results = resolver.resolve_tasks(tasks, true).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "success");
     }
 }

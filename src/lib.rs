@@ -1,4 +1,10 @@
-// Public modules
+//! Pinner is a high-performance utility for securing CI/CD workflows by pinning
+//! mutable tags (like `@v1`) to immutable commit SHAs.
+//!
+//! It supports GitHub Actions, GitLab CI/CD, Bitbucket Pipelines, Forgejo,
+//! and OCI container registries. It uses a precise AST-based parser to
+//! ensure that YAML formatting and comments are preserved.
+
 pub mod cli;
 pub mod config;
 pub mod core;
@@ -18,6 +24,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// The central orchestration point for the Pinner pipeline.
+///
+/// It connects the three phases of execution:
+/// 1. **Scanner**: Find dependencies in the file system.
+/// 2. **Resolver**: Fetch immutable hashes from remote APIs.
+/// 3. **Patcher**: Apply changes to files on disk.
 pub struct Pipeline {
     pub scanner: Scanner,
     pub resolver: Resolver,
@@ -25,6 +37,7 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    /// Creates a new `Pipeline`.
     pub fn new(scanner: Scanner, resolver: Resolver, patcher: Patcher) -> Self {
         Self {
             scanner,
@@ -33,18 +46,25 @@ impl Pipeline {
         }
     }
 
+    /// Automatically pins all symbolic action tags and image tags to hashes.
     pub async fn pin(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let (tasks, file_contents) = self.scanner.collect_tasks(paths).await?;
         let results = self.resolver.resolve_tasks(tasks, true).await?;
         self.patcher.apply_changes(results, file_contents).await
     }
 
+    /// Upgrades dependencies to newer versions based on the configured strategy.
     pub async fn upgrade(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
         let (tasks, file_contents) = self.scanner.collect_tasks(paths).await?;
         let results = self.resolver.resolve_tasks(tasks, false).await?;
         self.patcher.apply_changes(results, file_contents).await
     }
 
+    /// Verifies that all dependencies in the provided paths are pinned to an immutable hash.
+    ///
+    /// It uses heuristics to detect pinned versions:
+    /// - 40-character hex string (Git SHA-1).
+    /// - `sha256:` prefix followed by 64 hex characters (Docker digest).
     pub async fn verify(
         &self,
         paths: &[PathBuf],
@@ -53,6 +73,11 @@ impl Pipeline {
         let mut unpinned = Vec::new();
 
         for task in tasks {
+            // Heuristic for "pinned":
+            // - 40 chars hex (Git SHA)
+            // - 71 chars starting with sha256: (Docker Digest)
+            // - CircleCI Orbs are special; we consider them pinned if they have any tag
+            //   (since they are strictly versioned on their registry).
             let is_pinned = if let Some(tag) = &task.current_tag {
                 (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
                     || (tag.starts_with("sha256:") && tag.len() == 71) // sha256: + 64 hex
@@ -103,6 +128,7 @@ impl Pipeline {
         Ok(result)
     }
 
+    /// Forcibly sets a specific action to a provided hash across all files.
     pub async fn set(
         &self,
         paths: &[PathBuf],

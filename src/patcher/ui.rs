@@ -3,21 +3,26 @@ use dialoguer::Confirm;
 use std::path::Path;
 
 /// Trait for user interactions during the patching process.
+///
+/// This abstraction allows for different interaction styles (e.g., interactive console,
+/// non-interactive CI, or automated testing).
 pub trait UserInterface: Send + Sync {
     /// Asks the user for confirmation before applying a patch to a file.
     fn confirm_patch(&self, path: &Path) -> bool;
     /// Reports success after updating a file.
     fn report_success(&self, path: &Path);
-    /// Reports that a file was skipped.
+    /// Reports that a file was skipped (user declined confirmation).
     fn report_skipped(&self, path: &Path);
 }
 
-/// A [`UserInterface`] implementation for the console.
+/// A [`UserInterface`] implementation for the console using `dialoguer`.
 pub struct ConsoleUi {
+    /// If true, automatically confirms all patches without prompting.
     pub yes: bool,
 }
 
 impl ConsoleUi {
+    /// Creates a new `ConsoleUi`.
     pub fn new(yes: bool) -> Self {
         Self { yes }
     }

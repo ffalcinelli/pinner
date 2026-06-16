@@ -6,51 +6,54 @@ pub enum PinnerError {
     /// IO-related errors (file reading, writing, etc.).
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    /// Errors returned by the GitHub API or HTTP client.
+    /// Errors returned by a remote provider API.
     #[error("API error: {0}")]
     Api(String),
-    /// Errors during YAML parsing (tree-sitter).
+    /// Errors during YAML parsing (using tree-sitter).
     #[error("Parse error: {0}")]
     Parse(String),
-    /// Specified workflow path not found.
+    /// Specified workflow path not found on the file system.
     #[error("Path not found: {0}")]
     PathNotFound(String),
-    /// Unpinned dependencies found during verification.
+    /// Unpinned dependencies found during a `verify` command.
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
     /// Errors from the `ignore` crate during directory walking.
     #[error("Ignore error: {0}")]
     Ignore(#[from] ignore::Error),
-    /// Config file errors
+    /// Configuration related errors (e.g., invalid CLI arguments or config file).
     #[error("Config error: {0}")]
     Config(String),
-    /// API rate limit errors
+    /// API rate limit errors (often includes a reset time).
     #[error("Rate limit error: {0}")]
     RateLimit(String),
-    /// Authentication errors (invalid tokens, etc.)
+    /// Authentication errors (invalid or missing tokens).
     #[error("Authentication error: {0}")]
     Authentication(String),
-    /// Unsupported operations
+    /// Operations that are not supported for a specific provider or dependency.
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
-    /// OCI Registry errors
+    /// Errors specific to OCI container registries.
     #[error("Registry error: {0}")]
     Registry(String),
-    /// HTTP errors from reqwest
+    /// Low-level HTTP errors from `reqwest`.
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
-    /// Errors from reqwest-middleware
+    /// Errors from the `reqwest-middleware` stack.
     #[error("Middleware error: {0}")]
     Middleware(#[from] reqwest_middleware::Error),
 }
 
 impl PinnerError {
-    /// Returns true if the error is a PathNotFound error.
+    /// Returns true if the error is a `PathNotFound` error.
     pub fn is_path_not_found(&self) -> bool {
         matches!(self, PinnerError::PathNotFound(_))
     }
 
     /// Returns true if the error should stop the entire process (e.g., rate limits).
+    ///
+    /// Some errors (like a 404 for a single repository) are considered non-fatal
+    /// during a batch operation, and the pipeline will continue with a warning.
     pub fn is_fatal(&self) -> bool {
         match self {
             PinnerError::RateLimit(_) => true,

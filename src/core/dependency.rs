@@ -2,16 +2,28 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Represents the CI/CD platform being used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Each provider has its own YAML syntax and API for resolving dependencies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CiProvider {
+    /// GitHub Actions (`uses`, `image`).
     GitHub,
+    /// GitLab CI/CD (`include`, `image`, `ref`).
     GitLab,
+    /// Bitbucket Pipelines (`pipe`, `image`).
     Bitbucket,
+    /// CircleCI (`orbs`, `image`).
     CircleCI,
+    /// Forgejo/Gitea Actions (`uses`, `image`).
     Forgejo,
+    /// Gitea (similar to GitHub/Forgejo).
     Gitea,
+    /// Azure DevOps Pipelines (`task`, `template`, `image`).
     AzureDevOps,
+    /// AWS CodeBuild (`image`).
     AwsCodeBuild,
+    /// Fallback for unknown or generic YAML files.
+    #[default]
     Unknown,
 }
 
@@ -26,7 +38,7 @@ pub enum CiProvider {
 /// let name = DependencyName::from("actions/checkout");
 /// assert_eq!(name.to_string(), "actions/checkout");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct DependencyName(pub String);
 
 impl DependencyName {
@@ -61,7 +73,7 @@ impl From<&str> for DependencyName {
 
 /// Represents an immutable dependency reference.
 ///
-/// Supports Git SHA-1 hashes and OCI/Docker container digests.
+/// Supports Git SHA-1 hashes, OCI/Docker container digests, and immutable versions.
 ///
 /// # Examples
 /// ```
@@ -140,8 +152,13 @@ mod tests {
     fn test_dependency_ref_parsing() {
         let git_ref = DependencyRef::from("a1b2c3d4".to_string());
         assert!(matches!(git_ref, DependencyRef::GitSha(_)));
+        assert_eq!(format!("{}", git_ref), "a1b2c3d4");
 
         let docker_ref = DependencyRef::from("sha256:abcdef".to_string());
         assert!(matches!(docker_ref, DependencyRef::DockerDigest(_)));
+        assert_eq!(format!("{}", docker_ref), "sha256:abcdef");
+
+        let ver_ref = DependencyRef::Version("1.2.3".to_string());
+        assert_eq!(format!("{}", ver_ref), "1.2.3");
     }
 }

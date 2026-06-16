@@ -6,6 +6,9 @@ use std::sync::LazyLock;
 use tree_sitter::{Node, Point, Query, QueryCursor, StreamingIterator};
 
 impl CiProvider {
+    /// Detects the CI provider based on the file path.
+    ///
+    /// This heuristic matches standard CI/CD directory structures (e.g., `.github/workflows`).
     pub fn from_path(path: &Path) -> Self {
         let path_str = path.to_string_lossy();
         let mappings = [
@@ -27,6 +30,9 @@ impl CiProvider {
         CiProvider::Unknown
     }
 
+    /// Returns true if the given YAML key represents a dependency for this provider.
+    ///
+    /// For example, GitHub Actions uses the `uses` key, while Bitbucket Pipelines uses `pipe`.
     pub fn supports_key(&self, key: &str) -> bool {
         match self {
             CiProvider::GitHub | CiProvider::Forgejo | CiProvider::Gitea => {
@@ -43,10 +49,16 @@ impl CiProvider {
     }
 }
 
+/// Tree-sitter query to identify potential dependency nodes in YAML.
+///
+/// It targets common keys like `uses`, `image`, `pipe`, etc., and also captures
+/// the specific structure of CircleCI Orbs. Comments are captured separately
+/// to associate them with the preceding value if they appear on the same line.
 static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
     Query::new(
         &tree_sitter_yaml::LANGUAGE.into(),
         r#"
+        ; Capture standard key-value pairs where the key matches our known dependency triggers.
         (block_mapping_pair
           key: [
             (flow_node (plain_scalar (string_scalar) @key))
@@ -54,6 +66,8 @@ static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
           ]
           value: (_) @value
           (#match? @key "^(uses|pipe|image|include|ref|task|template)$"))
+
+        ; Capture CircleCI Orbs which have a nested structure: orbs -> name -> value.
         (block_mapping_pair
           key: [
             (flow_node (plain_scalar (string_scalar) @key))
@@ -71,12 +85,15 @@ static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
             )
           )
         )
+
+        ; Capture comments to associate them with the value node above them.
         (comment) @comment
         "#,
     )
     .map_err(|e| format!("Failed to create tree-sitter query: {:?}", e))
 });
 
+/// Removes surrounding quotes from a string.
 fn unquote(s: &str) -> String {
     let s = s.trim();
     if ((s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')))
@@ -87,6 +104,10 @@ fn unquote(s: &str) -> String {
     s.to_string()
 }
 
+/// Resolves the GitLab project name for an `include` entry.
+///
+/// In GitLab CI, an `include` can specify a `project` and a `ref`.
+/// This function walks the AST to find the sibling `project` key for a given `ref` value.
 fn resolve_gitlab_project(v_node: Node, content: &[u8]) -> Option<String> {
     let parent_pair = v_node.parent()?;
     let mapping = parent_pair.parent()?;
@@ -105,6 +126,11 @@ fn resolve_gitlab_project(v_node: Node, content: &[u8]) -> Option<String> {
     None
 }
 
+/// Identifies all dependency update tasks within a YAML AST node.
+///
+/// This function uses tree-sitter queries to find relevant keys (like `uses`, `image`, `orbs`)
+/// and maps them to `UpdateTask` domain models. It handles provider-specific logic
+/// and associates end-of-line comments with their respective values.
 pub fn find_tasks(
     path: &Path,
     node: Node,
@@ -133,6 +159,10 @@ pub fn find_tasks(
         provider,
         ignore_list,
     };
+
+    // We keep track of the last value found to associate it with a potential comment
+    // on the same line. Because tree-sitter queries can return captures in sequence,
+    // we "buffer" the value until we see if a comment follows it on the same line.
     let mut last_value: Option<(usize, usize, String, Point, String)> = None;
 
     while let Some(m) = matches.next() {
@@ -145,6 +175,8 @@ pub fn find_tasks(
                     continue;
                 }
 
+                // If we had a buffered value from a previous match that didn't have a same-line comment,
+                // push it now.
                 if let Some((start, end, value, pos, key)) = last_value.take() {
                     if let Some(task) = create_task(
                         ctx,
@@ -165,6 +197,7 @@ pub fn find_tasks(
                 let v_node = cap.node;
                 let mut val = unquote(v_node.utf8_text(content).unwrap_or(""));
 
+                // GitLab special case: combine 'project' and 'ref' into a single virtual dependency.
                 if current_key == "ref" {
                     if let Some(project) = resolve_gitlab_project(v_node, content) {
                         val = format!("{}@{}", project, val);
@@ -181,6 +214,7 @@ pub fn find_tasks(
             } else if Some(cap.index) == comment_idx {
                 if let Some((start, end, value, pos, key)) = last_value.take() {
                     let comment_node = cap.node;
+                    // Check if the comment is on the same line as the buffered value.
                     if comment_node.start_position().row == pos.row {
                         let comment_text =
                             comment_node.utf8_text(content).unwrap_or("").to_string();
@@ -199,6 +233,7 @@ pub fn find_tasks(
                             results.push(task);
                         }
                     } else {
+                        // The comment is on a different line, so the buffered value has no comment.
                         if let Some(task) = create_task(
                             ctx,
                             Position {
@@ -555,5 +590,73 @@ image: aws/codebuild/standard:5.0
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action.0, "aws/codebuild/standard");
         assert_eq!(results[0].current_tag.as_deref(), Some("5.0"));
+    }
+
+    #[test]
+    fn test_find_tasks_multi_document() {
+        let yaml = r#"
+uses: actions/checkout@v1
+---
+uses: actions/setup-node@v2
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].action.0, "actions/checkout");
+        assert_eq!(results[1].action.0, "actions/setup-node");
+    }
+
+    #[test]
+    fn test_find_tasks_malformed_yaml() {
+        // Tree-sitter is resilient and should still find the dependency in partial/broken YAML
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v3
+    invalid_yaml_here: [
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "actions/checkout");
+    }
+
+    #[test]
+    fn test_find_tasks_empty_yaml() {
+        let yaml = "";
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_tasks_complex_nesting() {
+        let yaml = r#"
+jobs:
+  build:
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Nested
+        run: |
+          echo "hello"
+        env:
+          IMAGE: "not-a-dependency"
+      - image: redis:6.0 # This is a dependency
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.action.0 == "actions/checkout"));
+        assert!(results.iter().any(|r| r.action.0 == "redis"));
     }
 }

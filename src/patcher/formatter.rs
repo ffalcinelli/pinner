@@ -4,21 +4,33 @@ use colored::Colorize;
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
 
+/// Represents the summary of updates in JSON format.
 #[derive(Serialize)]
 pub struct JsonOutput {
+    /// List of all successful updates.
     pub updates: Vec<UpdateResult>,
 }
 
+/// The `Formatter` is responsible for generating human-readable and machine-readable output.
+///
+/// It handles:
+/// - Line-by-line diffs (using `similar`).
+/// - Inline (word-level) diffs for more surgical feedback.
+/// - JSON and Markdown summary reports.
 pub struct Formatter {
+    /// The desired output format (Text, JSON, Markdown).
     pub format: OutputFormat,
+    /// If true, suppresses most console output.
     pub quiet: bool,
 }
 
 impl Formatter {
+    /// Creates a new `Formatter`.
     pub fn new(format: OutputFormat, quiet: bool) -> Self {
         Self { format, quiet }
     }
 
+    /// Generates a standard line-based diff between two strings.
     pub fn format_diff(&self, old: &str, new: &str) -> String {
         let mut out = String::new();
         let diff = TextDiff::from_lines(old, new);
@@ -33,12 +45,17 @@ impl Formatter {
         out
     }
 
+    /// Generates a word-level inline diff for a single change.
+    ///
+    /// This is particularly useful for showing exactly which part of a URI or hash changed.
     pub fn format_inline_diff(&self, old: &str, new: &str) -> String {
         let mut out = String::new();
         let old_trimmed = old.trim();
         let new_trimmed = new.trim();
+        // Use word-level diffing for high granularity.
         let diff = TextDiff::from_words(old_trimmed, new_trimmed);
 
+        // First line: removals
         out.push_str(&format!("  {} ", "-".red()));
         for change in diff.iter_all_changes() {
             match change.tag() {
@@ -49,6 +66,7 @@ impl Formatter {
         }
         out.push('\n');
 
+        // Second line: additions
         out.push_str(&format!("  {} ", "+".green()));
         for change in diff.iter_all_changes() {
             match change.tag() {
@@ -61,6 +79,7 @@ impl Formatter {
         out
     }
 
+    /// Prints a summary of all updates in the configured format.
     pub fn print_results(&self, results: &[UpdateResult]) {
         match self.format {
             OutputFormat::Json => {

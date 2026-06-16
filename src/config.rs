@@ -61,6 +61,12 @@ pub struct Config {
 
 impl Config {
     /// Loads configuration from default locations and environment variables.
+    ///
+    /// Precedence (from lowest to highest):
+    /// 1. Default values.
+    /// 2. `.pinner.toml`
+    /// 3. `.pinner.yaml` or `.pinner.yml`
+    /// 4. Environment variables prefixed with `PINNER_` (e.g., `PINNER_YES=true`).
     pub fn load() -> Self {
         Figment::new()
             .merge(Toml::file(".pinner.toml"))
@@ -72,13 +78,18 @@ impl Config {
     }
 
     /// Merges this configuration with CLI arguments, with CLI taking precedence.
+    ///
+    /// This method ensures that explicitly provided CLI flags always override
+    /// settings from configuration files or environment variables.
     pub fn merge_with_cli(self, mut cli: Cli) -> Cli {
+        // Workflow paths: CLI > Config
         if cli.workflows.is_empty() {
             if let Some(workflows) = self.workflows {
                 cli.workflows = workflows;
             }
         }
 
+        // Boolean flags: CLI (if true) > Config
         if !cli.yes {
             if let Some(yes) = self.yes {
                 cli.yes = yes;
@@ -103,6 +114,7 @@ impl Config {
             }
         }
 
+        // API Tokens: CLI > Config
         if cli.github_token.is_none() {
             cli.github_token = self.github_token;
         }
@@ -123,7 +135,8 @@ impl Config {
             cli.circleci_token = self.circleci_token;
         }
 
-        // Only override if CLI has the default value
+        // API Base URLs: CLI (if non-default) > Config
+        // We only override if the CLI still has the default public API values.
         if cli.github_url == "https://api.github.com" {
             if let Some(url) = self.github_url {
                 cli.github_url = url;
@@ -154,18 +167,21 @@ impl Config {
             }
         }
 
+        // Output format: CLI > Config
         if cli.format == OutputFormat::Text && !cli.json {
             if let Some(format) = self.format {
                 cli.format = format;
             }
         }
 
+        // Upgrade strategy: CLI > Config
         if cli.upgrade_strategy == UpgradeStrategy::Latest {
             if let Some(strategy) = self.upgrade_strategy {
                 cli.upgrade_strategy = strategy;
             }
         }
 
+        // Concurrency & Ignore: CLI > Config
         if cli.concurrency.is_none() {
             cli.concurrency = self.concurrency;
         }
@@ -176,6 +192,7 @@ impl Config {
             }
         }
 
+        // OCI Auth: CLI > Config
         if cli.oci_username.is_none() {
             cli.oci_username = self.oci_username;
         }
