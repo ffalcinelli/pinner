@@ -4,9 +4,11 @@
 `pinner` is a high-performance Rust CLI utility designed to hash-pin actions and Docker images in CI/CD workflow files. It automates the security best practice of replacing mutable tags (like `@v1` or `:latest`) with immutable commit SHA-1 hashes or digest hashes to prevent supply chain attacks. It supports multiple platforms including GitHub, GitLab, Bitbucket, Forgejo, and OCI registries.
 
 - **Status**: Production-ready core with comprehensive tests and multi-platform support.
-- **Architecture**: Separated into a testable library (`src/lib.rs`) and a thin CLI wrapper (`src/main.rs`).
-- **Parsing Strategy**: Uses `tree-sitter-yaml` for AST-based surgical replacement to ensure 100% preservation of YAML comments, indentation, and formatting while robustly identifying action/image references.
-- **Dependency Injection**: Uses the `GithubProvider` (and other forge traits) via a `UnifiedProvider` to allow full offline testing via mocks.
+- **Architecture**: A strict Domain-Driven Pipeline separated into three phases:
+  1. **Scanner**: Traverses files concurrently and uses `tree-sitter-yaml` for AST-based parsing, returning pure `UpdateTask` domain models.
+  2. **Resolver**: Maps tasks to immutable hashes concurrently using `Reqwest`-based specialized clients (`github`, `gitlab`, `registry`, etc.) governed by a `UnifiedProvider`.
+  3. **Patcher**: Surgically applies string mutations to preserve exact formatting and YAML comments, then handles file writing and diff formatting.
+- **Dependency Injection**: Network clients and registries are heavily trait-based (`RemoteProvider`, `RegistryProvider`) allowing for 100% offline unit testing via `mockall`.
 
 ## Technology Stack
 - **Language**: Rust (2021 Edition)
@@ -36,6 +38,7 @@
 - `pin`: Automatically converts all action tags and container images to hashes.
 - `upgrade`: Upgrades actions to newer versions based on the selected strategy (latest, major, minor, or commit).
 - `verify`: Checks if all actions/images are pinned to hashes.
+- `install-hook`: Installs a git pre-commit hook that runs `verify`.
 - `set <action> <hash>`: Forcibly updates a specific action across all workflows to a provided SHA.
 - `generate-completion`: Generates shell completions for bash, zsh, fish, etc.
 

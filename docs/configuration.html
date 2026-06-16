@@ -170,7 +170,8 @@
             
             <p class="text-gray-400 mb-8">Pinner automatically reads these variables for authentication and configuration.</p>
 
-            <div class="overflow-x-auto rounded-xl border border-gray-800 card">
+            <h3 class="text-lg font-bold text-white mb-4">Authentication & APIs</h3>
+            <div class="overflow-x-auto rounded-xl border border-gray-800 card mb-12">
                 <table class="min-w-full text-left text-sm">
                     <thead class="bg-gray-800/50 text-white border-b border-gray-800">
                         <tr>
@@ -218,6 +219,33 @@
                     </tbody>
                 </table>
             </div>
+
+            <h3 class="text-lg font-bold text-white mb-4">Configuration Overrides</h3>
+            <p class="text-gray-400 mb-6">Any setting from <code>.pinner.toml</code> can be overridden using an environment variable with the <code>PINNER_</code> prefix.</p>
+            <div class="overflow-x-auto rounded-xl border border-gray-800 card">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="bg-gray-800/50 text-white border-b border-gray-800">
+                        <tr>
+                            <th class="px-6 py-4 font-bold">Variable</th>
+                            <th class="px-6 py-4 font-bold">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800 text-gray-400">
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>PINNER_CONCURRENCY</code></td>
+                            <td class="px-6 py-4">Override the number of concurrent API requests.</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>PINNER_IGNORE</code></td>
+                            <td class="px-6 py-4">Override the list of ignored actions (comma-separated).</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>PINNER_GITHUB_URL</code></td>
+                            <td class="px-6 py-4">Override the GitHub API URL.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <!-- Configuration File -->
@@ -237,14 +265,10 @@ ignore = ["actions/checkout", "my-org/private-repo"]
 
 # Execution settings
 concurrency = 5
-format = "text"
 
 # API URL overrides (for Enterprise)
 github_url = "https://github.mycompany.com/api/v3"
-gitlab_url = "https://gitlab.mycompany.com/api/v4"
-
-# Upgrade strategy
-upgrade_strategy = "major"</code></pre>
+gitlab_url = "https://gitlab.mycompany.com/api/v4"</code></pre>
             </div>
         </div>
 

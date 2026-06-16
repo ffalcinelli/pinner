@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6] - 2026-06-16
+
+### Added
+- Git pre-commit hook installation via `pinner install-hook`.
+
+### Changed
+- ⚡ **Performance**: 30x speedup in YAML parsing by caching `TSParser` in thread-local storage.
+- ⚡ **Performance**: Optimized concurrent execution by wrapping Rayon calls in `tokio::task::spawn_blocking`.
+- Improved error handling for `ReqwestGithubProvider` and better retry policies.
+- Enhanced GitLab project resolution and added exhaustive unit tests.
+
+### Fixed
+- Fixed a panic during reqwest client initialization on some platforms.
+- Fixed git hook installation when `.git/hooks` directory is missing.
+
 ## [0.0.5] - 2026-06-13
 
 ### Changed

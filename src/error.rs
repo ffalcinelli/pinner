@@ -27,6 +27,18 @@ pub enum PinnerError {
     /// API rate limit errors
     #[error("Rate limit error: {0}")]
     RateLimit(String),
+    /// Authentication errors (invalid tokens, etc.)
+    #[error("Authentication error: {0}")]
+    Authentication(String),
+    /// OCI Registry errors
+    #[error("Registry error: {0}")]
+    Registry(String),
+    /// HTTP errors from reqwest
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+    /// Errors from reqwest-middleware
+    #[error("Middleware error: {0}")]
+    Middleware(#[from] reqwest_middleware::Error),
 }
 
 impl PinnerError {
@@ -39,14 +51,18 @@ impl PinnerError {
     pub fn is_fatal(&self) -> bool {
         match self {
             PinnerError::RateLimit(_) => true,
+            PinnerError::Authentication(_) => true,
             PinnerError::Config(_) => true,
             PinnerError::Io(_) => true,
             PinnerError::Parse(_) => true,
             PinnerError::PathNotFound(_) => true,
             PinnerError::VerificationFailed(_) => true,
             PinnerError::Ignore(_) => true,
-            // Generic API errors (like 404) are not fatal for the whole process
+            // Generic API errors (like 404) or Registry errors for a single image are not fatal
             PinnerError::Api(_) => false,
+            PinnerError::Registry(_) => false,
+            PinnerError::Http(_) => false,
+            PinnerError::Middleware(_) => false,
         }
     }
 }
