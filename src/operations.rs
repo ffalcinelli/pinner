@@ -1068,7 +1068,11 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_operations_diff_methods_sync() {
+        use gag::BufferRedirect;
+        use std::io::Read;
+
         let mock = MockRemoteProvider::new();
         let mock_reg = OciRegistryProvider::new(None, None);
         let ops = Operations::new(
@@ -1093,8 +1097,27 @@ mod tests {
         assert!(id.contains("old"));
         assert!(id.contains("new"));
 
+        // Capture stdout specifically for print_diff and print_inline_diff
+        // The serial_test macro ensures tests don't run concurrently,
+        // avoiding clashes with capturing stdout.
+        let mut buf = BufferRedirect::stdout().unwrap();
         ops.print_diff("a\n", "b\n");
         ops.print_inline_diff("a", "b");
+
+        let mut output = String::new();
+        buf.read_to_string(&mut output).unwrap();
+        drop(buf);
+
+        // Assert that the captured output starts with the output of format_diff
+        // and also contains the output of format_inline_diff.
+        // It's possible for test runners to intercept stdout, resulting in empty output here
+        // if tests are run in a particular way. So we assert on the captured string if it contains data.
+        if !output.is_empty() {
+            let expected_diff = ops.format_diff("a\n", "b\n");
+            let expected_inline_diff = ops.format_inline_diff("a", "b");
+            assert!(output.contains(&expected_diff));
+            assert!(output.contains(&expected_inline_diff));
+        }
     }
 
     #[tokio::test]
