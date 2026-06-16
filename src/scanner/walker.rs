@@ -11,7 +11,7 @@ use tree_sitter::Parser as TSParser;
 thread_local! {
     static PARSER: std::cell::RefCell<TSParser> = std::cell::RefCell::new({
         let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).expect("Failed to load YAML grammar");
+        parser.set_language(&tree_sitter_yaml::LANGUAGE.into()).expect("Failed to load YAML grammar");
         parser
     });
 }
