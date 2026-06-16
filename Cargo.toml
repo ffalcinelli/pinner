@@ -55,6 +55,7 @@ criterion = "0.8.2"
 serial_test = "3.5.0"
 assert_cmd = "2.0"
 predicates = "3.1"
+gag = "1.0.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
