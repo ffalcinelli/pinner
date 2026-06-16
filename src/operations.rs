@@ -14,7 +14,7 @@ use figment::{
     Figment,
 };
 use futures::stream::{self, StreamExt};
-use ignore::WalkBuilder;
+
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -312,21 +312,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     }
 
     pub async fn verify(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
-        let mut all_paths = Vec::new();
-
-        for path in paths {
-            if !path.exists() {
-                continue;
-            }
-
-            for entry in WalkBuilder::new(path).build() {
-                let entry = entry?;
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    all_paths.push(path.to_path_buf());
-                }
-            }
-        }
+        let all_paths = collect_yaml_files(paths, false)?;
 
         let ignore_list = self.config.ignore.clone();
 
@@ -337,53 +323,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 .map(|path| {
                     let content = fs::read_to_string(&path)?;
 
-                    let tree = PARSER
-                        .with(|parser| {
-                            let mut parser = parser.borrow_mut();
-                            parser.reset();
-                            parser.parse(&content, None)
-                        })
-                        .ok_or_else(|| {
-                            PinnerError::Parse(format!("Failed to parse {}", path.display()))
-                        })?;
-
-                    let provider = CiProvider::from_path(&path);
-                    let uses_nodes =
-                        find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
-
-                    let mut local_unpinned = Vec::new();
-                    for node in uses_nodes {
-                        if node.key == "include" || node.key == "project" {
-                            continue;
-                        }
-                        if node.value.starts_with("./") {
-                            continue;
-                        }
-
-                        let (action_part, tag) =
-                            node.value.split_once('@').unwrap_or((&node.value, ""));
-                        let action = DependencyName::from(action_part);
-
-                        if ignore_list.iter().any(|pattern| action.0.contains(pattern)) {
-                            continue;
-                        }
-
-                        let is_pinned = if tag.is_empty() {
-                            false
-                        } else {
-                            (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                                || (node.value.contains("@sha256:")
-                                    && node
-                                        .value
-                                        .split_once("@sha256:")
-                                        .is_some_and(|(_, s)| s.len() == 64))
-                        };
-
-                        if !is_pinned {
-                            local_unpinned.push((path.clone(), node.value));
-                        }
-                    }
-                    Ok(local_unpinned)
+                    find_unpinned_in_file(&path, &content, &ignore_list)
                 })
                 .collect::<Result<Vec<Vec<(PathBuf, String)>>, PinnerError>>()?
                 .into_iter()
@@ -423,21 +363,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
         &self,
         paths: &[PathBuf],
     ) -> Result<(Vec<UpdateTask>, std::collections::HashMap<PathBuf, String>), PinnerError> {
-        let mut all_paths = Vec::new();
-
-        for path in paths {
-            if !path.exists() {
-                return Err(PinnerError::PathNotFound(path.display().to_string()));
-            }
-
-            for entry in WalkBuilder::new(path).build() {
-                let entry = entry?;
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    all_paths.push(path.to_path_buf());
-                }
-            }
-        }
+        let all_paths = collect_yaml_files(paths, true)?;
 
         let ignore_list = self.config.ignore.clone();
 
@@ -877,6 +803,84 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
     pub fn print_inline_diff(&self, old: &str, new: &str) {
         print!("{}", self.format_inline_diff(old, new));
     }
+}
+
+fn collect_yaml_files(
+    paths: &[PathBuf],
+    fail_on_missing: bool,
+) -> Result<Vec<PathBuf>, PinnerError> {
+    let mut all_paths = Vec::new();
+
+    for path in paths {
+        if !path.exists() {
+            if fail_on_missing {
+                return Err(PinnerError::PathNotFound(path.display().to_string()));
+            } else {
+                continue;
+            }
+        }
+
+        for entry in ignore::WalkBuilder::new(path).build() {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
+                all_paths.push(path.to_path_buf());
+            }
+        }
+    }
+
+    Ok(all_paths)
+}
+
+fn is_action_pinned(tag: &str, node_value: &str) -> bool {
+    if tag.is_empty() {
+        false
+    } else {
+        (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
+            || (node_value.contains("@sha256:")
+                && node_value
+                    .split_once("@sha256:")
+                    .is_some_and(|(_, s)| s.len() == 64))
+    }
+}
+
+fn find_unpinned_in_file(
+    path: &Path,
+    content: &str,
+    ignore_list: &[String],
+) -> Result<Vec<(PathBuf, String)>, PinnerError> {
+    let tree = PARSER
+        .with(|parser| {
+            let mut parser = parser.borrow_mut();
+            parser.reset();
+            parser.parse(content, None)
+        })
+        .ok_or_else(|| PinnerError::Parse(format!("Failed to parse {}", path.display())))?;
+
+    let provider = CiProvider::from_path(path);
+    let uses_nodes = find_uses_nodes(tree.root_node(), content.as_bytes(), provider)?;
+
+    let mut local_unpinned = Vec::new();
+    for node in uses_nodes {
+        if node.key == "include" || node.key == "project" {
+            continue;
+        }
+        if node.value.starts_with("./") {
+            continue;
+        }
+
+        let (action_part, tag) = node.value.split_once('@').unwrap_or((&node.value, ""));
+        let action = DependencyName::from(action_part);
+
+        if ignore_list.iter().any(|pattern| action.0.contains(pattern)) {
+            continue;
+        }
+
+        if !is_action_pinned(tag, &node.value) {
+            local_unpinned.push((path.to_path_buf(), node.value));
+        }
+    }
+    Ok(local_unpinned)
 }
 
 #[cfg(test)]
