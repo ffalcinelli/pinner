@@ -4,7 +4,7 @@
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use pinner::{run, Cli, OciRegistryProvider};
+use pinner::{resolver::OciRegistryProvider, run, Cli};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -53,7 +53,7 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         .ok();
 
     let provider =
-        pinner::providers::UnifiedProvider::new(pinner::providers::UnifiedProviderConfig {
+        pinner::resolver::UnifiedProvider::new(pinner::resolver::UnifiedProviderConfig {
             github_url: cli.github_url.clone(),
             github_token: cli.github_token.clone(),
             bitbucket_url: cli.bitbucket_url.clone(),

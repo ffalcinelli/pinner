@@ -19,6 +19,7 @@ Hash-pinning ensures that you run the **exact** code you've audited, every singl
 
 ## Features ✨
 
+- **Domain-Driven Pipeline**: Built on a strict Scanner -> Resolver -> Patcher architecture, ensuring high testability, concurrency, and safe mutations.
 - **Surgical Replacement**: Uses `tree-sitter` for precise YAML parsing, preserving comments, indentation, and formatting perfectly.
 - **Multi-Forge Support**: Works with GitHub, GitLab, Bitbucket, and Forgejo/Gitea.
 - **Tag Preservation**: Automatically appends the original tag as a comment (e.g., `@<hash> # v2`).

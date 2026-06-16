@@ -1,7 +1,7 @@
 use clap::Parser;
 use mockito::Server;
-use pinner::providers::{UnifiedProvider, UnifiedProviderConfig};
-use pinner::{run, Cli, OciRegistryProvider};
+use pinner::resolver::{OciRegistryProvider, UnifiedProvider, UnifiedProviderConfig};
+use pinner::{run, Cli};
 use std::fs;
 use tempfile::tempdir;
 
