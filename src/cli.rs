@@ -80,7 +80,7 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        env = "GITHUB_URL",
+        env = "PINNER_GITHUB_URL",
         default_value = "https://api.github.com"
     )]
     pub github_url: String,
@@ -88,7 +88,7 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        env = "BITBUCKET_URL",
+        env = "PINNER_BITBUCKET_URL",
         default_value = "https://api.bitbucket.org/2.0"
     )]
     pub bitbucket_url: String,
@@ -96,7 +96,7 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        env = "GITLAB_URL",
+        env = "PINNER_GITLAB_URL",
         default_value = "https://gitlab.com"
     )]
     pub gitlab_url: String,
@@ -104,24 +104,29 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        env = "FORGEJO_URL",
+        env = "PINNER_FORGEJO_URL",
         default_value = "https://codeberg.org"
     )]
     pub forgejo_url: String,
     /// Strategy to use when upgrading actions.
-    #[arg(long, global = true, default_value = "latest")]
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_UPGRADE_STRATEGY",
+        default_value = "latest"
+    )]
     pub upgrade_strategy: UpgradeStrategy,
     /// Number of concurrent API requests to make.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, env = "PINNER_CONCURRENCY")]
     pub concurrency: Option<usize>,
     /// Actions or images to ignore (e.g., "actions/checkout").
-    #[arg(long, global = true)]
+    #[arg(long, global = true, env = "PINNER_IGNORE", value_delimiter = ',')]
     pub ignore: Vec<String>,
     /// Username for OCI registry authentication.
-    #[arg(long, global = true, env = "OCI_USERNAME")]
+    #[arg(long, global = true, env = "PINNER_OCI_USERNAME")]
     pub oci_username: Option<String>,
     /// Password for OCI registry authentication.
-    #[arg(long, global = true, env = "OCI_PASSWORD")]
+    #[arg(long, global = true, env = "PINNER_OCI_PASSWORD")]
     pub oci_password: Option<String>,
 }
 
