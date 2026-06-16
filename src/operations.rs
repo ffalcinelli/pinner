@@ -268,34 +268,7 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
                 } else {
                     let tags = github.list_tags(&a, &k).await?;
                     let current_tag = current_tag.as_deref().unwrap_or("");
-                    let current_version =
-                        semver::Version::parse(current_tag.trim_start_matches('v')).ok();
-
-                    let mut filtered_tags: Vec<_> = tags
-                        .into_iter()
-                        .filter_map(|t| {
-                            semver::Version::parse(t.trim_start_matches('v'))
-                                .ok()
-                                .map(|v| (t, v))
-                        })
-                        .collect();
-
-                    filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
-
-                    if let Some(cv) = current_version {
-                        filtered_tags
-                            .into_iter()
-                            .find(|(_, v)| match strategy {
-                                UpgradeStrategy::Major => v.major == cv.major && v > &cv,
-                                UpgradeStrategy::Minor => {
-                                    v.major == cv.major && v.minor == cv.minor && v > &cv
-                                }
-                                _ => false,
-                            })
-                            .map(|(t, _)| t)
-                    } else {
-                        None
-                    }
+                    Self::resolve_latest_tag_by_strategy(tags, current_tag, &strategy)
                 };
 
                 if let Some(tag) = latest_tag {
@@ -309,6 +282,38 @@ impl<G: RemoteProvider + 'static, R: RegistryProvider + 'static> Operations<G, R
             }
         })
         .await
+    }
+
+    fn resolve_latest_tag_by_strategy(
+        tags: Vec<String>,
+        current_tag: &str,
+        strategy: &UpgradeStrategy,
+    ) -> Option<String> {
+        let current_version = semver::Version::parse(current_tag.trim_start_matches('v')).ok();
+
+        let mut filtered_tags: Vec<_> = tags
+            .into_iter()
+            .filter_map(|t| {
+                semver::Version::parse(t.trim_start_matches('v'))
+                    .ok()
+                    .map(|v| (t, v))
+            })
+            .collect();
+
+        filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
+
+        if let Some(cv) = current_version {
+            filtered_tags
+                .into_iter()
+                .find(|(_, v)| match strategy {
+                    UpgradeStrategy::Major => v.major == cv.major && v > &cv,
+                    UpgradeStrategy::Minor => v.major == cv.major && v.minor == cv.minor && v > &cv,
+                    _ => false,
+                })
+                .map(|(t, _)| t)
+        } else {
+            None
+        }
     }
 
     pub async fn verify(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
