@@ -173,3 +173,136 @@ impl Config {
         cli
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Commands;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_merge_with_cli_defaults() {
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![],
+            yes: false,
+            quiet: false,
+            verbose: false,
+            dry_run: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            format: OutputFormat::Text,
+            json: false,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            ignore: vec![],
+            oci_username: None,
+            oci_password: None,
+        };
+
+        let merged = config.merge_with_cli(cli);
+        assert_eq!(merged.github_url, "https://api.github.com");
+        assert_eq!(merged.upgrade_strategy, UpgradeStrategy::Latest);
+    }
+
+    #[test]
+    fn test_merge_with_cli_overrides() {
+        let config = Config {
+            workflows: Some(vec![PathBuf::from("config_wf")]),
+            yes: Some(true),
+            quiet: Some(true),
+            verbose: Some(true),
+            dry_run: Some(true),
+            github_token: Some("config_token".into()),
+            github_url: Some("https://config.github.com".into()),
+            upgrade_strategy: Some(UpgradeStrategy::Major),
+            concurrency: Some(10),
+            ignore: Some(vec!["ignore1".into()]),
+            ..Default::default()
+        };
+
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![],
+            yes: false,
+            quiet: false,
+            verbose: false,
+            dry_run: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            format: OutputFormat::Text,
+            json: false,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            ignore: vec![],
+            oci_username: None,
+            oci_password: None,
+        };
+
+        let merged = config.merge_with_cli(cli);
+        assert_eq!(merged.workflows, vec![PathBuf::from("config_wf")]);
+        assert!(merged.yes);
+        assert!(merged.quiet);
+        assert!(merged.verbose);
+        assert!(merged.dry_run);
+        assert_eq!(merged.github_token, Some("config_token".into()));
+        assert_eq!(merged.github_url, "https://config.github.com");
+        assert_eq!(merged.upgrade_strategy, UpgradeStrategy::Major);
+        assert_eq!(merged.concurrency, Some(10));
+        assert_eq!(merged.ignore, vec!["ignore1".to_string()]);
+    }
+
+    #[test]
+    fn test_cli_precedence() {
+        let config = Config {
+            workflows: Some(vec![PathBuf::from("config_wf")]),
+            yes: Some(false),
+            github_token: Some("config_token".into()),
+            github_url: Some("https://config.github.com".into()),
+            ..Default::default()
+        };
+
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![PathBuf::from("cli_wf")],
+            yes: true,
+            quiet: false,
+            verbose: false,
+            dry_run: false,
+            github_token: Some("cli_token".into()),
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            format: OutputFormat::Text,
+            json: false,
+            github_url: "https://cli.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            ignore: vec![],
+            oci_username: None,
+            oci_password: None,
+        };
+
+        let merged = config.merge_with_cli(cli);
+        assert_eq!(merged.workflows, vec![PathBuf::from("cli_wf")]);
+        assert!(merged.yes);
+        assert_eq!(merged.github_token, Some("cli_token".into()));
+        assert_eq!(merged.github_url, "https://cli.github.com");
+    }
+}

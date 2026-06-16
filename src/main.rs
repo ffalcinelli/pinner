@@ -121,16 +121,44 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
-    fn test_get_workflows() {
-        // Since we can't easily mock the filesystem here without more complexity,
-        // we just test the cli_workflows priority.
+    fn test_get_workflows_cli_priority() {
         let cli_paths = vec![PathBuf::from("custom/path")];
         assert_eq!(get_workflows(&cli_paths), cli_paths);
+    }
 
-        // Default case (will likely return .github/workflows if it doesn't exist in the current env)
+    #[test]
+    #[serial_test::serial]
+    fn test_get_workflows_discovery() {
+        let dir = tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Initially should return default .github/workflows if nothing exists
         assert_eq!(get_workflows(&[]), vec![PathBuf::from(".github/workflows")]);
+
+        // Create .gitlab-ci.yml
+        fs::write(".gitlab-ci.yml", "").unwrap();
+        assert_eq!(get_workflows(&[]), vec![PathBuf::from(".gitlab-ci.yml")]);
+
+        // Create .github/workflows
+        fs::create_dir_all(".github/workflows").unwrap();
+        let res = get_workflows(&[]);
+        assert!(res.contains(&PathBuf::from(".github/workflows")));
+        assert!(res.contains(&PathBuf::from(".gitlab-ci.yml")));
+
+        // Create bitbucket-pipelines.yml
+        fs::write("bitbucket-pipelines.yml", "").unwrap();
+        fs::write("bitbucket-pipelines.yaml", "").unwrap();
+        let res = get_workflows(&[]);
+        assert!(res.contains(&PathBuf::from("bitbucket-pipelines.yml")));
+        // Should NOT contain .yaml if .yml exists
+        assert!(!res.contains(&PathBuf::from("bitbucket-pipelines.yaml")));
+
+        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[tokio::test]
