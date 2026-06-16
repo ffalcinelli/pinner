@@ -2,6 +2,7 @@ use crate::core::{BranchName, DependencyName, DependencyRef};
 use crate::error::PinnerError;
 use crate::resolver::azure::ReqwestAzureProvider;
 use crate::resolver::bitbucket::ReqwestBitbucketProvider;
+use crate::resolver::circleci::ReqwestCircleCiProvider;
 use crate::resolver::forgejo::ReqwestForgejoProvider;
 use crate::resolver::github::ReqwestGithubProvider;
 use crate::resolver::gitlab::ReqwestGitLabProvider;
@@ -303,6 +304,18 @@ impl ProviderRegistry {
             },
         );
 
+        registry.register(
+            Arc::new(CachedProvider::new(ReqwestCircleCiProvider::new(
+                config.circleci_url,
+                config.circleci_token,
+            )?)),
+            ProviderTypeInfo {
+                domains: vec![],
+                keys: vec!["orbs".to_string()],
+                variant: "CircleCi".to_string(),
+            },
+        );
+
         Ok(registry)
     }
 
@@ -339,6 +352,7 @@ pub enum ProviderType {
     Bitbucket(Arc<CachedProvider<ReqwestBitbucketProvider>>),
     GitLab(Arc<CachedProvider<ReqwestGitLabProvider>>),
     Forgejo(Arc<CachedProvider<ReqwestForgejoProvider>>),
+    CircleCi(Arc<CachedProvider<ReqwestCircleCiProvider>>),
 }
 
 /// Configuration for the UnifiedProvider.
@@ -352,6 +366,8 @@ pub struct UnifiedProviderConfig {
     pub gitlab_token: Option<String>,
     pub forgejo_url: String,
     pub forgejo_token: Option<String>,
+    pub circleci_url: String,
+    pub circleci_token: Option<String>,
 }
 
 impl Default for UnifiedProviderConfig {
@@ -365,6 +381,8 @@ impl Default for UnifiedProviderConfig {
             gitlab_token: None,
             forgejo_url: "https://codeberg.org".to_string(),
             forgejo_token: None,
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+            circleci_token: None,
         }
     }
 }
@@ -660,13 +678,11 @@ mod tests {
 
         let unified = UnifiedProvider::new(UnifiedProviderConfig {
             github_url: server.url(),
-            github_token: None,
             bitbucket_url: server.url(),
-            bitbucket_token: None,
             gitlab_url: server.url(),
-            gitlab_token: None,
             forgejo_url: server.url(),
-            forgejo_token: None,
+            circleci_url: server.url(),
+            ..Default::default()
         })
         .unwrap();
 
@@ -693,13 +709,11 @@ mod tests {
     async fn test_unified_provider_error() {
         let unified = UnifiedProvider::new(UnifiedProviderConfig {
             github_url: "http://invalid".into(),
-            github_token: None,
             bitbucket_url: "http://invalid".into(),
-            bitbucket_token: None,
             gitlab_url: "http://invalid".into(),
-            gitlab_token: None,
             forgejo_url: "http://invalid".into(),
-            forgejo_token: None,
+            circleci_url: "http://invalid".into(),
+            ..Default::default()
         })
         .unwrap();
         let res = unified
@@ -1116,13 +1130,11 @@ mod tests {
 
         let unified = UnifiedProvider::new(UnifiedProviderConfig {
             github_url: server.url(),
-            github_token: None,
             bitbucket_url: server.url(),
-            bitbucket_token: None,
             gitlab_url: server.url(),
-            gitlab_token: None,
             forgejo_url: server.url(),
-            forgejo_token: None,
+            circleci_url: server.url(),
+            ..Default::default()
         })
         .unwrap();
 

@@ -73,6 +73,9 @@ pub struct Cli {
     /// Forgejo/Gitea API Token for authentication.
     #[arg(long, global = true, env = "FORGEJO_TOKEN")]
     pub forgejo_token: Option<String>,
+    /// CircleCI API Token for authentication.
+    #[arg(long, global = true, env = "CIRCLECI_TOKEN")]
+    pub circleci_token: Option<String>,
     /// Output results in the specified format.
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
@@ -111,6 +114,14 @@ pub struct Cli {
         default_value = "https://codeberg.org"
     )]
     pub forgejo_url: String,
+    /// Base URL for the CircleCI GraphQL API.
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_CIRCLECI_URL",
+        default_value = "https://circleci.com/graphql-unstable"
+    )]
+    pub circleci_url: String,
     /// Strategy to use when upgrading actions.
     #[arg(
         long,
@@ -252,6 +263,7 @@ mod tests {
             bitbucket_token: None,
             gitlab_token: None,
             forgejo_token: None,
+            circleci_token: None,
             oci_username: None,
             oci_password: None,
             format: OutputFormat::Text,
@@ -259,6 +271,7 @@ mod tests {
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],

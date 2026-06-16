@@ -81,6 +81,8 @@ pub enum DependencyRef {
     GitSha(String),
     /// An OCI/Docker content digest (prefixed with `sha256:`).
     DockerDigest(String),
+    /// An immutable semantic version (used for CircleCI Orbs).
+    Version(String),
 }
 
 impl fmt::Display for DependencyRef {
@@ -88,6 +90,7 @@ impl fmt::Display for DependencyRef {
         match self {
             Self::GitSha(s) => write!(f, "{}", s),
             Self::DockerDigest(s) => write!(f, "{}", s),
+            Self::Version(s) => write!(f, "{}", s),
         }
     }
 }

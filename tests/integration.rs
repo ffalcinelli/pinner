@@ -34,13 +34,7 @@ async fn test_full_pin_cycle() {
 
     let provider = UnifiedProvider::new(UnifiedProviderConfig {
         github_url: cli.github_url.clone(),
-        github_token: cli.github_token.clone(),
-        bitbucket_url: cli.bitbucket_url.clone(),
-        bitbucket_token: cli.bitbucket_token.clone(),
-        gitlab_url: cli.gitlab_url.clone(),
-        gitlab_token: cli.gitlab_token.clone(),
-        forgejo_url: cli.forgejo_url.clone(),
-        forgejo_token: cli.forgejo_token.clone(),
+        ..Default::default()
     })
     .unwrap();
     let registry = OciRegistryProvider::new(None, None);

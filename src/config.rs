@@ -33,6 +33,8 @@ pub struct Config {
     pub gitlab_token: Option<String>,
     /// Forgejo/Gitea API Token for authentication.
     pub forgejo_token: Option<String>,
+    /// CircleCI API Token for authentication.
+    pub circleci_token: Option<String>,
     /// Output results in the specified format.
     pub format: Option<OutputFormat>,
     /// Base URL for the GitHub API.
@@ -43,6 +45,8 @@ pub struct Config {
     pub gitlab_url: Option<String>,
     /// Base URL for the Forgejo/Gitea API.
     pub forgejo_url: Option<String>,
+    /// Base URL for the CircleCI GraphQL API.
+    pub circleci_url: Option<String>,
     /// Strategy to use when upgrading actions.
     pub upgrade_strategy: Option<UpgradeStrategy>,
     /// Number of concurrent API requests to make.
@@ -115,6 +119,10 @@ impl Config {
             cli.forgejo_token = self.forgejo_token;
         }
 
+        if cli.circleci_token.is_none() {
+            cli.circleci_token = self.circleci_token;
+        }
+
         // Only override if CLI has the default value
         if cli.github_url == "https://api.github.com" {
             if let Some(url) = self.github_url {
@@ -137,6 +145,12 @@ impl Config {
         if cli.forgejo_url == "https://codeberg.org" {
             if let Some(url) = self.forgejo_url {
                 cli.forgejo_url = url;
+            }
+        }
+
+        if cli.circleci_url == "https://circleci.com/graphql-unstable" {
+            if let Some(url) = self.circleci_url {
+                cli.circleci_url = url;
             }
         }
 
@@ -194,12 +208,14 @@ mod tests {
             bitbucket_token: None,
             gitlab_token: None,
             forgejo_token: None,
+            circleci_token: None,
             format: OutputFormat::Text,
             json: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
@@ -239,12 +255,14 @@ mod tests {
             bitbucket_token: None,
             gitlab_token: None,
             forgejo_token: None,
+            circleci_token: None,
             format: OutputFormat::Text,
             json: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
@@ -286,12 +304,14 @@ mod tests {
             bitbucket_token: None,
             gitlab_token: None,
             forgejo_token: None,
+            circleci_token: None,
             format: OutputFormat::Text,
             json: false,
             github_url: "https://cli.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],

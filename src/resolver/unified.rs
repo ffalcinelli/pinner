@@ -110,6 +110,11 @@ impl Resolver {
         remote: Arc<dyn RemoteProvider>,
         registry: Arc<dyn RegistryProvider>,
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
+        if task.key == "orbs" {
+            // Orbs are strictly semantic versioned and immutable, no need to hash-pin.
+            return Ok(None);
+        }
+
         if let Some(ver) = &task.current_tag {
             if task.action.is_docker() || task.key == "image" {
                 if !ver.starts_with("sha256:") {
@@ -131,6 +136,14 @@ impl Resolver {
         registry: Arc<dyn RegistryProvider>,
         strategy: UpgradeStrategy,
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
+        if task.key == "orbs" {
+            let tag = remote.get_latest_release(&task.action, &task.key).await?;
+            if Some(&tag) == task.current_tag.as_ref() {
+                return Ok(None);
+            }
+            return Ok(Some((DependencyRef::Version(tag), None)));
+        }
+
         if task.action.is_docker() || task.key == "image" {
             let image = task.action.trim_docker_prefix();
             let tag = task.current_tag.as_deref().unwrap_or("latest");
@@ -357,6 +370,45 @@ mod tests {
                 DependencyRef::GitSha("mainsha".to_string()),
                 Some("main".to_string())
             ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_circleci_orb() {
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("5.1.0".to_string()));
+        let remote = Arc::new(remote);
+
+        let registry = Arc::new(MockRegistryProvider::new());
+        let task = UpdateTask {
+            path: ".circleci/config.yml".into(),
+            start: 0,
+            end: 0,
+            action: "circleci/node".into(),
+            current_tag: Some("5.0.0".to_string()),
+            comment: None,
+            key: "orbs".to_string(),
+            line: 1,
+            column: 1,
+            provider: crate::core::CiProvider::CircleCI,
+        };
+
+        // Test Pin (should skip)
+        let pin_res = Resolver::resolve_pin(&task, remote.clone(), registry.clone())
+            .await
+            .unwrap();
+        assert!(pin_res.is_none());
+
+        // Test Upgrade
+        let upgrade_res =
+            Resolver::resolve_upgrade(&task, remote, registry, UpgradeStrategy::Latest)
+                .await
+                .unwrap();
+        assert_eq!(
+            upgrade_res,
+            Some((DependencyRef::Version("5.1.0".to_string()), None))
         );
     }
 }

@@ -56,6 +56,7 @@ impl Pipeline {
             let is_pinned = if let Some(tag) = &task.current_tag {
                 (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
                     || (tag.starts_with("sha256:") && tag.len() == 71) // sha256: + 64 hex
+                    || (task.key == "orbs" && !tag.is_empty())
             } else {
                 false
             };

@@ -30,6 +30,9 @@ pub enum PinnerError {
     /// Authentication errors (invalid tokens, etc.)
     #[error("Authentication error: {0}")]
     Authentication(String),
+    /// Unsupported operations
+    #[error("Unsupported operation: {0}")]
+    Unsupported(String),
     /// OCI Registry errors
     #[error("Registry error: {0}")]
     Registry(String),
@@ -58,6 +61,7 @@ impl PinnerError {
             PinnerError::PathNotFound(_) => true,
             PinnerError::VerificationFailed(_) => true,
             PinnerError::Ignore(_) => true,
+            PinnerError::Unsupported(_) => true,
             // Generic API errors (like 404) or Registry errors for a single image are not fatal
             PinnerError::Api(_) => false,
             PinnerError::Registry(_) => false,

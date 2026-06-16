@@ -34,9 +34,8 @@ impl CiProvider {
             }
             CiProvider::GitLab => matches!(key, "include" | "image" | "ref"),
             CiProvider::Bitbucket => matches!(key, "pipe" | "image"),
-            // CircleCI support focuses exclusively on Docker Images (e.g. cimg/*)
-            // as Orbs are strictly semantic versioned and do not support Git SHA pinning.
-            CiProvider::CircleCI => matches!(key, "image"),
+            // CircleCI support includes Docker Images (e.g. cimg/*) and Orbs.
+            CiProvider::CircleCI => matches!(key, "image" | "orbs"),
             CiProvider::AzureDevOps => matches!(key, "task" | "template" | "image"),
             CiProvider::AwsCodeBuild => matches!(key, "image"),
             CiProvider::Unknown => true,
@@ -55,6 +54,23 @@ static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
           ]
           value: (_) @value
           (#match? @key "^(uses|pipe|image|include|ref|task|template)$"))
+        (block_mapping_pair
+          key: [
+            (flow_node (plain_scalar (string_scalar) @key))
+            (plain_scalar (string_scalar) @key)
+          ]
+          (#eq? @key "orbs")
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                value: [
+                  (flow_node (plain_scalar (string_scalar) @value))
+                  (plain_scalar (string_scalar) @value)
+                ]
+              )
+            )
+          )
+        )
         (comment) @comment
         "#,
     )
@@ -338,6 +354,35 @@ mod tests {
         assert_eq!(results[0].action.0, "actions/checkout");
         assert_eq!(results[0].current_tag.as_deref(), Some("hash"));
         assert_eq!(results[0].comment, Some("# v3".to_string()));
+    }
+
+    #[test]
+    fn test_find_tasks_circleci_orbs() {
+        let yaml = r#"
+version: 2.1
+orbs:
+  node: circleci/node@5.0.0
+  slack: circleci/slack@4.1.0
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".circleci/config.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+
+        let node_orb = results
+            .iter()
+            .find(|r| r.action.0 == "circleci/node")
+            .unwrap();
+        assert_eq!(node_orb.key, "orbs");
+        assert_eq!(node_orb.current_tag.as_deref(), Some("5.0.0"));
+
+        let slack_orb = results
+            .iter()
+            .find(|r| r.action.0 == "circleci/slack")
+            .unwrap();
+        assert_eq!(slack_orb.key, "orbs");
+        assert_eq!(slack_orb.current_tag.as_deref(), Some("4.1.0"));
     }
 
     #[test]
