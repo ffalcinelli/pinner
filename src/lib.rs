@@ -488,7 +488,9 @@ jobs:
         .unwrap();
 
         let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).unwrap();
+        parser
+            .set_language(&tree_sitter_yaml::LANGUAGE.into())
+            .unwrap();
         let content = fs::read_to_string(&f).unwrap();
         let tree = parser.parse(&content, None).unwrap();
         let results = crate::yaml::find_uses_nodes(
@@ -511,7 +513,9 @@ jobs:
     async fn test_yaml_comment_capture() {
         let content = "uses: o/r@v1 # comment";
         let mut parser = TSParser::new();
-        parser.set_language(tree_sitter_yaml::language()).unwrap();
+        parser
+            .set_language(&tree_sitter_yaml::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(content, None).unwrap();
         let results = crate::yaml::find_uses_nodes(
             tree.root_node(),

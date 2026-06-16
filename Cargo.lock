@@ -1614,7 +1614,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
- "tree-sitter 0.26.9",
+ "tree-sitter",
  "tree-sitter-yaml",
 ]
 
@@ -2797,16 +2797,6 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e747b1f9b7b931ed39a548c1fae149101497de3c1fc8d9e18c62c1a66c683d3d"
-dependencies = [
- "cc",
- "regex",
-]
-
-[[package]]
-name = "tree-sitter"
 version = "0.26.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dab76d0b724ba557954125188cf0633a1ca43199ced82d95c7b9c32cc3de1f3"
@@ -2827,12 +2817,12 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-yaml"
-version = "0.0.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "324767d0ad6bc588467aa4b98f6f5cd6eda64ece1eae568f8fcf5b899bcf0fe9"
+checksum = "53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97"
 dependencies = [
  "cc",
- "tree-sitter 0.20.10",
+ "tree-sitter-language",
 ]
 
 [[package]]
