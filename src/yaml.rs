@@ -272,6 +272,59 @@ orbs:
         assert!(keys.contains(&"orbs".to_string()));
     }
 
+    fn find_node_with_text<'a>(
+        node: tree_sitter::Node<'a>,
+        text: &str,
+        content: &[u8],
+    ) -> Option<tree_sitter::Node<'a>> {
+        if node.utf8_text(content).unwrap_or("") == text {
+            return Some(node);
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(found) = find_node_with_text(child, text, content) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_resolve_gitlab_project_success() {
+        let yaml = r#"
+include:
+  - project: 'my-group/my-project'
+    ref: 'v1.0.0'
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let node = find_node_with_text(tree.root_node(), "'v1.0.0'", &content).unwrap();
+        let project = resolve_gitlab_project(node, &content);
+        assert_eq!(project, Some("my-group/my-project".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_gitlab_project_not_found() {
+        let yaml = r#"
+include:
+  - ref: 'v1.0.0'
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let node = find_node_with_text(tree.root_node(), "'v1.0.0'", &content).unwrap();
+        let project = resolve_gitlab_project(node, &content);
+        assert_eq!(project, None);
+    }
+
+    #[test]
+    fn test_resolve_gitlab_project_invalid_node() {
+        let yaml = r#"
+ref: 'v1.0.0'
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        // Using the root node, which won't have a parent pair
+        let project = resolve_gitlab_project(tree.root_node(), &content);
+        assert_eq!(project, None);
+    }
+
     #[test]
     fn test_gitlab_ref_project() {
         let yaml = r#"
