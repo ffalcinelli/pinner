@@ -10,6 +10,8 @@ pub enum CiProvider {
     CircleCI,
     Forgejo,
     Gitea,
+    AzureDevOps,
+    AwsCodeBuild,
     Unknown,
 }
 

@@ -1,5 +1,6 @@
 use crate::core::{BranchName, DependencyName, DependencyRef};
 use crate::error::PinnerError;
+use crate::resolver::azure::ReqwestAzureProvider;
 use crate::resolver::bitbucket::ReqwestBitbucketProvider;
 use crate::resolver::forgejo::ReqwestForgejoProvider;
 use crate::resolver::github::ReqwestGithubProvider;
@@ -241,13 +242,24 @@ impl ProviderRegistry {
 
         registry.register(
             Arc::new(CachedProvider::new(ReqwestGithubProvider::new(
-                config.github_url,
-                config.github_token,
+                config.github_url.clone(),
+                config.github_token.clone(),
             )?)),
             ProviderTypeInfo {
                 domains: vec!["github.com".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
                 variant: "GitHub".to_string(),
+            },
+        );
+
+        registry.register(
+            Arc::new(CachedProvider::new(ReqwestAzureProvider::new(
+                ReqwestGithubProvider::new(config.github_url.clone(), config.github_token.clone())?,
+            ))),
+            ProviderTypeInfo {
+                domains: vec![],
+                keys: vec!["task".to_string(), "template".to_string()],
+                variant: "Azure".to_string(),
             },
         );
 

@@ -15,6 +15,8 @@ impl CiProvider {
             (".gitlab-ci", CiProvider::GitLab),
             ("bitbucket-pipelines", CiProvider::Bitbucket),
             (".circleci", CiProvider::CircleCI),
+            ("azure-pipelines", CiProvider::AzureDevOps),
+            ("buildspec", CiProvider::AwsCodeBuild),
         ];
 
         for (pattern, provider) in mappings {
@@ -32,7 +34,11 @@ impl CiProvider {
             }
             CiProvider::GitLab => matches!(key, "include" | "image" | "ref"),
             CiProvider::Bitbucket => matches!(key, "pipe" | "image"),
-            CiProvider::CircleCI => matches!(key, "orbs" | "image"),
+            // CircleCI support focuses exclusively on Docker Images (e.g. cimg/*)
+            // as Orbs are strictly semantic versioned and do not support Git SHA pinning.
+            CiProvider::CircleCI => matches!(key, "image"),
+            CiProvider::AzureDevOps => matches!(key, "task" | "template" | "image"),
+            CiProvider::AwsCodeBuild => matches!(key, "image"),
             CiProvider::Unknown => true,
         }
     }
@@ -48,7 +54,7 @@ static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
             (plain_scalar (string_scalar) @key)
           ]
           value: (_) @value
-          (#match? @key "^(uses|pipe|image|include|ref|orbs)$"))
+          (#match? @key "^(uses|pipe|image|include|ref|task|template)$"))
         (comment) @comment
         "#,
     )
@@ -350,7 +356,6 @@ orbs:
         let keys: Vec<String> = results.iter().map(|r| r.key.clone()).collect();
         assert!(keys.contains(&"image".to_string()));
         assert!(keys.contains(&"pipe".to_string()));
-        assert!(keys.contains(&"orbs".to_string()));
     }
 
     fn find_node_with_text<'a>(
@@ -457,5 +462,53 @@ strategy:
         assert!(gitlab.supports_key("include"));
         assert!(gitlab.supports_key("ref"));
         assert!(!gitlab.supports_key("uses"));
+    }
+
+    #[test]
+    fn test_find_tasks_azure_devops() {
+        let yaml = r#"
+steps:
+- task: NodeTool@0
+  inputs:
+    versionSpec: '16.x'
+- template: templates/build.yml@templates-repo
+  parameters:
+    buildConfig: 'Release'
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new("azure-pipelines.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+
+        let task = results.iter().find(|r| r.key == "task").unwrap();
+        assert_eq!(task.action.0, "NodeTool");
+        assert_eq!(task.current_tag.as_deref(), Some("0"));
+
+        let template = results.iter().find(|r| r.key == "template").unwrap();
+        assert_eq!(template.action.0, "templates/build.yml");
+        assert_eq!(template.current_tag.as_deref(), Some("templates-repo"));
+    }
+
+    #[test]
+    fn test_find_tasks_aws_codebuild() {
+        let yaml = r#"
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      nodejs: 16
+build:
+  commands:
+    - echo "Building..."
+image: aws/codebuild/standard:5.0
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new("buildspec.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "aws/codebuild/standard");
+        assert_eq!(results[0].current_tag.as_deref(), Some("5.0"));
     }
 }

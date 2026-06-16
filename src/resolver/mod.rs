@@ -1,3 +1,4 @@
+pub mod azure;
 pub mod bitbucket;
 pub mod forgejo;
 pub mod github;
@@ -6,6 +7,7 @@ pub mod provider;
 pub mod registry;
 pub mod unified;
 
+pub use azure::ReqwestAzureProvider;
 pub use bitbucket::ReqwestBitbucketProvider;
 pub use forgejo::ReqwestForgejoProvider;
 pub use github::ReqwestGithubProvider;

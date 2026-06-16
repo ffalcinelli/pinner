@@ -331,4 +331,33 @@ mod tests {
         let res = provider.resolve_digest("nginx", "latest").await.unwrap();
         assert_eq!(res, "sha256:54321");
     }
+
+    #[tokio::test]
+    async fn test_oci_auth_ecr_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        // ECR Registry domain
+        let ecr_registry = "123456789012.dkr.ecr.us-east-1.amazonaws.com";
+        let provider = OciRegistryProvider {
+            client: reqwest::Client::new().into(),
+            auth_url: "https://auth.docker.io/token".to_string(),
+            base_url_template: format!("{}/v2/{{repository}}/manifests/{{tag}}", server.url()),
+            username: Some("AWS".into()),
+            password: Some("ecr-token".into()),
+        };
+
+        // For non-docker.io registries, get_token returns "", so it should fall back to Basic Auth
+        let _m_manifest = server
+            .mock("GET", "/v2/my-repo/manifests/latest")
+            .match_header("Authorization", "Basic QVdTOmVjci10b2tlbg==") // AWS:ecr-token
+            .with_status(200)
+            .with_header("docker-content-digest", "sha256:ecrsha")
+            .create_async()
+            .await;
+
+        let res = provider
+            .resolve_digest(&format!("{}/my-repo", ecr_registry), "latest")
+            .await
+            .unwrap();
+        assert_eq!(res, "sha256:ecrsha");
+    }
 }
