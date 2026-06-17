@@ -35,18 +35,18 @@
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
     <!-- Navbar -->
-    <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+    <nav class="flex items-center justify-between px-4 md:px-8 py-6 max-w-7xl mx-auto">
         <div class="flex items-center space-x-2">
             <a href="index.html" class="flex items-center space-x-2 group">
                 <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
                 <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
             </a>
         </div>
-        <div class="flex items-center space-x-6 text-sm font-medium">
-            <a href="getting-started.html" class="hover:text-sky-400 transition-colors"><i class="fas fa-rocket mr-2"></i>Getting Started</a>
-            <a href="configuration.html" class="hover:text-sky-400 transition-colors"><i class="fas fa-cog mr-2"></i>Configuration</a>
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
-            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors"><i class="fas fa-book mr-2"></i>API Docs</a>
+        <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
+            <a href="getting-started.html" class="hover:text-sky-400 transition-colors" title="Getting Started"><i class="fas fa-rocket md:mr-2"></i><span class="hidden md:inline">Getting Started</span></a>
+            <a href="configuration.html" class="hover:text-sky-400 transition-colors" title="Configuration"><i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Configuration</span></a>
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors" title="GitHub"><i class="fab fa-github md:mr-2"></i><span class="hidden md:inline">GitHub</span></a>
+            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors" title="API Docs"><i class="fas fa-book md:mr-2"></i><span class="hidden md:inline">API Docs</span></a>
         </div>
     </nav>
 
@@ -60,7 +60,7 @@
                 Automatically pin mutable tags to immutable SHA-1 hashes to prevent supply chain attacks.
             </p>
             
-            <div class="max-w-2xl mx-auto mb-16 origin-quote py-6 px-8 text-left border-l-4 border-sky-500/30 rounded-r-2xl bg-sky-500/[0.02]">
+            <div class="max-w-2xl mx-auto mb-16 origin-quote py-6 px-4 md:px-8 text-left border-l-4 border-sky-500/30 rounded-r-2xl bg-sky-500/[0.02]">
                 <div class="flex items-start space-x-6">
                     <div class="flex-shrink-0 mt-1">
                         <i class="fas fa-flask text-sky-400/60 text-3xl"></i>
@@ -80,10 +80,10 @@
             </div>
             
             <div class="flex flex-col md:flex-row items-center justify-center gap-4 mb-16">
-                <a href="getting-started.html" class="w-full md:w-auto px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white font-bold rounded-lg transition-all transform hover:scale-105 shadow-lg shadow-sky-500/20">
+                <a href="getting-started.html" class="w-full md:w-auto px-4 md:px-8 py-4 bg-sky-500 hover:bg-sky-400 text-white font-bold rounded-lg transition-all transform hover:scale-105 shadow-lg shadow-sky-500/20">
                     Get Started
                 </a>
-                <a href="https://github.com/ffalcinelli/pinner" class="w-full md:w-auto px-8 py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-lg transition-all border border-gray-700">
+                <a href="https://github.com/ffalcinelli/pinner" class="w-full md:w-auto px-4 md:px-8 py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-lg transition-all border border-gray-700">
                     View on GitHub
                 </a>
             </div>
@@ -114,7 +114,7 @@
     </section>
 
     <!-- Features -->
-    <section class="py-24 max-w-7xl mx-auto px-8">
+    <section class="py-24 max-w-7xl mx-auto px-4 md:px-8">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div class="card p-8 rounded-2xl">
                 <div class="w-12 h-12 bg-sky-500/10 rounded-lg flex items-center justify-center mb-6">
@@ -142,7 +142,7 @@
 
     <!-- Installation -->
     <section class="py-24 bg-gray-900/30 border-y border-gray-800/50">
-        <div class="max-w-4xl mx-auto px-8 text-center">
+        <div class="max-w-4xl mx-auto px-4 md:px-8 text-center">
             <h2 class="text-3xl font-bold text-white mb-12 flex items-center justify-center">
                 <i class="fas fa-download text-sky-400 mr-4"></i> Install Pinner
             </h2>

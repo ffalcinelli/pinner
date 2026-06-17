@@ -34,18 +34,18 @@
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
     <!-- Navbar -->
-    <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+    <nav class="flex items-center justify-between px-4 md:px-8 py-6 max-w-7xl mx-auto">
         <div class="flex items-center space-x-2">
             <a href="index.html" class="flex items-center space-x-2 group">
                 <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
                 <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
             </a>
         </div>
-        <div class="flex items-center space-x-6 text-sm font-medium">
-            <a href="getting-started.html" class="text-sky-400 transition-colors font-bold"><i class="fas fa-rocket mr-2"></i>Getting Started</a>
-            <a href="configuration.html" class="hover:text-sky-400 transition-colors"><i class="fas fa-cog mr-2"></i>Configuration</a>
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
-            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors"><i class="fas fa-book mr-2"></i>API Docs</a>
+        <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
+            <a href="getting-started.html" class="text-sky-400 transition-colors font-bold" title="Getting Started"><i class="fas fa-rocket md:mr-2"></i><span class="hidden md:inline">Getting Started</span></a>
+            <a href="configuration.html" class="hover:text-sky-400 transition-colors" title="Configuration"><i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Configuration</span></a>
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors" title="GitHub"><i class="fab fa-github md:mr-2"></i><span class="hidden md:inline">GitHub</span></a>
+            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors" title="API Docs"><i class="fas fa-book md:mr-2"></i><span class="hidden md:inline">API Docs</span></a>
         </div>
     </nav>
 
@@ -177,9 +177,19 @@
                             <td class="px-6 py-4">https://codeberg.org</td>
                         </tr>
                         <tr>
-                            <td class="px-6 py-4 text-white font-medium">OCI / Docker</td>
-                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">OCI_USERNAME</code>, <code class="text-sky-300 text-xs">OCI_PASSWORD</code></td>
-                            <td class="px-6 py-4">Multiple Registries</td>
+                            <td class="px-6 py-4 text-white font-medium">Azure Marketplace</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">GITHUB_TOKEN</code></td>
+                            <td class="px-6 py-4">Monorepo Mapping</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium">AWS ECR</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">PINNER_OCI_PASSWORD</code></td>
+                            <td class="px-6 py-4">Private Registries</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium">CircleCI</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">CIRCLECI_TOKEN</code></td>
+                            <td class="px-6 py-4">Docker Image Pinning</td>
                         </tr>
                     </tbody>
                 </table>

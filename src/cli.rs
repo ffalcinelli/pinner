@@ -210,8 +210,8 @@ pub enum Commands {
     ExportSbom,
     /// Generate shell completions.
     GenerateCompletion {
-        /// Shell to generate completions for
-        shell: clap_complete::Shell,
+        /// Shell to generate completions for. If omitted, attempts to detect from the SHELL environment variable.
+        shell: Option<clap_complete::Shell>,
     },
 }
 #[cfg(test)]

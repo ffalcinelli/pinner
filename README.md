@@ -91,6 +91,28 @@ Forcibly update a specific action to a provided hash across all workflows.
 pinner set actions/checkout 8f4b7f84864484a7bf31766abe9204da3cbe65b3
 ```
 
+### 6. Initialize Configuration
+Create a `.pinner.toml` with default settings.
+```bash
+pinner init
+```
+
+### 7. Export SBOM
+Generate a Software Bill of Materials for your CI dependencies.
+```bash
+pinner export-sbom
+```
+
+### 8. Shell Completions
+Generate tab-completion scripts for your shell. Automatically detects your current shell if no argument is provided.
+```bash
+# Auto-detect current shell
+pinner generate-completion > ~/.zshrc.d/_pinner
+
+# Or specify explicitly
+pinner generate-completion bash > /etc/bash_completion.d/pinner
+```
+
 ## Configuration ⚙️
 
 Pinner can be configured via a `.pinner.toml` file in your repository root.
