@@ -1045,7 +1045,7 @@ mod tests {
     #[serial_test::serial]
     fn test_token_injection() {
         std::env::set_var("GITHUB_TOKEN", "env_token");
-        let client = BaseHttpClient::new(
+        let _client = BaseHttpClient::new(
             "https://api.github.com".to_string(),
             None,
             "Bearer",
@@ -1056,7 +1056,7 @@ mod tests {
         // we at least ensure it doesn't crash and we covered the logic path.
         std::env::remove_var("GITHUB_TOKEN");
 
-        let client2 = BaseHttpClient::new(
+        let _client2 = BaseHttpClient::new(
             "https://api.github.com".to_string(),
             Some("manual_token".into()),
             "Bearer",
