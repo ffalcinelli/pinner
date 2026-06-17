@@ -23,6 +23,7 @@ async fn test_full_pin_cycle() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--github-url",
         &github_server.url(),
         "--workflows",
@@ -57,6 +58,7 @@ async fn test_verify_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         workflows.to_str().unwrap(),
         "verify",
@@ -85,6 +87,7 @@ async fn test_verify_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         workflows.to_str().unwrap(),
         "verify",
@@ -129,6 +132,7 @@ jobs:
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         workflows.to_str().unwrap(),
         "verify",
@@ -157,8 +161,15 @@ async fn test_github_url_env() {
 
     std::env::set_var("PINNER_GITHUB_URL", server.url());
 
-    let cli = Cli::try_parse_from(["pinner", "--workflows", f.to_str().unwrap(), "--yes", "pin"])
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--no-cache",
+        "--workflows",
+        f.to_str().unwrap(),
+        "--yes",
+        "pin",
+    ])
+    .unwrap();
 
     let provider = UnifiedProvider::new(UnifiedProviderConfig {
         github_url: cli.github_url.clone(),
@@ -195,6 +206,7 @@ async fn test_upgrade_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--github-url",
         &github_server.url(),
         "--workflows",
@@ -227,6 +239,7 @@ async fn test_set_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         wf.to_str().unwrap(),
         "--yes",

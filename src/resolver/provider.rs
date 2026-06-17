@@ -11,6 +11,7 @@ use moka::future::Cache;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,21 +56,23 @@ pub trait RemoteProvider: Send + Sync {
 
 /// A decorator that adds caching to any [`RemoteProvider`].
 ///
-/// It uses the `moka` library for high-performance, asynchronous in-memory caching.
+/// It uses the `moka` library for high-performance, asynchronous in-memory caching,
+/// and `cacache` for persistent disk-based caching.
 /// This significantly reduces the number of API calls when the same dependency
-/// is used multiple times across different files in a project.
+/// is used multiple times across different files in a project, and across different runs.
 pub struct CachedProvider<T: RemoteProvider> {
     inner: T,
     sha_cache: Cache<(DependencyName, String), DependencyRef>,
     release_cache: Cache<DependencyName, String>,
     branch_cache: Cache<DependencyName, BranchName>,
+    disk_cache_path: Option<PathBuf>,
 }
 
 impl<T: RemoteProvider> CachedProvider<T> {
     /// Wraps a provider with a cache.
     ///
-    /// Default TTL for all caches is 1 hour.
-    pub fn new(inner: T) -> Self {
+    /// Default TTL for memory caches is 1 hour. Persistent disk cache is stored in the provided path if any.
+    pub fn new(inner: T, disk_cache_path: Option<PathBuf>) -> Self {
         Self {
             inner,
             sha_cache: Cache::builder()
@@ -84,6 +87,7 @@ impl<T: RemoteProvider> CachedProvider<T> {
                 .max_capacity(500)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
+            disk_cache_path,
         }
     }
 }
@@ -96,12 +100,29 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         tag: &str,
         key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let cache_key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&cache_key).await {
+        let mem_key = (action.clone(), tag.to_string());
+        if let Some(sha) = self.sha_cache.get(&mem_key).await {
             return Ok(sha);
         }
+
+        // Try disk cache
+        let disk_key = format!("sha:{}:{}:{}", action, tag, key);
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, &disk_key).await {
+                let sha = DependencyRef::from(String::from_utf8_lossy(&data).to_string());
+                self.sha_cache.insert(mem_key, sha.clone()).await;
+                return Ok(sha);
+            }
+        }
+
         let sha = self.inner.get_commit_sha(action, tag, key).await?;
-        self.sha_cache.insert(cache_key, sha.clone()).await;
+
+        // Update caches
+        self.sha_cache.insert(mem_key, sha.clone()).await;
+        if let Some(path) = &self.disk_cache_path {
+            let _ = cacache::write(path, &disk_key, sha.to_string().as_bytes()).await;
+        }
+
         Ok(sha)
     }
 
@@ -113,8 +134,25 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         if let Some(tag) = self.release_cache.get(action).await {
             return Ok(tag);
         }
+
+        // Try disk cache
+        let disk_key = format!("release:{}:{}", action, key);
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, &disk_key).await {
+                let tag = String::from_utf8_lossy(&data).to_string();
+                self.release_cache.insert(action.clone(), tag.clone()).await;
+                return Ok(tag);
+            }
+        }
+
         let tag = self.inner.get_latest_release(action, key).await?;
+
+        // Update caches
         self.release_cache.insert(action.clone(), tag.clone()).await;
+        if let Some(path) = &self.disk_cache_path {
+            let _ = cacache::write(path, &disk_key, tag.as_bytes()).await;
+        }
+
         Ok(tag)
     }
 
@@ -123,7 +161,7 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<Vec<String>, PinnerError> {
-        // We don't cache tags list for now as it's less frequently used in tight loops
+        // We don't cache tags list on disk to avoid stale version lists
         self.inner.list_tags(action, key).await
     }
 
@@ -135,10 +173,29 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         if let Some(branch) = self.branch_cache.get(action).await {
             return Ok(branch);
         }
+
+        // Try disk cache
+        let disk_key = format!("branch:{}:{}", action, key);
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, &disk_key).await {
+                let branch = BranchName(String::from_utf8_lossy(&data).to_string());
+                self.branch_cache
+                    .insert(action.clone(), branch.clone())
+                    .await;
+                return Ok(branch);
+            }
+        }
+
         let branch = self.inner.get_default_branch(action, key).await?;
+
+        // Update caches
         self.branch_cache
             .insert(action.clone(), branch.clone())
             .await;
+        if let Some(path) = &self.disk_cache_path {
+            let _ = cacache::write(path, &disk_key, branch.0.as_bytes()).await;
+        }
+
         Ok(branch)
     }
 }
@@ -281,10 +338,10 @@ impl ProviderRegistry {
 
         // GitHub is the primary provider and also handles Azure tasks (which are hosted on GitHub).
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestGithubProvider::new(
-                config.github_url.clone(),
-                config.github_token.clone(),
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestGithubProvider::new(config.github_url.clone(), config.github_token.clone())?,
+                config.disk_cache_path.clone(),
+            )),
             ProviderTypeInfo {
                 domains: vec!["github.com".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
@@ -293,9 +350,13 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestAzureProvider::new(
-                ReqwestGithubProvider::new(config.github_url.clone(), config.github_token.clone())?,
-            ))),
+            Arc::new(CachedProvider::new(
+                ReqwestAzureProvider::new(ReqwestGithubProvider::new(
+                    config.github_url.clone(),
+                    config.github_token.clone(),
+                )?),
+                config.disk_cache_path.clone(),
+            )),
             ProviderTypeInfo {
                 domains: vec![],
                 keys: vec!["task".to_string(), "template".to_string()],
@@ -304,10 +365,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestBitbucketProvider::new(
-                config.bitbucket_url,
-                config.bitbucket_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestBitbucketProvider::new(config.bitbucket_url, config.bitbucket_token)?,
+                config.disk_cache_path.clone(),
+            )),
             ProviderTypeInfo {
                 domains: vec!["bitbucket.org".to_string()],
                 keys: vec!["pipe".to_string(), "image".to_string()],
@@ -316,10 +377,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestGitLabProvider::new(
-                config.gitlab_url,
-                config.gitlab_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestGitLabProvider::new(config.gitlab_url, config.gitlab_token)?,
+                config.disk_cache_path.clone(),
+            )),
             ProviderTypeInfo {
                 domains: vec!["gitlab.com".to_string()],
                 keys: vec![
@@ -332,10 +393,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestForgejoProvider::new(
-                config.forgejo_url,
-                config.forgejo_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestForgejoProvider::new(config.forgejo_url, config.forgejo_token)?,
+                config.disk_cache_path.clone(),
+            )),
             ProviderTypeInfo {
                 domains: vec!["codeberg.org".to_string(), "forgejo".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
@@ -344,10 +405,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestCircleCiProvider::new(
-                config.circleci_url,
-                config.circleci_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestCircleCiProvider::new(config.circleci_url, config.circleci_token)?,
+                config.disk_cache_path.clone(),
+            )),
             ProviderTypeInfo {
                 domains: vec![],
                 keys: vec!["orbs".to_string()],
@@ -416,6 +477,7 @@ pub struct UnifiedProviderConfig {
     pub forgejo_token: Option<String>,
     pub circleci_url: String,
     pub circleci_token: Option<String>,
+    pub disk_cache_path: Option<PathBuf>,
 }
 
 impl Default for UnifiedProviderConfig {
@@ -425,12 +487,13 @@ impl Default for UnifiedProviderConfig {
             github_token: None,
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             bitbucket_token: None,
-            gitlab_url: "https://gitlab.com".to_string(),
+            gitlab_url: "https://gitlab.com/api/v4".to_string(),
             gitlab_token: None,
-            forgejo_url: "https://codeberg.org".to_string(),
+            forgejo_url: "https://codeberg.org/api/v1".to_string(),
             forgejo_token: None,
-            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+            circleci_url: "https://circleci.com/api/v2".to_string(),
             circleci_token: None,
+            disk_cache_path: None,
         }
     }
 }
@@ -1101,7 +1164,8 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = CachedProvider::new(ReqwestGithubProvider::new(s.url(), None).unwrap());
+        let provider =
+            CachedProvider::new(ReqwestGithubProvider::new(s.url(), None).unwrap(), None);
         let action = DependencyName::from("o/r");
 
         let sha1 = provider

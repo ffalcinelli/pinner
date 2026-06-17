@@ -98,4 +98,44 @@ mod tests {
             .unwrap();
         assert_eq!(sha.to_string(), "azuresha");
     }
+
+    #[tokio::test]
+    async fn test_azure_list_tags() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/microsoft/azure-pipelines-tasks/tags")
+            .with_status(200)
+            .with_body(r#"[{"name":"v1"},{"name":"v2"}]"#)
+            .create_async()
+            .await;
+
+        let github = ReqwestGithubProvider::new(server.url(), None).unwrap();
+        let azure = ReqwestAzureProvider::new(github);
+
+        let tags = azure
+            .list_tags(&DependencyName::from("NodeTool"), "task")
+            .await
+            .unwrap();
+        assert_eq!(tags, vec!["v1", "v2"]);
+    }
+
+    #[tokio::test]
+    async fn test_azure_get_default_branch() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/microsoft/azure-pipelines-tasks")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"master"}"#)
+            .create_async()
+            .await;
+
+        let github = ReqwestGithubProvider::new(server.url(), None).unwrap();
+        let azure = ReqwestAzureProvider::new(github);
+
+        let branch = azure
+            .get_default_branch(&DependencyName::from("NodeTool"), "task")
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "master");
+    }
 }

@@ -55,6 +55,15 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         .try_init()
         .ok();
 
+    let disk_cache = if cli.no_cache {
+        None
+    } else {
+        dirs::cache_dir().map(|mut p| {
+            p.push("pinner");
+            p
+        })
+    };
+
     let provider =
         pinner::resolver::UnifiedProvider::new(pinner::resolver::UnifiedProviderConfig {
             github_url: cli.github_url.clone(),
@@ -67,8 +76,10 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
             forgejo_token: cli.forgejo_token.clone(),
             circleci_url: cli.circleci_url.clone(),
             circleci_token: cli.circleci_token.clone(),
+            disk_cache_path: disk_cache,
         })?;
-    let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone());
+    let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone())
+        .with_verification(cli.verify_provenance, cli.require_provenance);
 
     // Determine the workflows directory to process
     let workflows_to_process = get_workflows(&cli.workflows);

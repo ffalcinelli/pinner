@@ -287,3 +287,179 @@ impl RemoteProvider for ReqwestBitbucketProvider {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_bitbucket_cloud_get_commit_sha_tag() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repositories/o/r/refs/tags/v1")
+            .with_status(200)
+            .with_body(r#"{"target":{"hash":"cloudsha"}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "cloudsha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_cloud_get_commit_sha_branch_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/repositories/o/r/refs/tags/main")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/repositories/o/r/refs/branches/main")
+            .with_status(200)
+            .with_body(r#"{"target":{"hash":"branchsha"}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "main", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "branchsha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_dc_get_commit_sha() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/rest/api/1.0/projects/PROJ/repos/repo/tags/v1")
+            .with_status(200)
+            .with_body(r#"{"latestCommit":"dcsha"}"#)
+            .create_async()
+            .await;
+
+        // Force is_cloud to false by using a non-bitbucket.org URL
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("PROJ/repo"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "dcsha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_cloud_get_default_branch() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repositories/o/r")
+            .with_status(200)
+            .with_body(r#"{"mainbranch":{"name":"develop"}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
+        let branch = provider
+            .get_default_branch(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "develop");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_dc_get_default_branch() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/rest/api/1.0/projects/P/repos/R")
+            .with_status(200)
+            .with_body(r#"{"defaultBranch":"master"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
+        let branch = provider
+            .get_default_branch(&DependencyName::from("P/R"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "master");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_dc_get_commit_sha_branch_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        // Mock tag lookup failure
+        let _m1 = server
+            .mock("GET", "/rest/api/1.0/projects/P/repos/R/tags/v1")
+            .with_status(404)
+            .create_async()
+            .await;
+        // Mock branch lookup success
+        let _m2 = server
+            .mock(
+                "GET",
+                "/rest/api/1.0/projects/P/repos/R/branches?filterText=v1",
+            )
+            .with_status(200)
+            .with_body(r#"{"values":[{"displayId":"v1","latestCommit":"dcbranchsha"}]}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("P/R"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "dcbranchsha");
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_invalid_action_format() {
+        let provider =
+            ReqwestBitbucketProvider::with_type("http://localhost".to_string(), None, false)
+                .unwrap();
+        let res = provider
+            .get_commit_sha(&DependencyName::from("invalid"), "v1", "uses")
+            .await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_cloud_list_tags() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repositories/o/r/refs/tags")
+            .with_status(200)
+            .with_body(r#"{"values":[{"name":"v1"},{"name":"v2"}]}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, true).unwrap();
+        let tags = provider
+            .list_tags(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(tags, vec!["v1", "v2"]);
+    }
+
+    #[tokio::test]
+    async fn test_bitbucket_dc_list_tags() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/rest/api/1.0/projects/P/repos/R/tags")
+            .with_status(200)
+            .with_body(r#"{"values":[{"display_id":"v1"},{"display_id":"v2"}]}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestBitbucketProvider::with_type(server.url(), None, false).unwrap();
+        let tags = provider
+            .list_tags(&DependencyName::from("P/R"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(tags, vec!["v1", "v2"]);
+    }
+}

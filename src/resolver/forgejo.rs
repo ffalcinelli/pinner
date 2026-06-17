@@ -141,3 +141,80 @@ impl RemoteProvider for ReqwestForgejoProvider {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_forgejo_get_commit_sha() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v1/repos/o/r/commits/v1")
+            .with_status(200)
+            .with_body(r#"{"sha":"forgejosha"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "forgejosha");
+    }
+
+    #[tokio::test]
+    async fn test_forgejo_get_latest_release() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v1/repos/o/r/releases")
+            .with_status(200)
+            .with_body(r#"[{"tag_name":"v2.0.0"}]"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
+        let tag = provider
+            .get_latest_release(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(tag, "v2.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_forgejo_list_tags() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v1/repos/o/r/tags")
+            .with_status(200)
+            .with_body(r#"[{"name":"v1"},{"name":"v2"}]"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
+        let tags = provider
+            .list_tags(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(tags, vec!["v1", "v2"]);
+    }
+
+    #[tokio::test]
+    async fn test_forgejo_get_default_branch() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/api/v1/repos/o/r")
+            .with_status(200)
+            .with_body(r#"{"default_branch":"develop"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestForgejoProvider::new(server.url(), None).unwrap();
+        let branch = provider
+            .get_default_branch(&DependencyName::from("o/r"), "uses")
+            .await
+            .unwrap();
+        assert_eq!(branch.0, "develop");
+    }
+}

@@ -62,7 +62,25 @@ pub struct Cli {
     /// Print verbose output for debugging.
     #[arg(short, long, global = true)]
     pub verbose: bool,
+    /// Disable persistent disk caching.
+    #[arg(long, global = true, env = "PINNER_NO_CACHE")]
+    pub no_cache: bool,
+
+    /// Verify provenance of OCI artifacts using Sigstore/Cosign.
+    #[arg(long, global = true, env = "PINNER_VERIFY_PROVENANCE")]
+    pub verify_provenance: bool,
+
+    /// Require provenance verification. If true, fail if verification fails or no signature is found.
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_REQUIRE_PROVENANCE",
+        default_value = "false"
+    )]
+    pub require_provenance: bool,
+
     /// Print what would be changed without actually modifying any files.
+
     #[arg(short, long, global = true)]
     pub dry_run: bool,
     /// GitHub API Token for authentication.
@@ -170,7 +188,11 @@ pub enum Commands {
     /// Pin all actions to their current commit SHAs.
     Pin,
     /// Upgrade all actions to their latest releases.
-    Upgrade,
+    Upgrade {
+        /// Interactively select which actions to upgrade.
+        #[arg(short, long)]
+        interactive: bool,
+    },
     /// Verify that all actions are pinned to commit SHAs.
     Verify,
     /// Set a specific action to a specific commit SHA.
@@ -182,6 +204,10 @@ pub enum Commands {
     },
     /// Install a pre-commit hook that runs pinner verify.
     InstallHook,
+    /// Automatically initialize pinner configuration for this repository.
+    Init,
+    /// Export a Software Bill of Materials (SBOM) for all dependencies in the workflows.
+    ExportSbom,
     /// Generate shell completions.
     GenerateCompletion {
         /// Shell to generate completions for
@@ -222,7 +248,7 @@ mod tests {
     #[test]
     fn test_cli_upgrade() {
         let cli = Cli::try_parse_from(["pinner", "upgrade"]).unwrap();
-        assert_eq!(cli.command, Commands::Upgrade);
+        assert_eq!(cli.command, Commands::Upgrade { interactive: false });
     }
 
     #[test]
@@ -261,6 +287,9 @@ mod tests {
             yes: false,
             quiet: true,
             verbose: false,
+            no_cache: false,
+            verify_provenance: false,
+            require_provenance: false,
             dry_run: false,
             json: false,
             github_token: None,

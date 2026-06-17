@@ -230,4 +230,83 @@ mod tests {
             .unwrap();
         assert_eq!(tag, "5.1.0");
     }
+
+    #[tokio::test]
+    async fn test_circleci_get_commit_sha_unsupported() {
+        let provider = ReqwestCircleCiProvider::new("http://localhost".to_string(), None).unwrap();
+        let res = provider
+            .get_commit_sha(&DependencyName::from("circleci/node"), "5.1.0", "orbs")
+            .await;
+        assert!(matches!(res, Err(PinnerError::Unsupported(_))));
+    }
+
+    #[tokio::test]
+    async fn test_circleci_list_tags() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body(r#"{"data":{"orb":{"versions":[{"version":"1.0.0"},{"version":"1.1.0"}]}}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestCircleCiProvider::new(server.url(), None).unwrap();
+        let tags = provider
+            .list_tags(&DependencyName::from("circleci/node"), "orbs")
+            .await
+            .unwrap();
+        assert_eq!(tags, vec!["1.0.0", "1.1.0"]);
+    }
+
+    #[tokio::test]
+    async fn test_circleci_orb_not_found() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body(r#"{"data":{"orb":null}}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestCircleCiProvider::new(server.url(), None).unwrap();
+        let res = provider
+            .get_latest_release(&DependencyName::from("circleci/nonexistent"), "orbs")
+            .await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_circleci_api_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let provider = ReqwestCircleCiProvider::new(server.url(), None).unwrap();
+        let res = provider
+            .list_tags(&DependencyName::from("circleci/node"), "orbs")
+            .await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_circleci_with_token() {
+        let provider = ReqwestCircleCiProvider::new(
+            "http://localhost".to_string(),
+            Some("test-token".to_string()),
+        )
+        .unwrap();
+        assert_eq!(provider.base_url, "http://localhost");
+    }
+
+    #[tokio::test]
+    async fn test_circleci_get_default_branch_unsupported() {
+        let provider = ReqwestCircleCiProvider::new("http://localhost".to_string(), None).unwrap();
+        let res = provider
+            .get_default_branch(&DependencyName::from("circleci/node"), "orbs")
+            .await;
+        assert!(matches!(res, Err(PinnerError::Unsupported(_))));
+    }
 }

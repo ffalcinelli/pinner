@@ -16,7 +16,7 @@ pub mod scanner;
 pub use cli::{Cli, Commands};
 pub use error::PinnerError;
 pub use patcher::{Formatter, Patcher};
-pub use resolver::{RegistryProvider, RemoteProvider, Resolver};
+pub use resolver::{CachedProvider, RegistryProvider, RemoteProvider, Resolver};
 pub use scanner::Scanner;
 
 use colored::Colorize;
@@ -54,17 +54,18 @@ impl Pipeline {
     }
 
     /// Upgrades dependencies to newer versions based on the configured strategy.
-    pub async fn upgrade(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
+    pub async fn upgrade(&self, paths: &[PathBuf], interactive: bool) -> Result<(), PinnerError> {
         let (tasks, file_contents) = self.scanner.collect_tasks(paths).await?;
-        let results = self.resolver.resolve_tasks(tasks, false).await?;
+        let mut results = self.resolver.resolve_tasks(tasks, false).await?;
+
+        if interactive {
+            results = self.patcher.ui.prompt_upgrade(results)?;
+        }
+
         self.patcher.apply_changes(results, file_contents).await
     }
 
     /// Verifies that all dependencies in the provided paths are pinned to an immutable hash.
-    ///
-    /// It uses heuristics to detect pinned versions:
-    /// - 40-character hex string (Git SHA-1).
-    /// - `sha256:` prefix followed by 64 hex characters (Docker digest).
     pub async fn verify(
         &self,
         paths: &[PathBuf],
@@ -73,14 +74,9 @@ impl Pipeline {
         let mut unpinned = Vec::new();
 
         for task in tasks {
-            // Heuristic for "pinned":
-            // - 40 chars hex (Git SHA)
-            // - 71 chars starting with sha256: (Docker Digest)
-            // - CircleCI Orbs are special; we consider them pinned if they have any tag
-            //   (since they are strictly versioned on their registry).
             let is_pinned = if let Some(tag) = &task.current_tag {
                 (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                    || (tag.starts_with("sha256:") && tag.len() == 71) // sha256: + 64 hex
+                    || (tag.starts_with("sha256:") && tag.len() == 71)
                     || (task.key == "orbs" && !tag.is_empty())
             } else {
                 false
@@ -153,6 +149,65 @@ impl Pipeline {
 
         self.patcher.apply_changes(results, file_contents).await
     }
+
+    /// Exports an SBOM for all dependencies in the provided paths.
+    pub async fn export_sbom(&self, paths: &[PathBuf]) -> Result<(), PinnerError> {
+        let (tasks, _) = self.scanner.collect_tasks(paths).await?;
+
+        #[derive(serde::Serialize)]
+        struct Sbom {
+            #[serde(rename = "bomFormat")]
+            bom_format: String,
+            #[serde(rename = "specVersion")]
+            spec_version: String,
+            components: Vec<Component>,
+        }
+
+        #[derive(serde::Serialize)]
+        struct Component {
+            name: String,
+            version: String,
+            #[serde(rename = "type")]
+            component_type: String,
+            purl: String,
+        }
+
+        let mut components = Vec::new();
+        for task in tasks {
+            let name = task.action.to_string();
+            let version = task
+                .current_tag
+                .clone()
+                .unwrap_or_else(|| "latest".to_string());
+            let (component_type, purl) = if name.contains('/') && !name.contains('.') {
+                (
+                    "library",
+                    format!("pkg:github/{}@{}", name, version.replace('@', "")),
+                )
+            } else {
+                ("container", format!("pkg:oci/{}@{}", name, version))
+            };
+
+            components.push(Component {
+                name,
+                version,
+                component_type: component_type.to_string(),
+                purl,
+            });
+        }
+
+        let sbom = Sbom {
+            bom_format: "CycloneDX".to_string(),
+            spec_version: "1.5".to_string(),
+            components,
+        };
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&sbom).map_err(|e| PinnerError::Config(e.to_string()))?
+        );
+        Ok(())
+    }
 }
 
 pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
@@ -163,8 +218,17 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
 ) -> Result<(), PinnerError> {
     let scanner = Scanner::new(cli.ignore.clone());
     let formatter = Formatter::new(cli.output_format(), cli.quiet);
+    let disk_cache = if cli.no_cache {
+        None
+    } else {
+        dirs::cache_dir().map(|mut p| {
+            p.push("pinner");
+            p
+        })
+    };
+
     let resolver = Resolver::new(
-        Arc::new(remote),
+        Arc::new(CachedProvider::new(remote, disk_cache)),
         Arc::new(registry),
         cli.upgrade_strategy.clone(),
         cli.concurrency.unwrap_or(10),
@@ -176,7 +240,7 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
 
     match cli.command {
         Commands::Pin => pipeline.pin(&paths).await?,
-        Commands::Upgrade => pipeline.upgrade(&paths).await?,
+        Commands::Upgrade { interactive } => pipeline.upgrade(&paths, interactive).await?,
         Commands::Verify => {
             let result = pipeline.verify(&paths).await?;
             if cli.output_format() == crate::cli::OutputFormat::Json {
@@ -194,7 +258,75 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         }
         Commands::Set { action, hash } => pipeline.set(&paths, &action, &hash).await?,
         Commands::InstallHook => install_git_hook()?,
+        Commands::Init => init_project()?,
+        Commands::ExportSbom => pipeline.export_sbom(&paths).await?,
         Commands::GenerateCompletion { .. } => {}
+    }
+
+    Ok(())
+}
+
+/// Initializes a new `.pinner.toml` configuration file with sensible defaults.
+pub fn init_project() -> Result<(), PinnerError> {
+    let mut config_lines = Vec::new();
+    config_lines.push("# Pinner configuration file".to_string());
+    config_lines
+        .push("# For full documentation, see: https://github.com/ffalcinelli/pinner".to_string());
+    config_lines.push("".to_string());
+
+    let mut detected = Vec::new();
+    if std::path::Path::new(".github/workflows").exists() {
+        detected.push("GitHub Actions");
+    }
+    if std::path::Path::new(".gitlab-ci.yml").exists() {
+        detected.push("GitLab CI");
+    }
+    if std::path::Path::new("bitbucket-pipelines.yml").exists()
+        || std::path::Path::new("bitbucket-pipelines.yaml").exists()
+    {
+        detected.push("Bitbucket Pipelines");
+    }
+    if std::path::Path::new(".forgejo/workflows").exists() {
+        detected.push("Forgejo/Gitea");
+    }
+    if std::path::Path::new(".circleci/config.yml").exists() {
+        detected.push("CircleCI");
+    }
+
+    if !detected.is_empty() {
+        println!(
+            "{} Detected CI systems: {}",
+            "✔".green().bold(),
+            detected.join(", ").cyan()
+        );
+    } else {
+        println!(
+            "{} No CI systems detected, using defaults.",
+            "⚠".yellow().bold()
+        );
+    }
+
+    config_lines.push("# Automatically confirm all replacements".to_string());
+    config_lines.push("yes = false".to_string());
+    config_lines.push("".to_string());
+    config_lines.push("# Upgrade strategy: latest, major, minor, commit".to_string());
+    config_lines.push("upgrade_strategy = \"latest\"".to_string());
+    config_lines.push("".to_string());
+    config_lines.push("# Actions or images to ignore".to_string());
+    config_lines.push("ignore = []".to_string());
+    config_lines.push("".to_string());
+    config_lines.push("# Number of concurrent API requests".to_string());
+    config_lines.push("concurrency = 10".to_string());
+
+    let config_path = std::path::PathBuf::from(".pinner.toml");
+    if config_path.exists() {
+        println!(
+            "{} .pinner.toml already exists, skipping creation.",
+            "ℹ".blue().bold()
+        );
+    } else {
+        fs::write(&config_path, config_lines.join("\n"))?;
+        println!("{} Created .pinner.toml", "✔".green().bold());
     }
 
     Ok(())
