@@ -36,6 +36,9 @@ async fn main() -> ExitCode {
 pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
     if let pinner::Commands::GenerateCompletion { shell } = cli.command {
         let mut cmd = Cli::command();
+        let shell = shell.or_else(detect_shell).context(
+            "Could not detect current shell. Please specify it explicitly (e.g., bash, zsh, fish).",
+        )?;
         clap_complete::generate(shell, &mut cmd, "pinner", &mut std::io::stdout());
         return Ok(());
     }
@@ -55,6 +58,15 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
         .try_init()
         .ok();
 
+    let disk_cache = if cli.no_cache {
+        None
+    } else {
+        dirs::cache_dir().map(|mut p| {
+            p.push("pinner");
+            p
+        })
+    };
+
     let provider =
         pinner::resolver::UnifiedProvider::new(pinner::resolver::UnifiedProviderConfig {
             github_url: cli.github_url.clone(),
@@ -65,8 +77,13 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
             gitlab_token: cli.gitlab_token.clone(),
             forgejo_url: cli.forgejo_url.clone(),
             forgejo_token: cli.forgejo_token.clone(),
+            circleci_url: cli.circleci_url.clone(),
+            circleci_token: cli.circleci_token.clone(),
+            disk_cache_path: disk_cache,
+            offline: cli.offline,
         })?;
-    let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone());
+    let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone())
+        .with_offline(cli.offline);
 
     // Determine the workflows directory to process
     let workflows_to_process = get_workflows(&cli.workflows);
@@ -118,11 +135,57 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
     }
 }
 
+fn detect_shell() -> Option<clap_complete::Shell> {
+    let shell_env = std::env::var("SHELL").ok()?;
+    let shell_path = Path::new(&shell_env);
+    let shell_name = shell_path.file_name()?.to_str()?;
+
+    if shell_name.contains("bash") {
+        Some(clap_complete::Shell::Bash)
+    } else if shell_name.contains("zsh") {
+        Some(clap_complete::Shell::Zsh)
+    } else if shell_name.contains("fish") {
+        Some(clap_complete::Shell::Fish)
+    } else if shell_name.contains("elvish") {
+        Some(clap_complete::Shell::Elvish)
+    } else if shell_name.contains("powershell") || shell_name.contains("pwsh") {
+        Some(clap_complete::Shell::PowerShell)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_detect_shell() {
+        let original_shell = std::env::var("SHELL");
+
+        std::env::set_var("SHELL", "/bin/bash");
+        assert_eq!(detect_shell(), Some(clap_complete::Shell::Bash));
+
+        std::env::set_var("SHELL", "/usr/bin/zsh");
+        assert_eq!(detect_shell(), Some(clap_complete::Shell::Zsh));
+
+        std::env::set_var("SHELL", "/usr/local/bin/fish");
+        assert_eq!(detect_shell(), Some(clap_complete::Shell::Fish));
+
+        std::env::set_var("SHELL", "pwsh");
+        assert_eq!(detect_shell(), Some(clap_complete::Shell::PowerShell));
+
+        std::env::set_var("SHELL", "/bin/unknown");
+        assert_eq!(detect_shell(), None);
+
+        if let Ok(val) = original_shell {
+            std::env::set_var("SHELL", val);
+        } else {
+            std::env::remove_var("SHELL");
+        }
+    }
 
     #[test]
     fn test_get_workflows_cli_priority() {

@@ -13,6 +13,9 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 unmaintained = "workspace"
 unsound = "all"
 yanked = "deny"
+ignore = [
+    "RUSTSEC-2023-0071", # Marvin Attack: timing sidechannel in rsa (no fix available, CLI usage only)
+]
 
 [licenses]
 # Allow common open source licenses
@@ -24,6 +27,8 @@ allow = [
     "MPL-2.0",
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
+    "Zlib",
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 

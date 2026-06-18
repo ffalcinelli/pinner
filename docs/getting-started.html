@@ -30,22 +30,28 @@
             padding: 1rem;
             overflow-x: auto;
         }
+        @media (min-width: 768px) {
+            pre {
+                white-space: pre-wrap !important;
+                word-wrap: break-word;
+            }
+        }
     </style>
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
     <!-- Navbar -->
-    <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+    <nav class="flex items-center justify-between px-4 md:px-8 py-6 max-w-7xl mx-auto">
         <div class="flex items-center space-x-2">
             <a href="index.html" class="flex items-center space-x-2 group">
                 <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
                 <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
             </a>
         </div>
-        <div class="flex items-center space-x-6 text-sm font-medium">
-            <a href="getting-started.html" class="text-sky-400 transition-colors font-bold"><i class="fas fa-rocket mr-2"></i>Getting Started</a>
-            <a href="configuration.html" class="hover:text-sky-400 transition-colors"><i class="fas fa-cog mr-2"></i>Configuration</a>
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
-            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors"><i class="fas fa-book mr-2"></i>API Docs</a>
+        <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
+            <a href="getting-started.html" class="text-sky-400 transition-colors font-bold" title="Getting Started"><i class="fas fa-rocket md:mr-2"></i><span class="hidden md:inline">Getting Started</span></a>
+            <a href="configuration.html" class="hover:text-sky-400 transition-colors" title="Configuration"><i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Configuration</span></a>
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors" title="GitHub"><i class="fab fa-github md:mr-2"></i><span class="hidden md:inline">GitHub</span></a>
+            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors" title="API Docs"><i class="fas fa-book md:mr-2"></i><span class="hidden md:inline">API Docs</span></a>
         </div>
     </nav>
 
@@ -137,10 +143,38 @@
             </p>
         </div>
 
-        <!-- Step 3: Supported Platforms -->
+        <!-- Step 3: Security Scan -->
         <div class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
                 <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">3</span>
+                Security Scan & Vetting
+            </h2>
+            
+            <p class="text-gray-400 mb-6">
+                Audit your dependencies for vulnerabilities. Pinner queries the OpenSSF OSV database for both current pinned hashes and proposed upgrade candidates, and executes Sigstore/Cosign signature/provenance checks on OCI container images automatically.
+                Run the <code class="text-sky-300">scan</code> command to inspect your dependencies:
+            </p>
+
+            <div class="terminal rounded-xl overflow-hidden border border-gray-800">
+                <div class="p-6 font-mono text-sm md:text-base leading-relaxed">
+                    <p class="mb-2 text-gray-500">$ pinner scan</p>
+                    <p class="mb-2 text-emerald-400">Scanning dependencies with OSV database...</p>
+                    <p class="mb-2 text-emerald-400">✔ Clean Dependencies:</p>
+                    <p class="mb-2 text-white">  actions/checkout@8f4b7f84... (Upgrade candidate: df4cb1c0... # v6.0.3)</p>
+                    <p class="mb-2 text-white">  alpine@sha256:12345... (Upgrade candidate: sha256:67890...)</p>
+                    <p class="mb-2 text-emerald-400 font-bold mt-4">Select clean dependencies to add to the vetted whitelist in .pinner.toml: [actions/checkout@8f4b7f84..., actions/checkout@df4cb1c0...]</p>
+                </div>
+            </div>
+            
+            <p class="text-gray-400 mt-6">
+                This adds vetted hashes to your whitelist in <code class="text-gray-300">.pinner.toml</code>. When proposing upgrades or pinning, Pinner displays visual feedback (e.g. <span class="text-emerald-400 font-bold">[✓ vetted]</span>) to ensure supply-chain integrity.
+            </p>
+        </div>
+
+        <!-- Step 4: Supported Platforms -->
+        <div class="mb-16">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">4</span>
                 Supported Platforms & Forges
             </h2>
             
@@ -177,19 +211,29 @@
                             <td class="px-6 py-4">https://codeberg.org</td>
                         </tr>
                         <tr>
-                            <td class="px-6 py-4 text-white font-medium">OCI / Docker</td>
-                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">OCI_USERNAME</code>, <code class="text-sky-300 text-xs">OCI_PASSWORD</code></td>
-                            <td class="px-6 py-4">Multiple Registries</td>
+                            <td class="px-6 py-4 text-white font-medium">Azure Marketplace</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">GITHUB_TOKEN</code></td>
+                            <td class="px-6 py-4">Monorepo Mapping</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium">AWS ECR</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">PINNER_OCI_PASSWORD</code></td>
+                            <td class="px-6 py-4">Private Registries</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium">CircleCI</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">CIRCLECI_TOKEN</code></td>
+                            <td class="px-6 py-4">Docker Image Pinning</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <!-- Step 4: Configuration -->
+        <!-- Step 5: Configuration -->
         <div class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">4</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">5</span>
                 Configuration File
             </h2>
             
@@ -210,15 +254,49 @@ gitlab_url = "https://gitlab.mycompany.com/api/v4"</code></pre>
             </div>
         </div>
 
-        <!-- Step 5: Verification -->
+        <!-- Step 6: Verification -->
         <div class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">5</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">6</span>
                 Verify in CI
             </h2>
             
             <p class="text-gray-400 mb-6">
-                Prevent unpinned actions from being merged into your codebase by adding Pinner to your CI pipeline.
+                Prevent unpinned actions from being merged into your codebase by adding Pinner to your CI pipeline. You can use the native GitHub Action:
+            </p>
+
+            <div class="card p-6 rounded-xl mb-6">
+                <pre class="text-xs md:text-sm text-gray-300"><code>name: Pinning Check
+on: [pull_request]
+
+jobs:
+  verify-pinning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
+      - name: Verify Pinning
+        uses: ffalcinelli/pinner/action@main
+        with:
+          command: 'verify'</code></pre>
+            </div>
+
+            <!-- Pinnerception Warning -->
+            <div class="p-5 mb-8 bg-sky-500/5 border border-sky-500/20 rounded-xl flex items-start space-x-4">
+                <div class="flex-shrink-0 mt-1 text-sky-400">
+                    <i class="fas fa-rotate text-xl animate-spin" style="animation-duration: 4s;"></i>
+                </div>
+                <div>
+                    <h4 class="text-sm font-bold text-white mb-1.5 flex items-center">
+                        Pinnerception Warning <span class="ml-2 px-1.5 py-0.5 bg-sky-500/10 text-sky-400 text-[9px] rounded uppercase tracking-wider">Recursive</span>
+                    </h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        Remember to pin the pinner! Trusting a security tool to verify your pinned dependencies using a mutable tag is like hiring a security guard who leaves the keys under the doormat. If we didn't pin the pinner, who would pin the pinner's pinners? (Warning: may cause mild existential dread or recursive loops in your CI logs).
+                    </p>
+                </div>
+            </div>
+
+            <p class="text-gray-400 mb-6">
+                Alternatively, you can install the CLI tool directly:
             </p>
 
             <div class="card p-6 rounded-xl">
@@ -237,10 +315,10 @@ jobs:
             </div>
         </div>
 
-        <!-- Step 6: Code Completion -->
+        <!-- Step 7: Code Completion -->
         <div class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">6</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">7</span>
                 Shell Completion
             </h2>
             

@@ -23,6 +23,7 @@ async fn test_full_pin_cycle() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--github-url",
         &github_server.url(),
         "--workflows",
@@ -34,13 +35,7 @@ async fn test_full_pin_cycle() {
 
     let provider = UnifiedProvider::new(UnifiedProviderConfig {
         github_url: cli.github_url.clone(),
-        github_token: cli.github_token.clone(),
-        bitbucket_url: cli.bitbucket_url.clone(),
-        bitbucket_token: cli.bitbucket_token.clone(),
-        gitlab_url: cli.gitlab_url.clone(),
-        gitlab_token: cli.gitlab_token.clone(),
-        forgejo_url: cli.forgejo_url.clone(),
-        forgejo_token: cli.forgejo_token.clone(),
+        ..Default::default()
     })
     .unwrap();
     let registry = OciRegistryProvider::new(None, None);
@@ -63,6 +58,7 @@ async fn test_verify_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         workflows.to_str().unwrap(),
         "verify",
@@ -91,6 +87,7 @@ async fn test_verify_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         workflows.to_str().unwrap(),
         "verify",
@@ -135,6 +132,7 @@ jobs:
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         workflows.to_str().unwrap(),
         "verify",
@@ -163,8 +161,15 @@ async fn test_github_url_env() {
 
     std::env::set_var("PINNER_GITHUB_URL", server.url());
 
-    let cli = Cli::try_parse_from(["pinner", "--workflows", f.to_str().unwrap(), "--yes", "pin"])
-        .unwrap();
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--no-cache",
+        "--workflows",
+        f.to_str().unwrap(),
+        "--yes",
+        "pin",
+    ])
+    .unwrap();
 
     let provider = UnifiedProvider::new(UnifiedProviderConfig {
         github_url: cli.github_url.clone(),
@@ -201,6 +206,7 @@ async fn test_upgrade_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--github-url",
         &github_server.url(),
         "--workflows",
@@ -226,6 +232,58 @@ async fn test_upgrade_command() {
 }
 
 #[tokio::test]
+async fn test_upgrade_command_does_not_upgrade_to_branch() {
+    let mut github_server = Server::new_async().await;
+    let _m1 = github_server
+        .mock("GET", "/repos/snyk/actions/releases/latest")
+        .with_status(404)
+        .create_async()
+        .await;
+    let _m2 = github_server
+        .mock("GET", "/repos/snyk/actions")
+        .with_status(200)
+        .with_body(r#"{"default_branch":"main"}"#)
+        .create_async()
+        .await;
+
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(
+        &wf,
+        "uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0",
+    )
+    .unwrap();
+
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--no-cache",
+        "--github-url",
+        &github_server.url(),
+        "--workflows",
+        wf.to_str().unwrap(),
+        "--yes",
+        "upgrade",
+    ])
+    .unwrap();
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig {
+        github_url: cli.github_url.clone(),
+        ..Default::default()
+    })
+    .unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    run(cli, provider, registry, vec![wf.clone()])
+        .await
+        .unwrap();
+
+    let content = fs::read_to_string(&wf).unwrap();
+    assert!(
+        content.contains("snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0")
+    );
+}
+
+#[tokio::test]
 async fn test_set_command() {
     let dir = tempdir().unwrap();
     let wf = dir.path().join("ci.yml");
@@ -233,6 +291,7 @@ async fn test_set_command() {
 
     let cli = Cli::try_parse_from([
         "pinner",
+        "--no-cache",
         "--workflows",
         wf.to_str().unwrap(),
         "--yes",

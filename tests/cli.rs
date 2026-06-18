@@ -62,6 +62,7 @@ fn test_cli_env_override() {
     // Use a non-existent URL to force a failure that confirms the env var is read
     let mut cmd = Command::cargo_bin("pinner").unwrap();
     cmd.env("PINNER_GITHUB_URL", "http://invalid-url-pinner-test")
+        .env("PINNER_NO_CACHE", "true")
         .arg("--workflows")
         .arg(wf.to_str().unwrap())
         .arg("--yes")

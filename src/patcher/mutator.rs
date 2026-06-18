@@ -3,6 +3,10 @@ use crate::error::PinnerError;
 use regex::Regex;
 use std::sync::LazyLock;
 
+/// Regex used to identify "version-only" comments that should be replaced during an update.
+///
+/// If a comment matches this pattern (e.g., `# v1`, `# main`), it is considered a
+/// placeholder for the dependency version and is replaced by the new version's tag.
 static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
         .expect("Failed to compile COMMENT_REGEX")
@@ -11,46 +15,18 @@ static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Applies an update to the string content of a YAML file.
 ///
 /// This function surgically modifies the source text at the precise byte offsets
-/// identified during the scanning phase. It handles comment preservation, appending
-/// the old tag as a comment if necessary, and formatting the dependency URI correctly
-/// based on the CI provider key.
+/// identified during the scanning phase. It handles:
+/// 1. Preservation of existing non-version comments.
+/// 2. Appending the old tag as a comment for readability (security best practice).
+/// 3. Correct separator usage (`@` for most, `:` for Bitbucket pipes).
 ///
-/// # Examples
-///
-/// ```
-/// use pinner::core::{DependencyName, DependencyRef, UpdateResult, UpdateTask};
-/// use pinner::patcher::mutator::apply_update;
-/// use std::path::PathBuf;
-///
-/// let mut content = "uses: actions/checkout@v3 # keep me".to_string();
-/// let res = UpdateResult {
-///     action: DependencyName::from("actions/checkout"),
-///     path: PathBuf::from("f.yml"),
-///     old_tag: Some("v3".to_string()),
-///     task: UpdateTask {
-///         path: PathBuf::from("f.yml"),
-///         start: 6,
-///         end: 25,
-///         line: 1,
-///         column: 1,
-///         action: DependencyName::from("actions/checkout"),
-///         current_tag: Some("v3".to_string()),
-///         comment: Some("# keep me".to_string()),
-///         key: "uses".to_string(),
-///         provider: pinner::core::CiProvider::GitHub,
-///     },
-///     new_sha: DependencyRef::from("hashv3".to_string()),
-///     new_tag: Some("v3".to_string()),
-/// };
-///
-/// let result = apply_update(&mut content, &res).unwrap();
-/// assert!(result.is_some());
-/// assert_eq!(content, "uses: actions/checkout@hashv3 # v3 # keep me");
-/// ```
+/// Returns `Ok(Some((old_text, new_text)))` if a change was applied, or `Ok(None)` if
+/// the content remains identical.
 pub fn apply_update(
     content: &mut String,
     res: &UpdateResult,
 ) -> Result<Option<(String, String)>, PinnerError> {
+    // Determine the end of the line to capture any existing trailing comments.
     let line_end = content[res.task.end..]
         .find('\n')
         .map(|pos| res.task.end + pos)
@@ -59,26 +35,32 @@ pub fn apply_update(
     let old_val_with_suffix = &content[res.task.start..line_end];
     let suffix = &content[res.task.end..line_end];
 
+    // logic to handle existing comments:
+    // If the comment was just the version (e.g., "# v1"), we want to replace it.
+    // If it contained more info (e.g., "# v1 # important"), we want to keep the extra info.
     let mut final_suffix = suffix.trim_start().to_string();
     if let Some(parser_comment) = &res.task.comment {
-        let c = parser_comment.trim_start_matches('#').trim();
         if let Some(mat) = COMMENT_REGEX.find(parser_comment) {
-            let matched_comment = mat.as_str().trim_start_matches('#').trim();
-            if matched_comment == c {
-                final_suffix = "".to_string();
-            }
+            // Strip the version part but keep the rest.
+            final_suffix = parser_comment[mat.end()..].trim_start().to_string();
+        } else {
+            final_suffix = parser_comment.clone();
         }
     } else if let Some(mat) = COMMENT_REGEX.find(&final_suffix) {
         final_suffix = final_suffix[mat.end()..].trim_start().to_string();
-        if final_suffix.starts_with('#') {
-            final_suffix = final_suffix[1..].trim_start().to_string();
-        }
     }
 
+    // Ensure we don't have a double # at the start if we stripped the first one.
+    if final_suffix.starts_with('#') {
+        final_suffix = final_suffix[1..].trim_start().to_string();
+    }
+
+    // Prepare the new comment showing the symbolic tag (e.g., " # v3").
     let new_comment = if let Some(t) = &res.new_tag {
         let is_sha =
             (t.len() == 40 && t.chars().all(|c| c.is_ascii_hexdigit())) || t.starts_with("sha256:");
         if is_sha {
+            // Don't add a comment if the tag is already a SHA or digest.
             "".to_string()
         } else {
             format!(" # {}", t)
@@ -87,6 +69,7 @@ pub fn apply_update(
         "".to_string()
     };
 
+    // Reconstruct the trailing part of the line, merging the new version comment with any existing comments.
     let extra_suffix = if final_suffix.is_empty() {
         "".to_string()
     } else if final_suffix.starts_with('#') {
@@ -110,6 +93,7 @@ pub fn apply_update(
     }
 
     let old_val = old_val_with_suffix.to_string();
+    // Surgically replace the range in the original content string.
     content.replace_range(res.task.start..line_end, &new_val);
     Ok(Some((old_val, new_val)))
 }
@@ -255,5 +239,78 @@ mod tests {
 
         apply_update(&mut content, &res).unwrap();
         assert_eq!(content, "ref: hash # v1");
+    }
+
+    #[test]
+    fn test_apply_update_no_newline_at_end() {
+        let mut content = "uses: o/r@v1".to_string(); // No newline
+        let res = UpdateResult {
+            action: "o/r".into(),
+            path: "f.yml".into(),
+            old_tag: Some("v1".to_string()),
+            task: UpdateTask {
+                path: "f.yml".into(),
+                start: 6,
+                end: 12,
+                action: "o/r".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            new_sha: DependencyRef::from("hash".to_string()),
+            new_tag: Some("v1".to_string()),
+        };
+
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "uses: o/r@hash # v1");
+    }
+
+    #[test]
+    fn test_apply_update_complex_comments() {
+        let mut content = "uses: o/r@v1  # v1 # keep # me".to_string();
+        let res = UpdateResult {
+            action: "o/r".into(),
+            path: "f.yml".into(),
+            old_tag: Some("v1".to_string()),
+            task: UpdateTask {
+                path: "f.yml".into(),
+                start: 6,
+                end: 12,
+                action: "o/r".into(),
+                current_tag: Some("v1".to_string()),
+                comment: Some("# v1 # keep # me".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            new_sha: DependencyRef::from("hash".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "uses: o/r@hash # v2 # keep # me");
+    }
+
+    #[test]
+    fn test_apply_update_docker_digest() {
+        let mut content = "image: alpine:latest".to_string();
+        let res = UpdateResult {
+            action: "alpine".into(),
+            path: "f.yml".into(),
+            old_tag: Some("latest".to_string()),
+            task: UpdateTask {
+                path: "f.yml".into(),
+                start: 7,
+                end: 20,
+                action: "alpine".into(),
+                current_tag: Some("latest".to_string()),
+                key: "image".to_string(),
+                ..Default::default()
+            },
+            new_sha: DependencyRef::from("sha256:digest".to_string()),
+            new_tag: Some("latest".to_string()),
+        };
+
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "image: alpine@sha256:digest # latest");
     }
 }

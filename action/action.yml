@@ -1,0 +1,120 @@
+name: 'Pinner Actions Pinning'
+description: 'Secure CI/CD workflows by hash-pinning mutable action tags and container images to immutable commit SHAs/digests.'
+author: 'Fabio Falcinelli'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  command:
+    description: 'The pinner subcommand to run: verify (default), pin, upgrade, set, export-sbom, scan, init.'
+    required: false
+    default: 'verify'
+  workflows:
+    description: 'Workflow files or directories to process (comma-separated or single directory).'
+    required: false
+  yes:
+    description: 'Automatically confirm all replacements (default: true).'
+    required: false
+    default: 'true'
+  dry-run:
+    description: 'Print what would be changed without modifying any files.'
+    required: false
+    default: 'false'
+  offline:
+    description: 'Force offline mode, preventing any network requests (default: false).'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for authentication/rate limits (defaults to github.token).'
+    required: false
+    default: '${{ github.token }}'
+  gitlab-token:
+    description: 'GitLab token for authentication.'
+    required: false
+  bitbucket-token:
+    description: 'Bitbucket token for authentication.'
+    required: false
+  forgejo-token:
+    description: 'Forgejo token for authentication.'
+    required: false
+  circleci-token:
+    description: 'CircleCI token for authentication.'
+    required: false
+  format:
+    description: 'Output results in the specified format: text, json, markdown.'
+    required: false
+    default: 'text'
+  upgrade-strategy:
+    description: 'Strategy to use when upgrading actions: latest, major, minor, commit.'
+    required: false
+    default: 'latest'
+  concurrency:
+    description: 'Number of concurrent API requests.'
+    required: false
+  ignore:
+    description: 'Comma-separated list of actions or images to ignore.'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Pinner
+      shell: bash
+      run: |
+        if ! command -v pinner &> /dev/null; then
+          echo "Installing pinner..."
+          curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
+        else
+          echo "pinner is already installed."
+        fi
+
+    - name: Run Pinner
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITLAB_TOKEN: ${{ inputs.gitlab-token }}
+        BITBUCKET_TOKEN: ${{ inputs.bitbucket-token }}
+        FORGEJO_TOKEN: ${{ inputs.forgejo-token }}
+        CIRCLECI_TOKEN: ${{ inputs.circleci-token }}
+      run: |
+        ARGS=""
+        
+        if [ "${{ inputs.yes }}" = "true" ]; then
+          ARGS="$ARGS --yes"
+        fi
+        
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          ARGS="$ARGS --dry-run"
+        fi
+        
+        if [ "${{ inputs.offline }}" = "true" ]; then
+          ARGS="$ARGS --offline"
+        fi
+        
+        if [ -n "${{ inputs.workflows }}" ]; then
+          # Split by comma if multiple workflows provided, otherwise pass directly
+          IFS=',' read -ra ADDR <<< "${{ inputs.workflows }}"
+          for path in "${ADDR[@]}"; do
+            ARGS="$ARGS --workflows $path"
+          done
+        fi
+        
+        if [ -n "${{ inputs.format }}" ]; then
+          ARGS="$ARGS --format ${{ inputs.format }}"
+        fi
+        
+        if [ -n "${{ inputs.upgrade-strategy }}" ]; then
+          ARGS="$ARGS --upgrade-strategy ${{ inputs.upgrade-strategy }}"
+        fi
+        
+        if [ -n "${{ inputs.concurrency }}" ]; then
+          ARGS="$ARGS --concurrency ${{ inputs.concurrency }}"
+        fi
+        
+        if [ -n "${{ inputs.ignore }}" ]; then
+          ARGS="$ARGS --ignore ${{ inputs.ignore }}"
+        fi
+        
+        echo "Running: pinner $ARGS ${{ inputs.command }}"
+        pinner $ARGS ${{ inputs.command }}

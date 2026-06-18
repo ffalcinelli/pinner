@@ -3,12 +3,12 @@
 ## Project Overview
 `pinner` is a high-performance Rust CLI utility designed to hash-pin actions and Docker images in CI/CD workflow files. It automates the security best practice of replacing mutable tags (like `@v1` or `:latest`) with immutable commit SHA-1 hashes or digest hashes to prevent supply chain attacks. It supports multiple platforms including GitHub, GitLab, Bitbucket, Forgejo, and OCI registries.
 
-- **Status**: Production-ready core with comprehensive tests and multi-platform support.
+- **Status**: Production-ready core with exceptionally high test coverage, comprehensive public API documentation (rustdoc), and detailed internal comments.
 - **Architecture**: A strict Domain-Driven Pipeline separated into three phases:
-  1. **Scanner**: Traverses files concurrently and uses `tree-sitter-yaml` for AST-based parsing, returning pure `UpdateTask` domain models.
-  2. **Resolver**: Maps tasks to immutable hashes concurrently using `Reqwest`-based specialized clients (`github`, `gitlab`, `registry`, etc.) governed by a `UnifiedProvider`.
+  1. **Scanner**: Traverses files concurrently and uses `tree-sitter-yaml` for robust AST-based parsing, returning pure `UpdateTask` domain models.
+  2. **Resolver**: Maps tasks to immutable hashes concurrently using `Reqwest`-based specialized clients (`github`, `gitlab`, `registry`, etc.) governed by a `UnifiedProvider`. Handles caching and rate-limiting gracefully.
   3. **Patcher**: Surgically applies string mutations to preserve exact formatting and YAML comments, then handles file writing and diff formatting.
-- **Dependency Injection**: Network clients and registries are heavily trait-based (`RemoteProvider`, `RegistryProvider`) allowing for 100% offline unit testing via `mockall`.
+- **Dependency Injection**: Network clients and registries are heavily trait-based (`RemoteProvider`, `RegistryProvider`) allowing for extensive offline unit testing via `mockall` and HTTP mocking via `mockito`.
 
 ## Technology Stack
 - **Language**: Rust (2021 Edition)

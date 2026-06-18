@@ -30,6 +30,12 @@
             padding: 1rem;
             overflow-x: auto;
         }
+        @media (min-width: 768px) {
+            pre {
+                white-space: pre-wrap !important;
+                word-wrap: break-word;
+            }
+        }
         code {
             color: #38bdf8;
         }
@@ -37,18 +43,18 @@
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
     <!-- Navbar -->
-    <nav class="flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+    <nav class="flex items-center justify-between px-4 md:px-8 py-6 max-w-7xl mx-auto">
         <div class="flex items-center space-x-2">
             <a href="index.html" class="flex items-center space-x-2 group">
                 <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
                 <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
             </a>
         </div>
-        <div class="flex items-center space-x-6 text-sm font-medium">
-            <a href="getting-started.html" class="hover:text-sky-400 transition-colors"><i class="fas fa-rocket mr-2"></i>Getting Started</a>
-            <a href="configuration.html" class="text-sky-400 transition-colors font-bold"><i class="fas fa-cog mr-2"></i>Configuration</a>
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors"><i class="fab fa-github mr-2"></i>GitHub</a>
-            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors"><i class="fas fa-book mr-2"></i>API Docs</a>
+        <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
+            <a href="getting-started.html" class="hover:text-sky-400 transition-colors" title="Getting Started"><i class="fas fa-rocket md:mr-2"></i><span class="hidden md:inline">Getting Started</span></a>
+            <a href="configuration.html" class="text-sky-400 transition-colors font-bold" title="Configuration"><i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Configuration</span></a>
+            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors" title="GitHub"><i class="fab fa-github md:mr-2"></i><span class="hidden md:inline">GitHub</span></a>
+            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors" title="API Docs"><i class="fas fa-book md:mr-2"></i><span class="hidden md:inline">API Docs</span></a>
         </div>
     </nav>
 
@@ -122,6 +128,7 @@
                     </div>
                     <p class="text-gray-400">Actions or images to ignore (e.g., "actions/checkout"). Can be used multiple times.</p>
                 </div>
+
             </div>
         </div>
 
@@ -155,9 +162,29 @@
                     <p class="text-gray-400">Forcibly sets a specific action to a provided hash across all matching occurrences in your workflows.</p>
                 </div>
 
+                <div class="border-l-2 border-orange-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">install-hook</h3>
+                    <p class="text-gray-400">Installs a git pre-commit hook in your local repository that automatically runs <code>pinner verify</code> before every commit.</p>
+                </div>
+
+                <div class="border-l-2 border-teal-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">init</h3>
+                    <p class="text-gray-400">Automatically initializes a <code>.pinner.toml</code> configuration file for your repository with sensible defaults.</p>
+                </div>
+
+                <div class="border-l-2 border-pink-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">export-sbom</h3>
+                    <p class="text-gray-400">Generates and exports a Software Bill of Materials (SBOM) for all actions and images used in your workflows.</p>
+                </div>
+
+                <div class="border-l-2 border-red-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">scan</h3>
+                    <p class="text-gray-400">Queries the OpenSSF OSV database for both current dependency commit hashes and upgrade candidates, performs Cosign/Sigstore signature verification for OCI images, and prompts to save vetted whitelists and compromised blacklists.</p>
+                </div>
+
                 <div class="border-l-2 border-gray-500/30 pl-6">
-                    <h3 class="text-xl font-bold text-white mb-2">generate-completion &lt;SHELL&gt;</h3>
-                    <p class="text-gray-400">Generates shell completion scripts for Bash, Zsh, Fish, Powershell, or Elvish.</p>
+                    <h3 class="text-xl font-bold text-white mb-2">generate-completion [SHELL]</h3>
+                    <p class="text-gray-400">Generates shell completion scripts for Bash, Zsh, Fish, Powershell, or Elvish. If the shell is omitted, Pinner will attempt to detect your current shell automatically.</p>
                 </div>
             </div>
         </div>
@@ -202,25 +229,39 @@
                             <td class="px-6 py-4">-</td>
                         </tr>
                         <tr>
-                            <td class="px-6 py-4 text-white font-medium"><code>GITHUB_URL</code></td>
-                            <td class="px-6 py-4">Custom GitHub API URL</td>
-                            <td class="px-6 py-4">https://api.github.com</td>
-                        </tr>
-                        <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>OCI_USERNAME</code></td>
-                            <td class="px-6 py-4">Username for OCI Registries</td>
+                            <td class="px-6 py-4">Username for OCI Registries (Use <code>AWS</code> for ECR)</td>
                             <td class="px-6 py-4">-</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>OCI_PASSWORD</code></td>
-                            <td class="px-6 py-4">Password for OCI Registries</td>
+                            <td class="px-6 py-4">Password for OCI Registries (ECR login token)</td>
                             <td class="px-6 py-4">-</td>
                         </tr>
-                    </tbody>
-                </table>
-            </div>
+                        </tbody>
+                        </table>
+                        </div>
 
-            <h3 class="text-lg font-bold text-white mb-4">Configuration Overrides</h3>
+                        <h3 class="text-lg font-bold text-white mb-4">Cloud Provider Notes</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+                        <div class="card p-6 rounded-xl">
+                        <h4 class="text-white font-bold mb-2">AWS ECR</h4>
+                        <p class="text-sm text-gray-400">To pin private ECR images, pass the token from the AWS CLI:</p>
+                        <pre class="mt-4 text-xs"><code>PINNER_OCI_USERNAME=AWS \
+                        PINNER_OCI_PASSWORD=$(aws ecr get-login-password) \
+                        pinner pin</code></pre>
+                        </div>
+                        <div class="card p-6 rounded-xl">
+                        <h4 class="text-white font-bold mb-2">Azure Marketplace</h4>
+                        <p class="text-sm text-gray-400">Azure DevOps tasks are mapped to the <code>microsoft/azure-pipelines-tasks</code> monorepo to resolve SHAs from the latest releases.</p>
+                        </div>
+                        <div class="card p-6 rounded-xl">
+                        <h4 class="text-white font-bold mb-2">CircleCI</h4>
+                        <p class="text-sm text-gray-400">Pinner supports pinning Docker images (<code>cimg/*</code>) used in CircleCI workflows. CircleCI Orbs use semantic versions and are not hash-pinned.</p>
+                        </div>
+                        </div>
+
+                        <h3 class="text-lg font-bold text-white mb-4">Configuration Overrides</h3>
             <p class="text-gray-400 mb-6">Any setting from <code>.pinner.toml</code> can be overridden using an environment variable with the <code>PINNER_</code> prefix.</p>
             <div class="overflow-x-auto rounded-xl border border-gray-800 card">
                 <table class="min-w-full text-left text-sm">
@@ -258,7 +299,7 @@
                 Create a <code>.pinner.toml</code> file in your repository root to persist settings and share them with your team.
             </p>
 
-            <div class="card p-8 rounded-xl">
+            <div class="card p-8 rounded-xl mb-12">
                 <h3 class="text-lg font-bold text-white mb-4">Example .pinner.toml</h3>
                 <pre class="text-sm"><code># Actions to exclude from processing
 ignore = ["actions/checkout", "my-org/private-repo"]
@@ -268,8 +309,43 @@ concurrency = 5
 
 # API URL overrides (for Enterprise)
 github_url = "https://github.mycompany.com/api/v3"
-gitlab_url = "https://gitlab.mycompany.com/api/v4"</code></pre>
+gitlab_url = "https://gitlab.mycompany.com/api/v4"
+
+# Whitelist of vetted dependency hashes/references (supports plain strings or maps)
+vetted = [
+    # Plain string format (backwards compatible)
+    "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332",
+
+    # Structured format with original tag and timestamp of insertion
+    { ref = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", tag = "v6.0.3", timestamp = "2026-06-18T15:28:25Z" }
+]
+
+# Blacklist of compromised dependency hashes/references
+compromised = [
+    "actions/checkout@badhash1234567890badhash1234567890bad",
+    { ref = "actions/checkout@evilhash1234567890evilhash1234567890bad", tag = "v3.1.0", timestamp = "2026-06-18T15:28:25Z" }
+]
+
+# Disable visual security feedback (default: false)
+no_security_feedback = false</code></pre>
             </div>
+
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <i class="fas fa-globe text-sky-400 mr-4"></i> Global Configuration & Overrides
+            </h2>
+            
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Pinner automatically loads security configurations from global user locations, allowing you to share whitelists and blacklists across multiple repositories:
+            </p>
+            <ul class="list-disc pl-6 text-gray-400 mb-8 space-y-2">
+                <li><code>~/.cache/pinner/config.toml</code> (Global cache)</li>
+                <li><code>~/.config/pinner/config.toml</code> (Standard user configuration)</li>
+                <li><code>~/.pinner.toml</code> (User's home directory configuration)</li>
+            </ul>
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                <strong>Precedence (Local Overrides)</strong>:<br>
+                The local project-level <code>.pinner.toml</code> file acts as a strict override. If an entry is marked <code>vetted</code> locally, it will override any global <code>compromised</code> entry, and if marked <code>compromised</code> locally, it overrides any global <code>vetted</code> entry. Non-conflicting local and global entries are automatically combined.
+            </p>
         </div>
 
     </main>
