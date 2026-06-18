@@ -1,6 +1,8 @@
 use crate::core::dependency::{CiProvider, DependencyName, DependencyRef};
+use regex::Regex;
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 /// Represents a specific location in a file that needs to be updated.
 #[derive(Debug, Clone, Default)]
@@ -25,6 +27,32 @@ pub struct UpdateTask {
     pub key: String,
     /// The CI provider detected for this task.
     pub provider: CiProvider,
+}
+
+static VERSION_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
+        .expect("Failed to compile VERSION_COMMENT_REGEX")
+});
+
+impl UpdateTask {
+    /// Returns the logical tag of this dependency.
+    /// If the current tag is a commit SHA or a Docker digest, it attempts to
+    /// extract the tag from a trailing version comment (e.g., `# v1.2.3`).
+    pub fn logical_tag(&self) -> Option<String> {
+        let tag = self.current_tag.as_ref()?;
+        let is_sha = (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
+            || tag.starts_with("sha256:");
+        if is_sha {
+            if let Some(comment) = &self.comment {
+                if let Some(captures) = VERSION_COMMENT_REGEX.captures(comment) {
+                    if let Some(m) = captures.get(1) {
+                        return Some(m.as_str().to_string());
+                    }
+                }
+            }
+        }
+        Some(tag.clone())
+    }
 }
 
 /// The result of a successful update resolution.
@@ -118,5 +146,43 @@ mod tests {
         let json = serde_json::to_string(&res).unwrap();
         assert!(!json.contains("task"));
         assert!(json.contains("\"action\":\"a/b\""));
+    }
+
+    #[test]
+    fn test_logical_tag() {
+        // Tag is a normal version
+        let task = UpdateTask {
+            current_tag: Some("v3.1.2".to_string()),
+            comment: None,
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("v3.1.2".to_string()));
+
+        // Tag is a SHA but no comment
+        let task = UpdateTask {
+            current_tag: Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string()),
+            comment: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            task.logical_tag(),
+            Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string())
+        );
+
+        // Tag is a SHA with a version comment
+        let task = UpdateTask {
+            current_tag: Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string()),
+            comment: Some("# v6.0.2".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("v6.0.2".to_string()));
+
+        // Tag is a SHA with a version comment and other suffix
+        let task = UpdateTask {
+            current_tag: Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string()),
+            comment: Some("# v6.0.2 # keep me".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("v6.0.2".to_string()));
     }
 }

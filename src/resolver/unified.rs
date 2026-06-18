@@ -161,10 +161,11 @@ impl Resolver {
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
         if task.key == "orbs" {
             let tag = remote.get_latest_release(&task.action, &task.key).await?;
-            if Some(&tag) == task.current_tag.as_ref() {
-                return Ok(None);
+            let current_tag = task.logical_tag().unwrap_or_default();
+            if is_newer(&tag, &current_tag) {
+                return Ok(Some((DependencyRef::Version(tag), None)));
             }
-            return Ok(Some((DependencyRef::Version(tag), None)));
+            return Ok(None);
         }
 
         if task.action.is_docker() || task.key == "image" {
@@ -183,19 +184,21 @@ impl Resolver {
         }
 
         let latest_tag = if strategy == UpgradeStrategy::Latest {
-            Some(remote.get_latest_release(&task.action, &task.key).await?)
+            let tag = remote.get_latest_release(&task.action, &task.key).await?;
+            let current_tag = task.logical_tag().unwrap_or_default();
+            if is_newer(&tag, &current_tag) {
+                Some(tag)
+            } else {
+                None
+            }
         } else {
             let tags = remote.list_tags(&task.action, &task.key).await?;
-            let current_tag = task.current_tag.as_deref().unwrap_or("");
-            let current_version = semver::Version::parse(current_tag.trim_start_matches('v')).ok();
+            let current_tag = task.logical_tag().unwrap_or_default();
+            let current_version = parse_relaxed_semver(&current_tag);
 
             let mut filtered_tags: Vec<_> = tags
                 .into_iter()
-                .filter_map(|t| {
-                    semver::Version::parse(t.trim_start_matches('v'))
-                        .ok()
-                        .map(|v| (t, v))
-                })
+                .filter_map(|t| parse_relaxed_semver(&t).map(|v| (t, v)))
                 .collect();
 
             filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
@@ -227,6 +230,76 @@ impl Resolver {
     }
 }
 
+fn normalize_semver(s: &str) -> String {
+    let s = s.trim_start_matches('v');
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.is_empty() || parts[0].is_empty() {
+        return s.to_string();
+    }
+    if !parts[0].chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return s.to_string();
+    }
+
+    if parts.len() == 1 {
+        let part = parts[0];
+        if let Some((num, rest)) = split_numeric_prefix(part) {
+            if rest.is_empty() {
+                format!("{}.0.0", num)
+            } else {
+                format!("{}.0.0{}", num, rest)
+            }
+        } else {
+            s.to_string()
+        }
+    } else if parts.len() == 2 {
+        let major = parts[0];
+        let minor_part = parts[1];
+        if let Some((num, rest)) = split_numeric_prefix(minor_part) {
+            if rest.is_empty() {
+                format!("{}.{}.0", major, num)
+            } else {
+                format!("{}.{}.0{}", major, num, rest)
+            }
+        } else {
+            s.to_string()
+        }
+    } else {
+        s.to_string()
+    }
+}
+
+fn split_numeric_prefix(s: &str) -> Option<(String, String)> {
+    let mut num_end = 0;
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            num_end += 1;
+        } else {
+            break;
+        }
+    }
+    if num_end > 0 {
+        Some((s[..num_end].to_string(), s[num_end..].to_string()))
+    } else {
+        None
+    }
+}
+
+fn parse_relaxed_semver(s: &str) -> Option<semver::Version> {
+    semver::Version::parse(&normalize_semver(s)).ok()
+}
+
+fn is_newer(new_tag: &str, current_tag: &str) -> bool {
+    match (
+        parse_relaxed_semver(new_tag),
+        parse_relaxed_semver(current_tag),
+    ) {
+        (Some(new_ver), Some(curr_ver)) => new_ver > curr_ver,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        _ => new_tag != current_tag,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +307,131 @@ mod tests {
     use crate::resolver::provider::MockRemoteProvider;
     use crate::resolver::registry::MockRegistryProvider;
     use mockall::predicate::{always, eq};
+
+    #[test]
+    fn test_normalize_semver() {
+        assert_eq!(normalize_semver("v3"), "3.0.0");
+        assert_eq!(normalize_semver("3-alpha"), "3.0.0-alpha");
+        assert_eq!(normalize_semver("4.1"), "4.1.0");
+        assert_eq!(normalize_semver("4.1-beta"), "4.1.0-beta");
+        assert_eq!(normalize_semver("v1.2.3"), "1.2.3");
+        assert_eq!(normalize_semver("main"), "main");
+    }
+
+    #[test]
+    fn test_is_newer() {
+        assert!(is_newer("v4", "v3"));
+        assert!(is_newer("v6.0.3", "v6.0.2"));
+        assert!(!is_newer("v4", "v6.0.2"));
+        assert!(!is_newer("v6.0.2", "v6.0.2"));
+        assert!(is_newer("v4", "main"));
+        assert!(!is_newer("main", "v4"));
+        assert!(!is_newer("main", "v1.0.0"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upgrade_pinned_higher_than_remote() {
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("v4".to_string()));
+
+        let registry = MockRegistryProvider::new();
+        let task = UpdateTask {
+            path: "f.yml".into(),
+            action: "actions/checkout".into(),
+            current_tag: Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string()),
+            comment: Some("# v6.0.2".to_string()),
+            key: "uses".to_string(),
+            provider: crate::core::CiProvider::GitHub,
+            ..Default::default()
+        };
+
+        let res = Resolver::resolve_upgrade(
+            &task,
+            Arc::new(remote),
+            Arc::new(registry),
+            UpgradeStrategy::Latest,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(res, None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upgrade_pinned_equal_to_remote() {
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("v6.0.2".to_string()));
+
+        let registry = MockRegistryProvider::new();
+        let task = UpdateTask {
+            path: "f.yml".into(),
+            action: "actions/checkout".into(),
+            current_tag: Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string()),
+            comment: Some("# v6.0.2".to_string()),
+            key: "uses".to_string(),
+            provider: crate::core::CiProvider::GitHub,
+            ..Default::default()
+        };
+
+        let res = Resolver::resolve_upgrade(
+            &task,
+            Arc::new(remote),
+            Arc::new(registry),
+            UpgradeStrategy::Latest,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(res, None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upgrade_pinned_older_than_remote() {
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("v6.0.3".to_string()));
+        remote
+            .expect_get_commit_sha()
+            .with(
+                eq(DependencyName::from("actions/checkout")),
+                eq("v6.0.3"),
+                eq("uses"),
+            )
+            .returning(|_, _, _| Ok(DependencyRef::GitSha("new_sha".to_string())));
+
+        let registry = MockRegistryProvider::new();
+        let task = UpdateTask {
+            path: "f.yml".into(),
+            action: "actions/checkout".into(),
+            current_tag: Some("de0fac2e4500dabe0009e67214ff5f5447ce83dd".to_string()),
+            comment: Some("# v6.0.2".to_string()),
+            key: "uses".to_string(),
+            provider: crate::core::CiProvider::GitHub,
+            ..Default::default()
+        };
+
+        let res = Resolver::resolve_upgrade(
+            &task,
+            Arc::new(remote),
+            Arc::new(registry),
+            UpgradeStrategy::Latest,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            res,
+            Some((
+                DependencyRef::GitSha("new_sha".to_string()),
+                Some("v6.0.3".to_string())
+            ))
+        );
+    }
 
     #[tokio::test]
     async fn test_resolve_pin_action() {

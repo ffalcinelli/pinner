@@ -51,6 +51,21 @@ impl DependencyName {
     pub fn trim_docker_prefix(&self) -> &str {
         self.0.trim_start_matches("docker://")
     }
+
+    /// Returns the repository owner and name part, i.e., "owner/repo" from "owner/repo/subdir".
+    /// This is used for GitHub and Forgejo/Gitea repositories.
+    pub fn repository_path(&self) -> &str {
+        let trimmed = self.trim_docker_prefix();
+        let mut parts = trimmed.splitn(3, '/');
+        let owner = parts.next().unwrap_or("");
+        let repo = parts.next().unwrap_or("");
+        if repo.is_empty() {
+            trimmed
+        } else {
+            let len = owner.len() + 1 + repo.len();
+            &trimmed[..len]
+        }
+    }
 }
 
 impl fmt::Display for DependencyName {
@@ -142,10 +157,18 @@ mod tests {
         let action = DependencyName::from("actions/checkout");
         assert!(!action.is_docker());
         assert_eq!(action.trim_docker_prefix(), "actions/checkout");
+        assert_eq!(action.repository_path(), "actions/checkout");
+
+        let action_sub = DependencyName::from("snyk/actions/setup");
+        assert_eq!(action_sub.repository_path(), "snyk/actions");
+
+        let action_sub2 = DependencyName::from("actions/aws/ecr/login");
+        assert_eq!(action_sub2.repository_path(), "actions/aws");
 
         let docker = DependencyName::from("docker://alpine");
         assert!(docker.is_docker());
         assert_eq!(docker.trim_docker_prefix(), "alpine");
+        assert_eq!(docker.repository_path(), "alpine");
     }
 
     #[test]

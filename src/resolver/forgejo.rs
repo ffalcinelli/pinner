@@ -24,9 +24,10 @@ impl RemoteProvider for ReqwestForgejoProvider {
         tag: &str,
         _key: &str,
     ) -> Result<DependencyRef, PinnerError> {
+        let repo = action.repository_path();
         let url = format!(
             "{}/api/v1/repos/{}/commits/{}",
-            self.base.base_url, action, tag
+            self.base.base_url, repo, tag
         );
         let resp = self
             .base
@@ -56,7 +57,8 @@ impl RemoteProvider for ReqwestForgejoProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<String, PinnerError> {
-        let url = format!("{}/api/v1/repos/{}/releases", self.base.base_url, action);
+        let repo = action.repository_path();
+        let url = format!("{}/api/v1/repos/{}/releases", self.base.base_url, repo);
         let resp = self
             .base
             .client
@@ -88,7 +90,8 @@ impl RemoteProvider for ReqwestForgejoProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<Vec<String>, PinnerError> {
-        let url = format!("{}/api/v1/repos/{}/tags", self.base.base_url, action);
+        let repo = action.repository_path();
+        let url = format!("{}/api/v1/repos/{}/tags", self.base.base_url, repo);
         let resp = self
             .base
             .client
@@ -117,7 +120,8 @@ impl RemoteProvider for ReqwestForgejoProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<BranchName, PinnerError> {
-        let url = format!("{}/api/v1/repos/{}", self.base.base_url, action);
+        let repo = action.repository_path();
+        let url = format!("{}/api/v1/repos/{}", self.base.base_url, repo);
         let resp = self
             .base
             .client

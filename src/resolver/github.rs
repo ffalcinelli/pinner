@@ -26,7 +26,8 @@ impl RemoteProvider for ReqwestGithubProvider {
         tag: &str,
         _key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let url = format!("{}/repos/{}/commits/{}", self.base.base_url, action, tag);
+        let repo = action.repository_path();
+        let url = format!("{}/repos/{}/commits/{}", self.base.base_url, repo, tag);
         let resp = self
             .base
             .client
@@ -51,7 +52,8 @@ impl RemoteProvider for ReqwestGithubProvider {
         action: &DependencyName,
         key: &str,
     ) -> Result<String, PinnerError> {
-        let url = format!("{}/repos/{}/releases/latest", self.base.base_url, action);
+        let repo = action.repository_path();
+        let url = format!("{}/repos/{}/releases/latest", self.base.base_url, repo);
         let resp = self
             .base
             .client
@@ -84,7 +86,8 @@ impl RemoteProvider for ReqwestGithubProvider {
             name: String,
         }
 
-        let url = format!("{}/repos/{}/tags", self.base.base_url, action);
+        let repo = action.repository_path();
+        let url = format!("{}/repos/{}/tags", self.base.base_url, repo);
         let resp = self
             .base
             .client
@@ -109,7 +112,8 @@ impl RemoteProvider for ReqwestGithubProvider {
         action: &DependencyName,
         _key: &str,
     ) -> Result<BranchName, PinnerError> {
-        let url = format!("{}/repos/{}", self.base.base_url, action);
+        let repo = action.repository_path();
+        let url = format!("{}/repos/{}", self.base.base_url, repo);
         let resp = self
             .base
             .client
@@ -150,6 +154,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sha.to_string(), "githubsha");
+    }
+
+    #[tokio::test]
+    async fn test_github_get_commit_sha_with_subdir() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/repos/snyk/actions/commits/v1")
+            .with_status(200)
+            .with_body(r#"{"sha":"snyksha"}"#)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), None).unwrap();
+        let sha = provider
+            .get_commit_sha(&DependencyName::from("snyk/actions/setup"), "v1", "uses")
+            .await
+            .unwrap();
+        assert_eq!(sha.to_string(), "snyksha");
     }
 
     #[tokio::test]
