@@ -228,6 +228,71 @@ impl Resolver {
 
         Ok(None)
     }
+
+    /// Gets the upgrade candidate version/ref for a task, without applying is_newer checks.
+    pub async fn get_upgrade_candidate(
+        &self,
+        task: &UpdateTask,
+    ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
+        let remote = self.remote.clone();
+        let registry = self.registry.clone();
+        let strategy = self.upgrade_strategy.clone();
+
+        if task.key == "orbs" {
+            let tag = remote.get_latest_release(&task.action, &task.key).await?;
+            return Ok(Some((DependencyRef::Version(tag.clone()), Some(tag))));
+        }
+
+        if task.action.is_docker() || task.key == "image" {
+            let image = task.action.trim_docker_prefix();
+            let tag = task.current_tag.as_deref().unwrap_or("latest");
+            let digest = registry.resolve_digest(image, tag).await?;
+            return Ok(Some((DependencyRef::from(digest), Some(tag.to_string()))));
+        }
+
+        if strategy == UpgradeStrategy::Commit {
+            let branch = remote.get_default_branch(&task.action, &task.key).await?;
+            let sha = remote
+                .get_commit_sha(&task.action, &branch.0, &task.key)
+                .await?;
+            return Ok(Some((sha, Some(branch.0))));
+        }
+
+        let latest_tag = if strategy == UpgradeStrategy::Latest {
+            Some(remote.get_latest_release(&task.action, &task.key).await?)
+        } else {
+            let tags = remote.list_tags(&task.action, &task.key).await?;
+            let current_tag = task.logical_tag().unwrap_or_default();
+            let current_version = parse_relaxed_semver(&current_tag);
+
+            let mut filtered_tags: Vec<_> = tags
+                .into_iter()
+                .filter_map(|t| parse_relaxed_semver(&t).map(|v| (t, v)))
+                .collect();
+
+            filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
+
+            if let Some(cv) = current_version {
+                filtered_tags
+                    .into_iter()
+                    .find(|(_, v)| match strategy {
+                        UpgradeStrategy::Major => v.major == cv.major,
+                        UpgradeStrategy::Minor => v.major == cv.major && v.minor == cv.minor,
+                        _ => false,
+                    })
+                    .map(|(t, _)| t)
+            } else {
+                None
+            }
+        };
+
+        if let Some(tag) = latest_tag {
+            let sha = remote.get_commit_sha(&task.action, &tag, &task.key).await?;
+            return Ok(Some((sha, Some(tag))));
+        }
+
+        Ok(None)
+    }
 }
 
 fn normalize_semver(s: &str) -> String {

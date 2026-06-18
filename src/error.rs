@@ -42,6 +42,9 @@ pub enum PinnerError {
     /// Errors from the `reqwest-middleware` stack.
     #[error("Middleware error: {0}")]
     Middleware(#[from] reqwest_middleware::Error),
+    /// Network operations are disabled in offline mode.
+    #[error("Offline error: {0}")]
+    Offline(String),
 }
 
 impl PinnerError {
@@ -65,6 +68,7 @@ impl PinnerError {
             PinnerError::VerificationFailed(_) => true,
             PinnerError::Ignore(_) => true,
             PinnerError::Unsupported(_) => true,
+            PinnerError::Offline(_) => true,
             // Generic API errors (like 404) or Registry errors for a single image are not fatal
             PinnerError::Api(_) => false,
             PinnerError::Registry(_) => false,

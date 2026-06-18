@@ -122,6 +122,7 @@
                     </div>
                     <p class="text-gray-400">Actions or images to ignore (e.g., "actions/checkout"). Can be used multiple times.</p>
                 </div>
+
             </div>
         </div>
 
@@ -168,6 +169,11 @@
                 <div class="border-l-2 border-pink-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">export-sbom</h3>
                     <p class="text-gray-400">Generates and exports a Software Bill of Materials (SBOM) for all actions and images used in your workflows.</p>
+                </div>
+
+                <div class="border-l-2 border-red-500/30 pl-6">
+                    <h3 class="text-xl font-bold text-white mb-2">scan</h3>
+                    <p class="text-gray-400">Queries the OpenSSF OSV database for both current dependency commit hashes and upgrade candidates, performs Cosign/Sigstore signature verification for OCI images, and prompts to save vetted whitelists and compromised blacklists.</p>
                 </div>
 
                 <div class="border-l-2 border-gray-500/30 pl-6">
@@ -287,7 +293,7 @@
                 Create a <code>.pinner.toml</code> file in your repository root to persist settings and share them with your team.
             </p>
 
-            <div class="card p-8 rounded-xl">
+            <div class="card p-8 rounded-xl mb-12">
                 <h3 class="text-lg font-bold text-white mb-4">Example .pinner.toml</h3>
                 <pre class="text-sm"><code># Actions to exclude from processing
 ignore = ["actions/checkout", "my-org/private-repo"]
@@ -297,8 +303,43 @@ concurrency = 5
 
 # API URL overrides (for Enterprise)
 github_url = "https://github.mycompany.com/api/v3"
-gitlab_url = "https://gitlab.mycompany.com/api/v4"</code></pre>
+gitlab_url = "https://gitlab.mycompany.com/api/v4"
+
+# Whitelist of vetted dependency hashes/references (supports plain strings or maps)
+vetted = [
+    # Plain string format (backwards compatible)
+    "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332",
+
+    # Structured format with original tag and timestamp of insertion
+    { ref = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", tag = "v6.0.3", timestamp = "2026-06-18T15:28:25Z" }
+]
+
+# Blacklist of compromised dependency hashes/references
+compromised = [
+    "actions/checkout@badhash1234567890badhash1234567890bad",
+    { ref = "actions/checkout@evilhash1234567890evilhash1234567890bad", tag = "v3.1.0", timestamp = "2026-06-18T15:28:25Z" }
+]
+
+# Disable visual security feedback (default: false)
+no_security_feedback = false</code></pre>
             </div>
+
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <i class="fas fa-globe text-sky-400 mr-4"></i> Global Configuration & Overrides
+            </h2>
+            
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Pinner automatically loads security configurations from global user locations, allowing you to share whitelists and blacklists across multiple repositories:
+            </p>
+            <ul class="list-disc pl-6 text-gray-400 mb-8 space-y-2">
+                <li><code>~/.cache/pinner/config.toml</code> (Global cache)</li>
+                <li><code>~/.config/pinner/config.toml</code> (Standard user configuration)</li>
+                <li><code>~/.pinner.toml</code> (User's home directory configuration)</li>
+            </ul>
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                <strong>Precedence (Local Overrides)</strong>:<br>
+                The local project-level <code>.pinner.toml</code> file acts as a strict override. If an entry is marked <code>vetted</code> locally, it will override any global <code>compromised</code> entry, and if marked <code>compromised</code> locally, it overrides any global <code>vetted</code> entry. Non-conflicting local and global entries are automatically combined.
+            </p>
         </div>
 
     </main>

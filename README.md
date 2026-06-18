@@ -26,6 +26,8 @@ Hash-pinning ensures that you run the **exact** code you've audited, every singl
 - **Container Pinning**: Automatically pins Docker images to their immutable digests (e.g., `image: alpine@sha256:...`).
 - **Flexible Upgrades**: Multiple strategies to keep your actions up to date (Major, Minor, Latest).
 - **CI Ready**: Includes a `verify` mode to ensure all actions remain pinned in your PRs.
+- **Security Scanning**: A `scan` subcommand to query the OpenSSF OSV database for known vulnerabilities and supply-chain compromises.
+- **Visual Security Feedback**: Appends colorful indicators (`[✓ vetted]`, `[✗ compromised]`, or `[? not checked]`) during dry-runs and diff outputs.
 
 ## Installation 🛠️
 
@@ -103,7 +105,17 @@ Generate a Software Bill of Materials for your CI dependencies.
 pinner export-sbom
 ```
 
-### 8. Shell Completions
+### 8. Security Scan
+Audits your dependencies for vulnerabilities. It queries the OpenSSF OSV database for both current hashes and proposed upgrade candidates, and executes Sigstore/Cosign provenance and signature verification for OCI container images. It presents an interactive report and updates your vetted whitelist or compromised blacklist.
+```bash
+# Scan workflows and interactively update your .pinner.toml config
+pinner scan
+
+# Scan workflows and automatically populate .pinner.toml config (great for automation)
+pinner scan --yes
+```
+
+### 9. Shell Completions
 Generate tab-completion scripts for your shell. Automatically detects your current shell if no argument is provided.
 ```bash
 # Auto-detect current shell
@@ -127,7 +139,37 @@ concurrency = 5
 # Custom API URLs (for Enterprise instances)
 github_url = "https://github.mycompany.com/api/v3"
 gitlab_url = "https://gitlab.mycompany.com/api/v4"
+
+# Vetted (trusted) dependency hashes/references (Whitelist)
+# Supports plain strings or structured maps with tag versions and timestamps of insertion.
+vetted = [
+    # Plain string format (backwards compatible)
+    "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332",
+
+    # Structured format generated automatically during "scan"
+    { ref = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", tag = "v6.0.3", timestamp = "2026-06-18T15:28:25Z" }
+]
+
+# Compromised dependency hashes/references (Blacklist)
+compromised = [
+    "actions/checkout@badhash1234567890badhash1234567890bad",
+    { ref = "actions/checkout@evilhash1234567890evilhash1234567890bad", tag = "v3.1.0", timestamp = "2026-06-18T15:28:25Z" }
+]
+
+# Disable visual security feedback (default: false)
+no_security_feedback = false
 ```
+
+## Global Configuration & Overrides 🌍
+
+Pinner automatically loads security configurations from global user locations, allowing you to share whitelists/blacklists across projects:
+1. `~/.cache/pinner/config.toml` (Global cache file)
+2. `~/.config/pinner/config.toml` (User configuration file)
+3. `~/.pinner.toml` (Home directory configuration file)
+
+**Precedence (Local Overrides)**:
+The local project-level `.pinner.toml` works as a strict override. If a dependency is marked `vetted` locally, it will override any global `compromised` status, and if marked `compromised` locally, it overrides any global `vetted` status. Non-conflicting items are combined automatically.
+
 
 ## Supported Platforms 🌐
 
@@ -154,7 +196,25 @@ Pinner explicitly supports pinning **CircleCI Docker Images** (e.g., `cimg/*`) t
 
 ## CI/CD Integration 🤖
 
-Add this to your workflow to ensure all actions stay pinned:
+Add this to your workflow to ensure all actions stay pinned using the native GitHub Action:
+
+```yaml
+jobs:
+  verify-pinning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
+      - name: Verify Pinning
+        uses: ffalcinelli/pinner/action@main
+        with:
+          command: 'verify'
+```
+
+> [!TIP]
+> **Pinnerception Warning 🌀**
+> Remember to pin the pinner! Trusting a security tool to verify your pinned dependencies using a mutable tag is like hiring a security guard who leaves the keys under the doormat. If we didn't pin the pinner, who would pin the pinner's pinners? (Warning: may cause mild existential dread or recursive loops in your CI logs).
+
+Alternatively, you can install and run the CLI directly in any custom pipeline:
 
 ```yaml
 jobs:

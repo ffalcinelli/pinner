@@ -80,9 +80,10 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
             circleci_url: cli.circleci_url.clone(),
             circleci_token: cli.circleci_token.clone(),
             disk_cache_path: disk_cache,
+            offline: cli.offline,
         })?;
     let registry = OciRegistryProvider::new(cli.oci_username.clone(), cli.oci_password.clone())
-        .with_verification(cli.verify_provenance, cli.require_provenance);
+        .with_offline(cli.offline);
 
     // Determine the workflows directory to process
     let workflows_to_process = get_workflows(&cli.workflows);

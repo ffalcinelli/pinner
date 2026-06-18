@@ -101,10 +101,15 @@
                 <div class="p-6 font-mono text-sm md:text-base leading-relaxed">
                     <p class="mb-2 text-gray-500">$ pinner pin</p>
                     <p class="mb-2 text-emerald-400">Searching for workflows in .github/workflows/...</p>
-                    <p class="mb-2 text-white"><span class="text-sky-400">actions/checkout@v4</span> -> <span class="text-sky-400">actions/checkout@8f4b7f84...</span> <span class="text-gray-500"># v4</span></p>
-                    <p class="mb-2 text-white"><span class="text-sky-400">dtolnay/rust-toolchain@master</span> -> <span class="text-sky-400">dtolnay/rust-toolchain@e97e2d8c...</span> <span class="text-gray-500"># master</span></p>
+                    <p class="mb-2 text-white"><span class="text-sky-400">actions/checkout@v4</span> -> <span class="text-sky-400">actions/checkout@8f4b7f84...</span> <span class="text-gray-500"># v4</span> <span class="text-emerald-400 font-bold">[✓ vetted]</span></p>
+                    <p class="mb-2 text-white"><span class="text-sky-400">dtolnay/rust-toolchain@master</span> -> <span class="text-sky-400">dtolnay/rust-toolchain@e97e2d8c...</span> <span class="text-gray-500"># master</span> <span class="text-yellow-400">[? not checked]</span></p>
                     <p class="text-emerald-400 font-bold mt-4 mb-6">Successfully pinned 12 actions across 3 files!</p>
                     
+                    <p class="mb-2 text-gray-500">$ pinner scan</p>
+                    <p class="mb-2 text-emerald-400">Scanning dependencies with OSV database...</p>
+                    <p class="mb-2 text-emerald-400">✔ Clean Dependencies: actions/checkout@8f4b7f84...</p>
+                    <p class="text-emerald-400 font-bold mt-2 mb-6">All scanned dependencies are secure! 🛡️</p>
+
                     <p class="mb-2 text-gray-500">$ pinner verify</p>
                     <p class="mb-2 text-emerald-400">Verifying action pinning...</p>
                     <p class="text-emerald-400 font-bold">All actions are correctly pinned! ✅</p>
@@ -115,27 +120,34 @@
 
     <!-- Features -->
     <section class="py-24 max-w-7xl mx-auto px-4 md:px-8">
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div class="card p-8 rounded-2xl">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div class="card p-8 rounded-2xl hover:border-sky-500/50 transition-colors">
                 <div class="w-12 h-12 bg-sky-500/10 rounded-lg flex items-center justify-center mb-6">
                     <i class="fas fa-bolt text-sky-400 text-xl"></i>
                 </div>
                 <h3 class="text-xl font-bold text-white mb-4">High Performance</h3>
                 <p class="text-gray-400 leading-relaxed">Built with Rust and `tree-sitter` for maximum speed and precision. Scan hundreds of actions in milliseconds.</p>
             </div>
-            <div class="card p-8 rounded-2xl">
+            <div class="card p-8 rounded-2xl hover:border-emerald-500/50 transition-colors">
                 <div class="w-12 h-12 bg-emerald-500/10 rounded-lg flex items-center justify-center mb-6">
                     <i class="fas fa-shield-halved text-emerald-400 text-xl"></i>
                 </div>
                 <h3 class="text-xl font-bold text-white mb-4">Secure by Design</h3>
                 <p class="text-gray-400 leading-relaxed">Protects your CI/CD against tag-moving attacks. Native support for `verify` mode in your CI pipelines.</p>
             </div>
-            <div class="card p-8 rounded-2xl">
+            <div class="card p-8 rounded-2xl hover:border-red-500/50 transition-colors">
+                <div class="w-12 h-12 bg-red-500/10 rounded-lg flex items-center justify-center mb-6">
+                    <i class="fas fa-magnifying-glass-shield text-red-400 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white mb-4">OSV Security Scan</h3>
+                <p class="text-gray-400 leading-relaxed">Direct integration with OpenSSF OSV database to detect compromised commit hashes, check OCI image provenance signatures, and audit upgrade candidates.</p>
+            </div>
+            <div class="card p-8 rounded-2xl hover:border-purple-500/50 transition-colors">
                 <div class="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-6">
                     <i class="fas fa-sliders text-purple-400 text-xl"></i>
                 </div>
-                <h3 class="text-xl font-bold text-white mb-4">Enterprise Ready</h3>
-                <p class="text-gray-400 leading-relaxed">Configurable via `.pinner.toml`. Supports GitHub Enterprise with custom API URLs and tokens.</p>
+                <h3 class="text-xl font-bold text-white mb-4">Vetting & Policy</h3>
+                <p class="text-gray-400 leading-relaxed">Configure trusted whitelists and blacklists in `.pinner.toml` with colored inline diff indicators.</p>
             </div>
         </div>
     </section>
@@ -188,6 +200,34 @@
                 </div>
             </div>
             <p class="mt-8 text-sm text-gray-500 font-medium">One-line installation for instant workflow security.</p>
+        </div>
+    </section>
+
+    <!-- Pinnerception Meme / Recursive Joke -->
+    <section class="py-16 max-w-4xl mx-auto px-4">
+        <div class="relative overflow-hidden rounded-2xl border border-sky-500/10 bg-sky-500/[0.02] p-8 md:p-12 shadow-xl">
+            <div class="absolute -right-12 -bottom-12 opacity-5 pointer-events-none select-none">
+                <i class="fas fa-rotate text-sky-400 text-[180px] animate-spin" style="animation-duration: 20s;"></i>
+            </div>
+            <div class="relative z-10 flex flex-col md:flex-row items-center md:items-start md:space-x-8 text-center md:text-left">
+                <div class="flex-shrink-0 p-4 bg-sky-500/10 rounded-full mb-6 md:mb-0">
+                    <i class="fas fa-rotate text-sky-400 text-3xl animate-spin" style="animation-duration: 6s;"></i>
+                </div>
+                <div>
+                    <h3 class="text-xl md:text-2xl font-extrabold text-white mb-3 flex items-center justify-center md:justify-start">
+                        Pinnerception: The Recursive Paradox 🌀
+                    </h3>
+                    <p class="text-gray-400 text-sm md:text-base leading-relaxed mb-4">
+                        Remember to pin the pinner! If you use the Pinner GitHub Action in your workflows, you should hash-pin <strong>Pinner</strong> using Pinner itself. 
+                    </p>
+                    <div class="border-l-2 border-sky-500/40 pl-4 py-1.5 mb-4 italic text-gray-300 text-sm leading-relaxed">
+                        "Trusting a security action to verify your pinned dependencies using a mutable tag is like hiring a security guard who leaves the keys under the doormat."
+                    </div>
+                    <p class="text-xs md:text-sm text-sky-300 font-medium">
+                        Remember: If you don't pin the pinner, who pins the pinner's pinners? Mind the recursion.
+                    </p>
+                </div>
+            </div>
         </div>
     </section>
 

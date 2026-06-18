@@ -124,14 +124,21 @@ impl Patcher {
                 if self.dry_run {
                     print!(
                         "{}",
-                        self.formatter
-                            .format_diff(&patch.original_content, &patch.new_content)
+                        self.formatter.format_diff(
+                            &patch.original_content,
+                            &patch.new_content,
+                            &patch.results
+                        )
                     );
                     // In dry-run, we still want to report the "would-be" results.
                     all_results.extend(patch.results);
                 } else {
-                    for (old, new) in &patch.changes {
-                        print!("{}", self.formatter.format_inline_diff(old, new));
+                    for (i, (old, new)) in patch.changes.iter().enumerate() {
+                        let res = &patch.results[i];
+                        let status = self
+                            .formatter
+                            .check_hash_security(&res.action.to_string(), &res.new_sha.to_string());
+                        print!("{}", self.formatter.format_inline_diff(old, new, status));
                     }
 
                     if self.ui.confirm_patch(&patch.path) {
@@ -177,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_calculate_patches() {
-        let formatter = Formatter::new(OutputFormat::Text, false);
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
         let ui = Arc::new(TestUi { response: true });
         let patcher = Patcher::new(formatter, ui, false);
 
@@ -220,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_calculate_patches_multiple_updates() {
-        let formatter = Formatter::new(OutputFormat::Text, false);
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
         let ui = Arc::new(TestUi { response: true });
         let patcher = Patcher::new(formatter, ui, false);
 

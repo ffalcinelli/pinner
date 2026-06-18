@@ -1,6 +1,5 @@
 use crate::error::PinnerError;
 use async_trait::async_trait;
-use colored::Colorize;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
@@ -14,6 +13,9 @@ use mockall::automock;
 pub trait RegistryProvider: Send + Sync {
     /// Resolves a docker image tag to its digest.
     async fn resolve_digest(&self, image: &str, tag: &str) -> Result<String, PinnerError>;
+
+    /// Verifies provenance/signature of a docker image.
+    async fn verify_provenance(&self, image: &str, digest: &str) -> Result<bool, PinnerError>;
 }
 
 /// Implementation of [`RegistryProvider`] for OCI-compliant registries.
@@ -24,8 +26,7 @@ pub struct OciRegistryProvider {
     base_url_template: String,
     username: Option<String>,
     password: Option<String>,
-    pub verify_provenance: bool,
-    pub require_provenance: bool,
+    offline: bool,
 }
 
 impl Default for OciRegistryProvider {
@@ -55,15 +56,13 @@ impl OciRegistryProvider {
             base_url_template: "https://{registry}/v2/{repository}/manifests/{tag}".to_string(),
             username,
             password,
-            verify_provenance: false,
-            require_provenance: false,
+            offline: false,
         }
     }
 
-    /// Sets provenance verification options.
-    pub fn with_verification(mut self, verify: bool, require: bool) -> Self {
-        self.verify_provenance = verify;
-        self.require_provenance = require;
+    /// Set offline mode.
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
         self
     }
 
@@ -88,8 +87,7 @@ impl OciRegistryProvider {
             base_url_template,
             username: None,
             password: None,
-            verify_provenance: false,
-            require_provenance: false,
+            offline: false,
         }
     }
 
@@ -138,20 +136,35 @@ impl OciRegistryProvider {
             return (Some(u.clone()), Some(p.clone()));
         }
 
+        let lookup_registry = if registry == "registry-1.docker.io" || registry == "docker.io" {
+            "https://index.docker.io/v1/"
+        } else {
+            registry
+        };
+
         // Try to get from docker config
         #[cfg(not(test))]
         {
             use docker_credential::{get_credential, DockerCredential};
-            match get_credential(registry) {
+            match get_credential(lookup_registry) {
                 Ok(DockerCredential::UsernamePassword(username, password)) => {
                     (Some(username), Some(password))
                 }
-                _ => (None, None),
+                _ => {
+                    if lookup_registry != registry {
+                        if let Ok(DockerCredential::UsernamePassword(username, password)) =
+                            get_credential(registry)
+                        {
+                            return (Some(username), Some(password));
+                        }
+                    }
+                    (None, None)
+                }
             }
         }
         #[cfg(test)]
         {
-            let _ = registry;
+            let _ = (registry, lookup_registry);
             (None, None)
         }
     }
@@ -177,6 +190,13 @@ impl OciRegistryProvider {
 #[async_trait]
 impl RegistryProvider for OciRegistryProvider {
     async fn resolve_digest(&self, image: &str, tag: &str) -> Result<String, PinnerError> {
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request to resolve OCI digest for {}@{} is disabled in offline mode",
+                image, tag
+            )));
+        }
+
         let (registry, repository) = if let Some(pos) = image.find('/') {
             let first_part = &image[..pos];
             if first_part.contains('.') || first_part.contains(':') || first_part == "localhost" {
@@ -247,41 +267,6 @@ impl RegistryProvider for OciRegistryProvider {
                 .ok_or_else(|| PinnerError::Api("Digest not found in response headers".into()))?
                 .to_string();
 
-            if self.verify_provenance {
-                match self.verify_signature(image, &digest).await {
-                    Ok(true) => {
-                        if !cfg!(test) {
-                            println!("{} Provenance verified for {}", "✔".green(), image);
-                        }
-                    }
-                    Ok(false) => {
-                        if self.require_provenance {
-                            return Err(PinnerError::Api(format!(
-                                "Provenance verification failed for {}",
-                                image
-                            )));
-                        } else {
-                            eprintln!(
-                                "{} Provenance verification failed for {}, proceeding anyway.",
-                                "⚠".yellow().bold(),
-                                image
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        if self.require_provenance {
-                            return Err(e);
-                        } else {
-                            eprintln!(
-                                "{} Provenance verification error for {}: {}, proceeding anyway.",
-                                "⚠".yellow().bold(),
-                                image,
-                                e
-                            );
-                        }
-                    }
-                }
-            }
             Ok(digest)
         } else {
             Err(PinnerError::Api(format!(
@@ -289,6 +274,16 @@ impl RegistryProvider for OciRegistryProvider {
                 resp.status()
             )))
         }
+    }
+
+    async fn verify_provenance(&self, image: &str, digest: &str) -> Result<bool, PinnerError> {
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request to verify OCI provenance for {}@{} is disabled in offline mode",
+                image, digest
+            )));
+        }
+        self.verify_signature(image, digest).await
     }
 }
 
@@ -433,5 +428,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res, "sha256:ecrsha");
+    }
+
+    #[tokio::test]
+    async fn test_oci_registry_provider_offline_mode() {
+        let provider = OciRegistryProvider::new(None, None).with_offline(true);
+        let res = provider.resolve_digest("alpine", "latest").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.verify_provenance("alpine", "sha256:digest").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
     }
 }

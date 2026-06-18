@@ -65,19 +65,9 @@ pub struct Cli {
     /// Disable persistent disk caching.
     #[arg(long, global = true, env = "PINNER_NO_CACHE")]
     pub no_cache: bool,
-
-    /// Verify provenance of OCI artifacts using Sigstore/Cosign.
-    #[arg(long, global = true, env = "PINNER_VERIFY_PROVENANCE")]
-    pub verify_provenance: bool,
-
-    /// Require provenance verification. If true, fail if verification fails or no signature is found.
-    #[arg(
-        long,
-        global = true,
-        env = "PINNER_REQUIRE_PROVENANCE",
-        default_value = "false"
-    )]
-    pub require_provenance: bool,
+    /// Force offline mode, preventing any network requests.
+    #[arg(long, global = true, env = "PINNER_OFFLINE")]
+    pub offline: bool,
 
     /// Print what would be changed without actually modifying any files.
 
@@ -158,6 +148,7 @@ pub struct Cli {
     /// Actions or images to ignore (e.g., "actions/checkout").
     #[arg(long, global = true, env = "PINNER_IGNORE", value_delimiter = ',')]
     pub ignore: Vec<String>,
+
     /// Username for OCI registry authentication.
     #[arg(long, global = true, env = "PINNER_OCI_USERNAME")]
     pub oci_username: Option<String>,
@@ -208,6 +199,8 @@ pub enum Commands {
     Init,
     /// Export a Software Bill of Materials (SBOM) for all dependencies in the workflows.
     ExportSbom,
+    /// Scan workflows and query OSV to identify compromised dependencies, updating .pinner.toml.
+    Scan,
     /// Generate shell completions.
     GenerateCompletion {
         /// Shell to generate completions for. If omitted, attempts to detect from the SHELL environment variable.
@@ -288,8 +281,7 @@ mod tests {
             quiet: true,
             verbose: false,
             no_cache: false,
-            verify_provenance: false,
-            require_provenance: false,
+            offline: false,
             dry_run: false,
             json: false,
             github_token: None,
@@ -311,10 +303,17 @@ mod tests {
         };
         assert!(cli.quiet());
         assert_eq!(cli.output_format(), OutputFormat::Text);
+        assert!(!cli.offline);
 
         let mut cli_json = cli.clone();
         cli_json.json = true;
         assert_eq!(cli_json.output_format(), OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_cli_offline() {
+        let cli = Cli::try_parse_from(["pinner", "--offline", "pin"]).unwrap();
+        assert!(cli.offline);
     }
 
     #[test]

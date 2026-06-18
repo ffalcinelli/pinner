@@ -66,13 +66,14 @@ pub struct CachedProvider<T: RemoteProvider> {
     release_cache: Cache<DependencyName, String>,
     branch_cache: Cache<DependencyName, BranchName>,
     disk_cache_path: Option<PathBuf>,
+    offline: bool,
 }
 
 impl<T: RemoteProvider> CachedProvider<T> {
     /// Wraps a provider with a cache.
     ///
     /// Default TTL for memory caches is 1 hour. Persistent disk cache is stored in the provided path if any.
-    pub fn new(inner: T, disk_cache_path: Option<PathBuf>) -> Self {
+    pub fn new(inner: T, disk_cache_path: Option<PathBuf>, offline: bool) -> Self {
         Self {
             inner,
             sha_cache: Cache::builder()
@@ -88,6 +89,7 @@ impl<T: RemoteProvider> CachedProvider<T> {
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
             disk_cache_path,
+            offline,
         }
     }
 }
@@ -113,6 +115,13 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
                 self.sha_cache.insert(mem_key, sha.clone()).await;
                 return Ok(sha);
             }
+        }
+
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for commit SHA of {}@{} is disabled in offline mode",
+                action, tag
+            )));
         }
 
         let sha = self.inner.get_commit_sha(action, tag, key).await?;
@@ -145,6 +154,13 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
             }
         }
 
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for latest release of {} is disabled in offline mode",
+                action
+            )));
+        }
+
         let tag = self.inner.get_latest_release(action, key).await?;
 
         // Update caches
@@ -161,6 +177,12 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<Vec<String>, PinnerError> {
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for listing tags of {} is disabled in offline mode",
+                action
+            )));
+        }
         // We don't cache tags list on disk to avoid stale version lists
         self.inner.list_tags(action, key).await
     }
@@ -186,6 +208,13 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
             }
         }
 
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for default branch of {} is disabled in offline mode",
+                action
+            )));
+        }
+
         let branch = self.inner.get_default_branch(action, key).await?;
 
         // Update caches
@@ -197,6 +226,69 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         }
 
         Ok(branch)
+    }
+}
+
+pub struct RateLimitMiddleware;
+
+#[async_trait]
+impl reqwest_middleware::Middleware for RateLimitMiddleware {
+    async fn handle(
+        &self,
+        req: reqwest::Request,
+        extensions: &mut http::Extensions,
+        next: reqwest_middleware::Next<'_>,
+    ) -> reqwest_middleware::Result<reqwest::Response> {
+        let mut attempts = 0;
+        loop {
+            let req_to_send = req.try_clone().ok_or_else(|| {
+                reqwest_middleware::Error::middleware(std::io::Error::other(
+                    "Request is not cloneable",
+                ))
+            })?;
+
+            let res = next.clone().run(req_to_send, extensions).await;
+            match &res {
+                Ok(resp) if resp.status().as_u16() == 403 || resp.status().as_u16() == 429 => {
+                    attempts += 1;
+                    if attempts >= 3 {
+                        return res;
+                    }
+
+                    let mut delay_secs = 2;
+
+                    if let Some(retry_after) = resp.headers().get("retry-after") {
+                        if let Ok(retry_str) = retry_after.to_str() {
+                            if let Ok(secs) = retry_str.parse::<u64>() {
+                                delay_secs = secs;
+                            }
+                        }
+                    } else if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
+                        if let Ok(reset_str) = reset.to_str() {
+                            if let Ok(ts) = reset_str.parse::<i64>() {
+                                use chrono::Utc;
+                                let now = Utc::now().timestamp();
+                                if ts > now {
+                                    delay_secs = (ts - now) as u64;
+                                }
+                            }
+                        }
+                    }
+
+                    let delay_secs = std::cmp::min(delay_secs, 15);
+
+                    tracing::warn!(
+                        "Hit rate limit or abuse detection (HTTP {}). Retrying in {} seconds (attempt {}/3)...",
+                        resp.status(),
+                        delay_secs,
+                        attempts
+                    );
+
+                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                }
+                _ => return res,
+            }
+        }
     }
 }
 
@@ -246,6 +338,7 @@ impl BaseHttpClient {
         // 3 retries with exponential backoff to handle transient network issues or temporary glitches.
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest_client)
+            .with(RateLimitMiddleware)
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
@@ -341,6 +434,7 @@ impl ProviderRegistry {
             Arc::new(CachedProvider::new(
                 ReqwestGithubProvider::new(config.github_url.clone(), config.github_token.clone())?,
                 config.disk_cache_path.clone(),
+                config.offline,
             )),
             ProviderTypeInfo {
                 domains: vec!["github.com".to_string()],
@@ -356,6 +450,7 @@ impl ProviderRegistry {
                     config.github_token.clone(),
                 )?),
                 config.disk_cache_path.clone(),
+                config.offline,
             )),
             ProviderTypeInfo {
                 domains: vec![],
@@ -368,6 +463,7 @@ impl ProviderRegistry {
             Arc::new(CachedProvider::new(
                 ReqwestBitbucketProvider::new(config.bitbucket_url, config.bitbucket_token)?,
                 config.disk_cache_path.clone(),
+                config.offline,
             )),
             ProviderTypeInfo {
                 domains: vec!["bitbucket.org".to_string()],
@@ -380,6 +476,7 @@ impl ProviderRegistry {
             Arc::new(CachedProvider::new(
                 ReqwestGitLabProvider::new(config.gitlab_url, config.gitlab_token)?,
                 config.disk_cache_path.clone(),
+                config.offline,
             )),
             ProviderTypeInfo {
                 domains: vec!["gitlab.com".to_string()],
@@ -396,6 +493,7 @@ impl ProviderRegistry {
             Arc::new(CachedProvider::new(
                 ReqwestForgejoProvider::new(config.forgejo_url, config.forgejo_token)?,
                 config.disk_cache_path.clone(),
+                config.offline,
             )),
             ProviderTypeInfo {
                 domains: vec!["codeberg.org".to_string(), "forgejo".to_string()],
@@ -408,6 +506,7 @@ impl ProviderRegistry {
             Arc::new(CachedProvider::new(
                 ReqwestCircleCiProvider::new(config.circleci_url, config.circleci_token)?,
                 config.disk_cache_path.clone(),
+                config.offline,
             )),
             ProviderTypeInfo {
                 domains: vec![],
@@ -478,6 +577,7 @@ pub struct UnifiedProviderConfig {
     pub circleci_url: String,
     pub circleci_token: Option<String>,
     pub disk_cache_path: Option<PathBuf>,
+    pub offline: bool,
 }
 
 impl Default for UnifiedProviderConfig {
@@ -494,6 +594,7 @@ impl Default for UnifiedProviderConfig {
             circleci_url: "https://circleci.com/api/v2".to_string(),
             circleci_token: None,
             disk_cache_path: None,
+            offline: false,
         }
     }
 }
@@ -1164,8 +1265,11 @@ mod tests {
             .create_async()
             .await;
 
-        let provider =
-            CachedProvider::new(ReqwestGithubProvider::new(s.url(), None).unwrap(), None);
+        let provider = CachedProvider::new(
+            ReqwestGithubProvider::new(s.url(), None).unwrap(),
+            None,
+            false,
+        );
         let action = DependencyName::from("o/r");
 
         let sha1 = provider
@@ -1354,5 +1458,28 @@ mod tests {
 
         let res_branch = unified.get_default_branch(&action, key).await;
         assert_eq!(res_branch.unwrap().0, "main");
+    }
+
+    #[tokio::test]
+    async fn test_cached_provider_offline_mode() {
+        let remote = MockRemoteProvider::new();
+        let provider = CachedProvider::new(remote, None, true);
+        let action = DependencyName::from("o/r");
+
+        let res = provider.get_commit_sha(&action, "v1", "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.get_latest_release(&action, "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.list_tags(&action, "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.get_default_branch(&action, "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
     }
 }
