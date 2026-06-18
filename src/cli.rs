@@ -8,16 +8,20 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Strategy for upgrading actions to newer versions.
+///
+/// It determines which tags are considered "newer" during an upgrade operation.
 #[derive(ValueEnum, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
     /// Upgrade to the latest available version (default).
     Latest,
     /// Upgrade only within the current major version (e.g., v1.x.x -> v1.y.y).
+    /// This follows semver and avoids breaking changes.
     Major,
     /// Upgrade only within the current minor version (e.g., v1.1.x -> v1.1.y).
+    /// This is the most conservative upgrade strategy.
     Minor,
-    /// Upgrade to the latest commit on the default branch.
+    /// Upgrade to the latest commit on the default branch (ignoring tags).
     Commit,
 }
 
@@ -25,12 +29,12 @@ pub enum UpgradeStrategy {
 #[derive(ValueEnum, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
-    /// Standard text output (default).
+    /// Standard text output with colors and diffs (default).
     #[default]
     Text,
-    /// JSON format.
+    /// Machine-readable JSON format.
     Json,
-    /// Markdown table format.
+    /// Markdown table format suitable for PR comments.
     Markdown,
 }
 
@@ -58,7 +62,15 @@ pub struct Cli {
     /// Print verbose output for debugging.
     #[arg(short, long, global = true)]
     pub verbose: bool,
+    /// Disable persistent disk caching.
+    #[arg(long, global = true, env = "PINNER_NO_CACHE")]
+    pub no_cache: bool,
+    /// Force offline mode, preventing any network requests.
+    #[arg(long, global = true, env = "PINNER_OFFLINE")]
+    pub offline: bool,
+
     /// Print what would be changed without actually modifying any files.
+
     #[arg(short, long, global = true)]
     pub dry_run: bool,
     /// GitHub API Token for authentication.
@@ -73,6 +85,9 @@ pub struct Cli {
     /// Forgejo/Gitea API Token for authentication.
     #[arg(long, global = true, env = "FORGEJO_TOKEN")]
     pub forgejo_token: Option<String>,
+    /// CircleCI API Token for authentication.
+    #[arg(long, global = true, env = "CIRCLECI_TOKEN")]
+    pub circleci_token: Option<String>,
     /// Output results in the specified format.
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
@@ -111,6 +126,14 @@ pub struct Cli {
         default_value = "https://codeberg.org"
     )]
     pub forgejo_url: String,
+    /// Base URL for the CircleCI GraphQL API.
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_CIRCLECI_URL",
+        default_value = "https://circleci.com/graphql-unstable"
+    )]
+    pub circleci_url: String,
     /// Strategy to use when upgrading actions.
     #[arg(
         long,
@@ -125,6 +148,7 @@ pub struct Cli {
     /// Actions or images to ignore (e.g., "actions/checkout").
     #[arg(long, global = true, env = "PINNER_IGNORE", value_delimiter = ',')]
     pub ignore: Vec<String>,
+
     /// Username for OCI registry authentication.
     #[arg(long, global = true, env = "PINNER_OCI_USERNAME")]
     pub oci_username: Option<String>,
@@ -155,7 +179,11 @@ pub enum Commands {
     /// Pin all actions to their current commit SHAs.
     Pin,
     /// Upgrade all actions to their latest releases.
-    Upgrade,
+    Upgrade {
+        /// Interactively select which actions to upgrade.
+        #[arg(short, long)]
+        interactive: bool,
+    },
     /// Verify that all actions are pinned to commit SHAs.
     Verify,
     /// Set a specific action to a specific commit SHA.
@@ -167,10 +195,16 @@ pub enum Commands {
     },
     /// Install a pre-commit hook that runs pinner verify.
     InstallHook,
+    /// Automatically initialize pinner configuration for this repository.
+    Init,
+    /// Export a Software Bill of Materials (SBOM) for all dependencies in the workflows.
+    ExportSbom,
+    /// Scan workflows and query OSV to identify compromised dependencies, updating .pinner.toml.
+    Scan,
     /// Generate shell completions.
     GenerateCompletion {
-        /// Shell to generate completions for
-        shell: clap_complete::Shell,
+        /// Shell to generate completions for. If omitted, attempts to detect from the SHELL environment variable.
+        shell: Option<clap_complete::Shell>,
     },
 }
 #[cfg(test)]
@@ -207,7 +241,7 @@ mod tests {
     #[test]
     fn test_cli_upgrade() {
         let cli = Cli::try_parse_from(["pinner", "upgrade"]).unwrap();
-        assert_eq!(cli.command, Commands::Upgrade);
+        assert_eq!(cli.command, Commands::Upgrade { interactive: false });
     }
 
     #[test]
@@ -246,12 +280,15 @@ mod tests {
             yes: false,
             quiet: true,
             verbose: false,
+            no_cache: false,
+            offline: false,
             dry_run: false,
             json: false,
             github_token: None,
             bitbucket_token: None,
             gitlab_token: None,
             forgejo_token: None,
+            circleci_token: None,
             oci_username: None,
             oci_password: None,
             format: OutputFormat::Text,
@@ -259,16 +296,24 @@ mod tests {
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
             upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
         };
         assert!(cli.quiet());
         assert_eq!(cli.output_format(), OutputFormat::Text);
+        assert!(!cli.offline);
 
         let mut cli_json = cli.clone();
         cli_json.json = true;
         assert_eq!(cli_json.output_format(), OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_cli_offline() {
+        let cli = Cli::try_parse_from(["pinner", "--offline", "pin"]).unwrap();
+        assert!(cli.offline);
     }
 
     #[test]

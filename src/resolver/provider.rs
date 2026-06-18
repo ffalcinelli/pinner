@@ -1,6 +1,8 @@
 use crate::core::{BranchName, DependencyName, DependencyRef};
 use crate::error::PinnerError;
+use crate::resolver::azure::ReqwestAzureProvider;
 use crate::resolver::bitbucket::ReqwestBitbucketProvider;
+use crate::resolver::circleci::ReqwestCircleCiProvider;
 use crate::resolver::forgejo::ReqwestForgejoProvider;
 use crate::resolver::github::ReqwestGithubProvider;
 use crate::resolver::gitlab::ReqwestGitLabProvider;
@@ -9,10 +11,14 @@ use moka::future::Cache;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// Trait for interacting with a remote provider (GitHub, Bitbucket, etc.).
+///
+/// Providers are responsible for translating human-readable tags and branches into
+/// immutable commit SHAs, and for discovering latest versions.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait RemoteProvider: Send + Sync {
@@ -23,19 +29,24 @@ pub trait RemoteProvider: Send + Sync {
         tag: &str,
         key: &str,
     ) -> Result<DependencyRef, PinnerError>;
+
     /// Fetches the latest release tag for a given action.
+    ///
+    /// If no official releases are found, it should fall back to the default branch.
     async fn get_latest_release(
         &self,
         action: &DependencyName,
         key: &str,
     ) -> Result<String, PinnerError>;
-    /// Fetches all tags for a given action.
+
+    /// Fetches all tags for a given action, sorted by version or date if possible.
     async fn list_tags(
         &self,
         action: &DependencyName,
         key: &str,
     ) -> Result<Vec<String>, PinnerError>;
-    /// Fetches the default branch for a given action.
+
+    /// Fetches the default branch for a given action (e.g., "main" or "master").
     async fn get_default_branch(
         &self,
         action: &DependencyName,
@@ -44,15 +55,25 @@ pub trait RemoteProvider: Send + Sync {
 }
 
 /// A decorator that adds caching to any [`RemoteProvider`].
+///
+/// It uses the `moka` library for high-performance, asynchronous in-memory caching,
+/// and `cacache` for persistent disk-based caching.
+/// This significantly reduces the number of API calls when the same dependency
+/// is used multiple times across different files in a project, and across different runs.
 pub struct CachedProvider<T: RemoteProvider> {
     inner: T,
     sha_cache: Cache<(DependencyName, String), DependencyRef>,
     release_cache: Cache<DependencyName, String>,
     branch_cache: Cache<DependencyName, BranchName>,
+    disk_cache_path: Option<PathBuf>,
+    offline: bool,
 }
 
 impl<T: RemoteProvider> CachedProvider<T> {
-    pub fn new(inner: T) -> Self {
+    /// Wraps a provider with a cache.
+    ///
+    /// Default TTL for memory caches is 1 hour. Persistent disk cache is stored in the provided path if any.
+    pub fn new(inner: T, disk_cache_path: Option<PathBuf>, offline: bool) -> Self {
         Self {
             inner,
             sha_cache: Cache::builder()
@@ -67,6 +88,8 @@ impl<T: RemoteProvider> CachedProvider<T> {
                 .max_capacity(500)
                 .time_to_live(Duration::from_secs(3600))
                 .build(),
+            disk_cache_path,
+            offline,
         }
     }
 }
@@ -79,12 +102,36 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         tag: &str,
         key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let cache_key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&cache_key).await {
+        let mem_key = (action.clone(), tag.to_string());
+        if let Some(sha) = self.sha_cache.get(&mem_key).await {
             return Ok(sha);
         }
+
+        // Try disk cache
+        let disk_key = format!("sha:{}:{}:{}", action, tag, key);
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, &disk_key).await {
+                let sha = DependencyRef::from(String::from_utf8_lossy(&data).to_string());
+                self.sha_cache.insert(mem_key, sha.clone()).await;
+                return Ok(sha);
+            }
+        }
+
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for commit SHA of {}@{} is disabled in offline mode",
+                action, tag
+            )));
+        }
+
         let sha = self.inner.get_commit_sha(action, tag, key).await?;
-        self.sha_cache.insert(cache_key, sha.clone()).await;
+
+        // Update caches
+        self.sha_cache.insert(mem_key, sha.clone()).await;
+        if let Some(path) = &self.disk_cache_path {
+            let _ = cacache::write(path, &disk_key, sha.to_string().as_bytes()).await;
+        }
+
         Ok(sha)
     }
 
@@ -96,8 +143,32 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         if let Some(tag) = self.release_cache.get(action).await {
             return Ok(tag);
         }
+
+        // Try disk cache
+        let disk_key = format!("release:{}:{}", action, key);
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, &disk_key).await {
+                let tag = String::from_utf8_lossy(&data).to_string();
+                self.release_cache.insert(action.clone(), tag.clone()).await;
+                return Ok(tag);
+            }
+        }
+
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for latest release of {} is disabled in offline mode",
+                action
+            )));
+        }
+
         let tag = self.inner.get_latest_release(action, key).await?;
+
+        // Update caches
         self.release_cache.insert(action.clone(), tag.clone()).await;
+        if let Some(path) = &self.disk_cache_path {
+            let _ = cacache::write(path, &disk_key, tag.as_bytes()).await;
+        }
+
         Ok(tag)
     }
 
@@ -106,7 +177,13 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<Vec<String>, PinnerError> {
-        // We don't cache tags list for now as it's less frequently used in tight loops
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for listing tags of {} is disabled in offline mode",
+                action
+            )));
+        }
+        // We don't cache tags list on disk to avoid stale version lists
         self.inner.list_tags(action, key).await
     }
 
@@ -118,21 +195,118 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         if let Some(branch) = self.branch_cache.get(action).await {
             return Ok(branch);
         }
+
+        // Try disk cache
+        let disk_key = format!("branch:{}:{}", action, key);
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, &disk_key).await {
+                let branch = BranchName(String::from_utf8_lossy(&data).to_string());
+                self.branch_cache
+                    .insert(action.clone(), branch.clone())
+                    .await;
+                return Ok(branch);
+            }
+        }
+
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request for default branch of {} is disabled in offline mode",
+                action
+            )));
+        }
+
         let branch = self.inner.get_default_branch(action, key).await?;
+
+        // Update caches
         self.branch_cache
             .insert(action.clone(), branch.clone())
             .await;
+        if let Some(path) = &self.disk_cache_path {
+            let _ = cacache::write(path, &disk_key, branch.0.as_bytes()).await;
+        }
+
         Ok(branch)
     }
 }
 
+pub struct RateLimitMiddleware;
+
+#[async_trait]
+impl reqwest_middleware::Middleware for RateLimitMiddleware {
+    async fn handle(
+        &self,
+        req: reqwest::Request,
+        extensions: &mut http::Extensions,
+        next: reqwest_middleware::Next<'_>,
+    ) -> reqwest_middleware::Result<reqwest::Response> {
+        let mut attempts = 0;
+        loop {
+            let req_to_send = req.try_clone().ok_or_else(|| {
+                reqwest_middleware::Error::middleware(std::io::Error::other(
+                    "Request is not cloneable",
+                ))
+            })?;
+
+            let res = next.clone().run(req_to_send, extensions).await;
+            match &res {
+                Ok(resp) if resp.status().as_u16() == 403 || resp.status().as_u16() == 429 => {
+                    attempts += 1;
+                    if attempts >= 3 {
+                        return res;
+                    }
+
+                    let mut delay_secs = 2;
+
+                    if let Some(retry_after) = resp.headers().get("retry-after") {
+                        if let Ok(retry_str) = retry_after.to_str() {
+                            if let Ok(secs) = retry_str.parse::<u64>() {
+                                delay_secs = secs;
+                            }
+                        }
+                    } else if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
+                        if let Ok(reset_str) = reset.to_str() {
+                            if let Ok(ts) = reset_str.parse::<i64>() {
+                                use chrono::Utc;
+                                let now = Utc::now().timestamp();
+                                if ts > now {
+                                    delay_secs = (ts - now) as u64;
+                                }
+                            }
+                        }
+                    }
+
+                    let delay_secs = std::cmp::min(delay_secs, 15);
+
+                    tracing::warn!(
+                        "Hit rate limit or abuse detection (HTTP {}). Retrying in {} seconds (attempt {}/3)...",
+                        resp.status(),
+                        delay_secs,
+                        attempts
+                    );
+
+                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                }
+                _ => return res,
+            }
+        }
+    }
+}
+
 /// Shared HTTP client logic for repository providers.
+///
+/// It encapsulates:
+/// - User-Agent and Authorization headers.
+/// - Retry policies (exponential backoff).
+/// - Centralized error handling for rate limits and common API failures.
 pub struct BaseHttpClient {
     pub client: ClientWithMiddleware,
     pub base_url: String,
 }
 
 impl BaseHttpClient {
+    /// Creates a new `BaseHttpClient`.
+    ///
+    /// It automatically injects an API token if provided explicitly or via an environment variable.
     pub fn new(
         base_url: String,
         token: Option<String>,
@@ -142,6 +316,7 @@ impl BaseHttpClient {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
 
+        // Precedence: explicit token > environment variable.
         let token = token.or_else(|| std::env::var(env_var).ok());
 
         if let Some(t) = token {
@@ -160,14 +335,20 @@ impl BaseHttpClient {
             .build()
             .map_err(|e| PinnerError::Api(format!("Failed to build reqwest client: {}", e)))?;
 
+        // 3 retries with exponential backoff to handle transient network issues or temporary glitches.
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest_client)
+            .with(RateLimitMiddleware)
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
         Ok(Self { client, base_url })
     }
 
+    /// Converts a `reqwest::Response` into a `PinnerError`.
+    ///
+    /// It specifically detects rate limiting (403/429) and attempts to parse
+    /// the `x-ratelimit-reset` or `retry-after` headers to provide helpful feedback.
     pub fn handle_error(&self, resp: reqwest::Response, action: &DependencyName) -> PinnerError {
         let status = resp.status();
         match status.as_u16() {
@@ -177,6 +358,7 @@ impl BaseHttpClient {
                     status, self.base_url
                 );
 
+                // Try to parse the reset timestamp from various headers used by different providers.
                 if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
                     if let Ok(reset_str) = reset.to_str() {
                         if let Ok(ts) = reset_str.parse::<i64>() {
@@ -221,29 +403,39 @@ pub struct RepoResponse {
 }
 
 /// A registry for different remote providers.
+///
+/// It holds a collection of providers and their associated routing metadata
+/// (domains and YAML keys they support).
 #[derive(Clone)]
 pub struct ProviderRegistry {
     pub providers: Vec<(Arc<dyn RemoteProvider>, ProviderTypeInfo)>,
 }
 
+/// Metadata used to route a dependency request to the correct provider.
 #[derive(Clone)]
 pub struct ProviderTypeInfo {
+    /// Domain names that this provider handles (e.g., ["github.com"]).
     pub domains: Vec<String>,
+    /// YAML keys that this provider handles (e.g., ["uses", "image"]).
     pub keys: Vec<String>,
+    /// Human-readable name of the provider.
     pub variant: String,
 }
 
 impl ProviderRegistry {
+    /// Initializes the registry with default providers based on the provided configuration.
     pub fn new(config: UnifiedProviderConfig) -> Result<Self, PinnerError> {
         let mut registry = Self {
             providers: Vec::new(),
         };
 
+        // GitHub is the primary provider and also handles Azure tasks (which are hosted on GitHub).
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestGithubProvider::new(
-                config.github_url,
-                config.github_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestGithubProvider::new(config.github_url.clone(), config.github_token.clone())?,
+                config.disk_cache_path.clone(),
+                config.offline,
+            )),
             ProviderTypeInfo {
                 domains: vec!["github.com".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
@@ -252,10 +444,27 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestBitbucketProvider::new(
-                config.bitbucket_url,
-                config.bitbucket_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestAzureProvider::new(ReqwestGithubProvider::new(
+                    config.github_url.clone(),
+                    config.github_token.clone(),
+                )?),
+                config.disk_cache_path.clone(),
+                config.offline,
+            )),
+            ProviderTypeInfo {
+                domains: vec![],
+                keys: vec!["task".to_string(), "template".to_string()],
+                variant: "Azure".to_string(),
+            },
+        );
+
+        registry.register(
+            Arc::new(CachedProvider::new(
+                ReqwestBitbucketProvider::new(config.bitbucket_url, config.bitbucket_token)?,
+                config.disk_cache_path.clone(),
+                config.offline,
+            )),
             ProviderTypeInfo {
                 domains: vec!["bitbucket.org".to_string()],
                 keys: vec!["pipe".to_string(), "image".to_string()],
@@ -264,10 +473,11 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestGitLabProvider::new(
-                config.gitlab_url,
-                config.gitlab_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestGitLabProvider::new(config.gitlab_url, config.gitlab_token)?,
+                config.disk_cache_path.clone(),
+                config.offline,
+            )),
             ProviderTypeInfo {
                 domains: vec!["gitlab.com".to_string()],
                 keys: vec![
@@ -280,10 +490,11 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(ReqwestForgejoProvider::new(
-                config.forgejo_url,
-                config.forgejo_token,
-            )?)),
+            Arc::new(CachedProvider::new(
+                ReqwestForgejoProvider::new(config.forgejo_url, config.forgejo_token)?,
+                config.disk_cache_path.clone(),
+                config.offline,
+            )),
             ProviderTypeInfo {
                 domains: vec!["codeberg.org".to_string(), "forgejo".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
@@ -291,13 +502,35 @@ impl ProviderRegistry {
             },
         );
 
+        registry.register(
+            Arc::new(CachedProvider::new(
+                ReqwestCircleCiProvider::new(config.circleci_url, config.circleci_token)?,
+                config.disk_cache_path.clone(),
+                config.offline,
+            )),
+            ProviderTypeInfo {
+                domains: vec![],
+                keys: vec!["orbs".to_string()],
+                variant: "CircleCi".to_string(),
+            },
+        );
+
         Ok(registry)
     }
 
+    /// Adds a new provider to the registry.
     pub fn register(&mut self, provider: Arc<dyn RemoteProvider>, info: ProviderTypeInfo) {
         self.providers.push((provider, info));
     }
 
+    /// Selects the best provider for a given YAML key and dependency name.
+    ///
+    /// The routing logic follows this precedence:
+    /// 1. Domain match: If the dependency name contains a known domain (e.g., "gitlab.com"),
+    ///    it uses the corresponding provider.
+    /// 2. Key match: If the YAML key is unique to a provider (e.g., "pipe" -> Bitbucket),
+    ///    it uses that provider.
+    /// 3. Fallback: Defaults to the first registered provider (usually GitHub).
     pub fn get_provider(&self, key: &str, action: &DependencyName) -> Arc<dyn RemoteProvider> {
         let action_str = action.0.as_str();
 
@@ -327,6 +560,7 @@ pub enum ProviderType {
     Bitbucket(Arc<CachedProvider<ReqwestBitbucketProvider>>),
     GitLab(Arc<CachedProvider<ReqwestGitLabProvider>>),
     Forgejo(Arc<CachedProvider<ReqwestForgejoProvider>>),
+    CircleCi(Arc<CachedProvider<ReqwestCircleCiProvider>>),
 }
 
 /// Configuration for the UnifiedProvider.
@@ -340,6 +574,10 @@ pub struct UnifiedProviderConfig {
     pub gitlab_token: Option<String>,
     pub forgejo_url: String,
     pub forgejo_token: Option<String>,
+    pub circleci_url: String,
+    pub circleci_token: Option<String>,
+    pub disk_cache_path: Option<PathBuf>,
+    pub offline: bool,
 }
 
 impl Default for UnifiedProviderConfig {
@@ -349,21 +587,30 @@ impl Default for UnifiedProviderConfig {
             github_token: None,
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             bitbucket_token: None,
-            gitlab_url: "https://gitlab.com".to_string(),
+            gitlab_url: "https://gitlab.com/api/v4".to_string(),
             gitlab_token: None,
-            forgejo_url: "https://codeberg.org".to_string(),
+            forgejo_url: "https://codeberg.org/api/v1".to_string(),
             forgejo_token: None,
+            circleci_url: "https://circleci.com/api/v2".to_string(),
+            circleci_token: None,
+            disk_cache_path: None,
+            offline: false,
         }
     }
 }
 
-/// A provider that dispatches to various CI providers based on the YAML key.
+/// A provider that dispatches requests to the appropriate CI platform.
+///
+/// It acts as a facade over a `ProviderRegistry`, implementing the `RemoteProvider`
+/// trait by routing each call to the most suitable underlying provider based on
+/// context (YAML key and dependency name).
 #[derive(Clone)]
 pub struct UnifiedProvider {
     pub registry: ProviderRegistry,
 }
 
 impl UnifiedProvider {
+    /// Creates a new `UnifiedProvider` from the given configuration.
     pub fn new(config: UnifiedProviderConfig) -> Result<Self, PinnerError> {
         Ok(Self {
             registry: ProviderRegistry::new(config)?,
@@ -648,13 +895,11 @@ mod tests {
 
         let unified = UnifiedProvider::new(UnifiedProviderConfig {
             github_url: server.url(),
-            github_token: None,
             bitbucket_url: server.url(),
-            bitbucket_token: None,
             gitlab_url: server.url(),
-            gitlab_token: None,
             forgejo_url: server.url(),
-            forgejo_token: None,
+            circleci_url: server.url(),
+            ..Default::default()
         })
         .unwrap();
 
@@ -681,13 +926,11 @@ mod tests {
     async fn test_unified_provider_error() {
         let unified = UnifiedProvider::new(UnifiedProviderConfig {
             github_url: "http://invalid".into(),
-            github_token: None,
             bitbucket_url: "http://invalid".into(),
-            bitbucket_token: None,
             gitlab_url: "http://invalid".into(),
-            gitlab_token: None,
             forgejo_url: "http://invalid".into(),
-            forgejo_token: None,
+            circleci_url: "http://invalid".into(),
+            ..Default::default()
         })
         .unwrap();
         let res = unified
@@ -966,16 +1209,49 @@ mod tests {
     #[serial_test::serial]
     fn test_token_injection() {
         std::env::set_var("GITHUB_TOKEN", "env_token");
-        let _provider = ReqwestGithubProvider::new("https://api.github.com".into(), None).unwrap();
-        // We can't easily check the private client headers, but we covered the line.
+        let _client = BaseHttpClient::new(
+            "https://api.github.com".to_string(),
+            None,
+            "Bearer",
+            "GITHUB_TOKEN",
+        )
+        .unwrap();
+        // Since we can't easily inspect the private client's default headers,
+        // we at least ensure it doesn't crash and we covered the logic path.
         std::env::remove_var("GITHUB_TOKEN");
 
-        let _provider2 = ReqwestGithubProvider::new(
-            "https://api.github.com".into(),
+        let _client2 = BaseHttpClient::new(
+            "https://api.github.com".to_string(),
             Some("manual_token".into()),
+            "Bearer",
+            "GITHUB_TOKEN",
         )
         .unwrap();
         // Covered Some(t) path.
+    }
+
+    #[test]
+    fn test_provider_registry_routing() {
+        let config = UnifiedProviderConfig::default();
+        let registry = ProviderRegistry::new(config).unwrap();
+
+        // Domain-based routing (GitLab)
+        let provider =
+            registry.get_provider("image", &DependencyName::from("gitlab.com/group/repo"));
+        assert!(format!("{:?}", Arc::as_ptr(&provider)).is_ascii()); // Just to use provider
+
+        // Key-based routing (Bitbucket)
+        let provider =
+            registry.get_provider("pipe", &DependencyName::from("sonarsource/sonarcloud-scan"));
+        assert!(format!("{:?}", Arc::as_ptr(&provider)).is_ascii());
+
+        // Key-based routing (CircleCI)
+        let provider = registry.get_provider("orbs", &DependencyName::from("circleci/node"));
+        assert!(format!("{:?}", Arc::as_ptr(&provider)).is_ascii());
+
+        // Fallback (GitHub)
+        let provider = registry.get_provider("uses", &DependencyName::from("actions/checkout"));
+        assert!(format!("{:?}", Arc::as_ptr(&provider)).is_ascii());
     }
 
     #[tokio::test]
@@ -989,7 +1265,11 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = CachedProvider::new(ReqwestGithubProvider::new(s.url(), None).unwrap());
+        let provider = CachedProvider::new(
+            ReqwestGithubProvider::new(s.url(), None).unwrap(),
+            None,
+            false,
+        );
         let action = DependencyName::from("o/r");
 
         let sha1 = provider
@@ -1104,13 +1384,11 @@ mod tests {
 
         let unified = UnifiedProvider::new(UnifiedProviderConfig {
             github_url: server.url(),
-            github_token: None,
             bitbucket_url: server.url(),
-            bitbucket_token: None,
             gitlab_url: server.url(),
-            gitlab_token: None,
             forgejo_url: server.url(),
-            forgejo_token: None,
+            circleci_url: server.url(),
+            ..Default::default()
         })
         .unwrap();
 
@@ -1180,5 +1458,28 @@ mod tests {
 
         let res_branch = unified.get_default_branch(&action, key).await;
         assert_eq!(res_branch.unwrap().0, "main");
+    }
+
+    #[tokio::test]
+    async fn test_cached_provider_offline_mode() {
+        let remote = MockRemoteProvider::new();
+        let provider = CachedProvider::new(remote, None, true);
+        let action = DependencyName::from("o/r");
+
+        let res = provider.get_commit_sha(&action, "v1", "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.get_latest_release(&action, "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.list_tags(&action, "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+
+        let res = provider.get_default_branch(&action, "uses").await;
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
     }
 }

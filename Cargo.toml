@@ -1,6 +1,6 @@
 [package]
 name = "pinner"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 rust-version = "1.80"
 description = "Secure CI/CD workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments. Supports GitHub, GitLab, Bitbucket, Forgejo, and Docker image pinning."
@@ -45,9 +45,12 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 dialoguer = "0.12.0"
 clap_complete = "4.6.5"
 base64 = "0.22"
+docker_credential = "1.4.0"
+cacache = { version = "13.1.0", features = ["tokio-runtime"], default-features = false }
+sigstore = "0.14.0"
+http = "1.0"
 
 [dev-dependencies]
-http = "1.0"
 cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "prepush-hook", "run-cargo-fmt", "user-hooks"] }
 tempfile = "3.10"
 mockito = "1.2"

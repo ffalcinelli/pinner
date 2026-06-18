@@ -16,15 +16,30 @@ thread_local! {
     });
 }
 
+/// The `Scanner` is responsible for finding all CI/CD workflow files in a given set of paths.
+///
+/// It handles recursive directory traversal, filtering for relevant file extensions (.yml, .yaml),
+/// and applying ignore patterns. Parsing is performed concurrently using `rayon`.
 pub struct Scanner {
+    /// A list of patterns to ignore during scanning.
     pub ignore_list: Vec<String>,
 }
 
 impl Scanner {
+    /// Creates a new `Scanner` with the given ignore list.
     pub fn new(ignore_list: Vec<String>) -> Self {
         Self { ignore_list }
     }
 
+    /// Recursively collects all update tasks from the provided paths.
+    ///
+    /// This method:
+    /// 1. Walks the file system for each path in `paths`.
+    /// 2. Filters for YAML files while respecting the `ignore_list`.
+    /// 3. Parses each file's AST and identifies dependencies concurrently.
+    ///
+    /// Returns a tuple containing the list of all tasks found and a map of file contents
+    /// for later patching.
     pub async fn collect_tasks(
         &self,
         paths: &[PathBuf],
@@ -36,6 +51,7 @@ impl Scanner {
                 return Err(PinnerError::PathNotFound(path.display().to_string()));
             }
 
+            // Configure the directory walker with our ignore patterns.
             let mut override_builder = OverrideBuilder::new(path);
             for ignore_pattern in &self.ignore_list {
                 // If the pattern doesn't start with '!', we treat it as an exclusion
@@ -53,6 +69,7 @@ impl Scanner {
                 .build()
                 .map_err(|e| PinnerError::Parse(format!("Failed to build overrides: {}", e)))?;
 
+            // Walk the directory and collect paths to YAML files.
             for entry in WalkBuilder::new(path).overrides(overrides).build() {
                 let entry = entry?;
                 let path = entry.path();
@@ -64,6 +81,8 @@ impl Scanner {
 
         let ignore_list = self.ignore_list.clone();
 
+        // Perform parsing in a blocking task to avoid stalling the async executor.
+        // We use rayon for data-parallelism across all identified files.
         let results = tokio::task::spawn_blocking(move || {
             use rayon::prelude::*;
             type CollectResult = Result<(Vec<UpdateTask>, (PathBuf, String)), PinnerError>;
@@ -72,6 +91,7 @@ impl Scanner {
                 .map(|path| {
                     let content = fs::read_to_string(&path)?;
 
+                    // Use thread-local parsers to avoid repeated initialization and ensure thread safety.
                     let tree = PARSER
                         .with(|parser| {
                             let mut parser = parser.borrow_mut();
@@ -150,5 +170,44 @@ mod tests {
             .collect_tasks(&[PathBuf::from("/non/existent/path/999")])
             .await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scanner_recursive_traversal() {
+        let dir = tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        let wf1 = dir.path().join("wf1.yml");
+        let wf2 = subdir.join("wf2.yaml");
+        fs::write(&wf1, "uses: a/b@v1").unwrap();
+        fs::write(&wf2, "uses: c/d@v2").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let (tasks, contents) = scanner
+            .collect_tasks(&[dir.path().to_path_buf()])
+            .await
+            .unwrap();
+
+        assert_eq!(tasks.len(), 2);
+        assert!(contents.contains_key(&wf1));
+        assert!(contents.contains_key(&wf2));
+    }
+
+    #[tokio::test]
+    async fn test_scanner_complex_ignore() {
+        let dir = tempdir().unwrap();
+        let wf1 = dir.path().join("keep.yml");
+        let wf2 = dir.path().join("ignore.yml");
+        fs::write(&wf1, "uses: a/b@v1").unwrap();
+        fs::write(&wf2, "uses: c/d@v2").unwrap();
+
+        // Test ignoring by filename
+        let scanner = Scanner::new(vec!["ignore.yml".to_string()]);
+        let (tasks, _) = scanner
+            .collect_tasks(&[dir.path().to_path_buf()])
+            .await
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].action.0, "a/b");
     }
 }
