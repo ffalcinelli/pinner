@@ -1,0 +1,46 @@
+yes = false
+upgrade_strategy = "latest"
+concurrency = 10
+ignore = []
+compromised = []
+no_security_feedback = false
+
+[[vetted]]
+ref = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10"
+tag = "v6.0.3"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651"
+tag = "v1.11.0"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9"
+tag = "v1"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6"
+tag = "v1.30.2"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4"
+tag = "v2.9.1"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595"
+tag = "v2.81.11"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5"
+tag = "v2.82.0"
+timestamp = "2026-06-19T08:37:29Z"
+
+[[vetted]]
+ref = "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f"
+tag = "v7.0.0"
+timestamp = "2026-06-19T08:37:29Z"

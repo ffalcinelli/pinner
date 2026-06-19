@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.10] - 2026-06-19
+
+### Added
+- 💾 **Persistent Disk Caching**: Added persistent disk caching via `cacache` to drastically reduce API requests across runs.
+- 🛡️ **OCI Provenance Verification**: Implemented OCI image provenance verification (Sigstore/Cosign structural integration).
+- 🔑 **OCI Credential Lookup**: Added automatic OCI credential lookup using `docker-credential-helpers`.
+- ☁️ **AWS ECR & Azure Marketplace**: Added AWS ECR and Azure Marketplace resolvers, and optimized CircleCI support.
+- 🌀 **CircleCI Orb Upgrades**: Added support for upgrading CircleCI orbs via GraphQL API.
+- 🐚 **Auto-Shell Detection**: Implemented automatic shell detection for the `generate-completion` command.
+- 🚀 **Release Automation**: Added a reliable `scripts/release.sh` utility to automate version bumping, verification, and tagging.
+- 🛡️ **Tag Safety Verification**: Added CI step to prevent releasing tags that do not match the version specified in `Cargo.toml`.
+
+### Changed
+- 📱 Improved mobile responsiveness of the documentation landing site.
+- 📖 Aligned documentation and README with actual CLI subcommands.
+- ⚙️ Enhanced GitLab, Forgejo, and CircleCI provider configurations.
+- 🧹 Cleaned up dependencies and updated `deny.toml` rules.
+
+### Fixed
+- 🔗 Fixed broken license badge and updated badge style.
+- 🐛 Fixed bugs in repository/tag resolution and version tag comparisons.
+- 🧪 Fixed unused variable warnings in tests.
+
 ## [0.0.6] - 2026-06-16
 
 ### Added
