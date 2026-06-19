@@ -15,18 +15,16 @@ categories = ["command-line-utilities", "development-tools"]
 [dependencies]
 clap = { version = "4.4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"
 moka = { version = "0.12", features = ["future"] }
 figment = { version = "0.10", features = ["toml", "yaml", "env"] }
-indicatif = "0.18"
 toml = "1.1"
 dirs = "6.0"
 regex = "1.10"
 async-trait = "0.1"
-mockall = "0.14"
 colored = "3.1"
 chrono = "0.4"
 thiserror = "2.0"
@@ -47,7 +45,6 @@ clap_complete = "4.6.5"
 base64 = "0.22"
 docker_credential = "1.4.0"
 cacache = { version = "13.1.0", features = ["tokio-runtime"], default-features = false }
-sigstore = "0.14.0"
 http = "1.0"
 
 [dev-dependencies]
@@ -58,7 +55,7 @@ criterion = "0.8.2"
 serial_test = "3.5.0"
 assert_cmd = "2.0"
 predicates = "3.1"
-gag = "1.0.0"
+mockall = "0.14"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
