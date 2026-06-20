@@ -59,6 +59,10 @@ pub struct Config {
     pub compromised: Option<Vec<SecurityEntry>>,
     /// Disable visual security feedback.
     pub no_security_feedback: Option<bool>,
+    /// Automatically check the OSV database during verification.
+    pub check_osv: Option<bool>,
+    /// Fail verification if any dependency is not explicitly vetted in the configuration.
+    pub strict: Option<bool>,
     /// Username for OCI registry authentication.
     pub oci_username: Option<String>,
     /// Password for OCI registry authentication.
@@ -193,6 +197,18 @@ impl Config {
         if !cli.offline {
             if let Some(offline) = self.offline {
                 cli.offline = offline;
+            }
+        }
+
+        if !cli.check_osv {
+            if let Some(check_osv) = self.check_osv {
+                cli.check_osv = check_osv;
+            }
+        }
+
+        if !cli.strict {
+            if let Some(strict) = self.strict {
+                cli.strict = strict;
             }
         }
 
@@ -404,6 +420,8 @@ mod tests {
             circleci_token: None,
             format: OutputFormat::Text,
             json: false,
+            check_osv: false,
+            strict: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
@@ -455,6 +473,8 @@ mod tests {
             circleci_token: None,
             format: OutputFormat::Text,
             json: false,
+            check_osv: false,
+            strict: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
@@ -506,6 +526,8 @@ mod tests {
             circleci_token: None,
             format: OutputFormat::Text,
             json: false,
+            check_osv: false,
+            strict: false,
             github_url: "https://cli.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
@@ -567,6 +589,8 @@ mod tests {
             circleci_token: None,
             format: OutputFormat::Text,
             json: false,
+            check_osv: false,
+            strict: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
@@ -580,5 +604,144 @@ mod tests {
         };
         let merged = config.merge_with_cli(cli);
         assert!(merged.offline);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_load_global_with_files() {
+        use std::env;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let home_path = tmp.path().join("home");
+        let config_path = tmp.path().join("config");
+        let cache_path = tmp.path().join("cache");
+
+        std::fs::create_dir_all(&home_path).unwrap();
+        std::fs::create_dir_all(&config_path).unwrap();
+        std::fs::create_dir_all(&cache_path).unwrap();
+
+        // Write config files
+        let cache_config = cache_path.join("pinner").join("config.toml");
+        std::fs::create_dir_all(cache_config.parent().unwrap()).unwrap();
+        std::fs::write(&cache_config, "vetted = ['cache_vet']\n").unwrap();
+
+        let config_config = config_path.join("pinner").join("config.toml");
+        std::fs::create_dir_all(config_config.parent().unwrap()).unwrap();
+        std::fs::write(&config_config, "vetted = ['config_vet']\n").unwrap();
+
+        let home_config = home_path.join(".pinner.toml");
+        std::fs::write(&home_config, "vetted = ['home_vet']\n").unwrap();
+
+        // Save original env vars
+        let orig_home = env::var_os("HOME");
+        let orig_config = env::var_os("XDG_CONFIG_HOME");
+        let orig_cache = env::var_os("XDG_CACHE_HOME");
+
+        // Set env vars to our temp paths
+        env::set_var("HOME", &home_path);
+        env::set_var("XDG_CONFIG_HOME", &config_path);
+        env::set_var("XDG_CACHE_HOME", &cache_path);
+
+        let config = Config::load_global();
+
+        // Restore env vars
+        if let Some(val) = orig_home {
+            env::set_var("HOME", val);
+        } else {
+            env::remove_var("HOME");
+        }
+        if let Some(val) = orig_config {
+            env::set_var("XDG_CONFIG_HOME", val);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+        if let Some(val) = orig_cache {
+            env::set_var("XDG_CACHE_HOME", val);
+        } else {
+            env::remove_var("XDG_CACHE_HOME");
+        }
+
+        let vetted_refs: Vec<String> = config
+            .vetted
+            .unwrap()
+            .into_iter()
+            .map(|e| e.reference)
+            .collect();
+        assert!(vetted_refs.contains(&"cache_vet".to_string()));
+        assert!(vetted_refs.contains(&"config_vet".to_string()));
+        assert!(vetted_refs.contains(&"home_vet".to_string()));
+    }
+
+    #[test]
+    fn test_merge_with_cli_other_fields() {
+        let config = Config {
+            check_osv: Some(true),
+            strict: Some(true),
+            bitbucket_url: Some("https://my-bitbucket".to_string()),
+            gitlab_url: Some("https://my-gitlab".to_string()),
+            forgejo_url: Some("https://my-forgejo".to_string()),
+            circleci_url: Some("https://my-circleci".to_string()),
+            format: Some(OutputFormat::Json),
+            ..Default::default()
+        };
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![],
+            yes: false,
+            quiet: false,
+            verbose: false,
+            no_cache: false,
+            offline: false,
+            dry_run: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            circleci_token: None,
+            format: OutputFormat::Text,
+            json: false,
+            check_osv: false,
+            strict: false,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+            upgrade_strategy: UpgradeStrategy::Latest,
+            concurrency: None,
+            ignore: vec![],
+            oci_username: None,
+            oci_password: None,
+        };
+        let merged = config.merge_with_cli(cli);
+        assert!(merged.check_osv);
+        assert!(merged.strict);
+        assert_eq!(merged.bitbucket_url, "https://my-bitbucket");
+        assert_eq!(merged.gitlab_url, "https://my-gitlab");
+        assert_eq!(merged.forgejo_url, "https://my-forgejo");
+        assert_eq!(merged.circleci_url, "https://my-circleci");
+        assert_eq!(merged.format, OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_security_entry_from_string() {
+        let entry = SecurityEntry::from("hello".to_string());
+        assert_eq!(entry.reference, "hello");
+    }
+
+    #[test]
+    fn test_security_entry_deserialize_failures_and_ignored() {
+        // Ignored field test
+        let toml_str = r#"
+            ref = "my-ref"
+            unknown_field = 42
+        "#;
+        let entry: SecurityEntry = toml::from_str(toml_str).unwrap();
+        assert_eq!(entry.reference, "my-ref");
+
+        // Expecting/invalid type test
+        let res: Result<SecurityEntry, _> = toml::from_str("123");
+        assert!(res.is_err());
     }
 }

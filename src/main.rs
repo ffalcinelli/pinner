@@ -177,6 +177,9 @@ mod tests {
         std::env::set_var("SHELL", "pwsh");
         assert_eq!(detect_shell(), Some(clap_complete::Shell::PowerShell));
 
+        std::env::set_var("SHELL", "/usr/bin/elvish");
+        assert_eq!(detect_shell(), Some(clap_complete::Shell::Elvish));
+
         std::env::set_var("SHELL", "/bin/unknown");
         assert_eq!(detect_shell(), None);
 

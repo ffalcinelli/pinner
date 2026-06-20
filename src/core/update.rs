@@ -95,17 +95,53 @@ pub struct UnpinnedDependency {
     pub column: usize,
 }
 
+/// Details of a dependency that is pinned but marked as compromised.
+#[derive(Debug, Serialize, Clone)]
+pub struct CompromisedDependency {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// Action or image name.
+    pub action: DependencyName,
+    /// The compromised hash.
+    pub hash: String,
+    /// Line number.
+    pub line: usize,
+    /// Column number.
+    pub column: usize,
+}
+
+/// Details of a dependency that is not explicitly vetted under strict mode.
+#[derive(Debug, Serialize, Clone)]
+pub struct NonVettedDependency {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// Action or image name.
+    pub action: DependencyName,
+    /// The hash or tag.
+    pub tag: Option<String>,
+    /// Line number.
+    pub line: usize,
+    /// Column number.
+    pub column: usize,
+}
+
 /// The result of a verification operation.
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct VerificationResult {
     /// List of unpinned dependencies found.
     pub unpinned: Vec<UnpinnedDependency>,
+    /// List of compromised dependencies found.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compromised: Vec<CompromisedDependency>,
+    /// List of non-vetted dependencies found (only populated/checked in strict mode).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub non_vetted: Vec<NonVettedDependency>,
 }
 
 impl VerificationResult {
-    /// Returns true if no unpinned dependencies were found.
+    /// Returns true if no unpinned, compromised, or non-vetted dependencies were found.
     pub fn is_success(&self) -> bool {
-        self.unpinned.is_empty()
+        self.unpinned.is_empty() && self.compromised.is_empty() && self.non_vetted.is_empty()
     }
 }
 
@@ -126,6 +162,32 @@ mod tests {
             path: PathBuf::from("f.yml"),
             action: "a/b".into(),
             tag: Some("v1".into()),
+            line: 1,
+            column: 1,
+        });
+        assert!(!res.is_success());
+    }
+
+    #[test]
+    fn test_verification_result_compromised() {
+        let mut res = VerificationResult::default();
+        res.compromised.push(CompromisedDependency {
+            path: PathBuf::from("f.yml"),
+            action: "a/b".into(),
+            hash: "compromised_hash".to_string(),
+            line: 1,
+            column: 1,
+        });
+        assert!(!res.is_success());
+    }
+
+    #[test]
+    fn test_verification_result_non_vetted() {
+        let mut res = VerificationResult::default();
+        res.non_vetted.push(NonVettedDependency {
+            path: PathBuf::from("f.yml"),
+            action: "a/b".into(),
+            tag: Some("some_hash".to_string()),
             line: 1,
             column: 1,
         });

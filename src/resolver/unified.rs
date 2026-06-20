@@ -776,4 +776,67 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].action.0, "success");
     }
+
+    #[tokio::test]
+    async fn test_resolve_pin_docker() {
+        let remote = MockRemoteProvider::new();
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_resolve_digest()
+            .with(eq("alpine"), eq("latest"))
+            .returning(|_, _| Ok("sha256:digest".to_string()));
+
+        let task = UpdateTask {
+            path: "f.yml".into(),
+            action: "docker://alpine".into(),
+            current_tag: Some("latest".to_string()),
+            key: "image".to_string(),
+            ..Default::default()
+        };
+
+        let res = Resolver::resolve_pin(&task, Arc::new(remote), Arc::new(registry))
+            .await
+            .unwrap();
+        assert_eq!(
+            res,
+            Some((
+                DependencyRef::DockerDigest("sha256:digest".to_string()),
+                Some("latest".to_string())
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upgrade_docker() {
+        let remote = MockRemoteProvider::new();
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_resolve_digest()
+            .with(eq("alpine"), eq("latest"))
+            .returning(|_, _| Ok("sha256:digest".to_string()));
+
+        let task = UpdateTask {
+            path: "f.yml".into(),
+            action: "docker://alpine".into(),
+            current_tag: Some("latest".to_string()),
+            key: "image".to_string(),
+            ..Default::default()
+        };
+
+        let res = Resolver::resolve_upgrade(
+            &task,
+            Arc::new(remote),
+            Arc::new(registry),
+            UpgradeStrategy::Latest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            res,
+            Some((
+                DependencyRef::DockerDigest("sha256:digest".to_string()),
+                Some("latest".to_string())
+            ))
+        );
+    }
 }

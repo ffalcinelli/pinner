@@ -94,6 +94,12 @@ pub struct Cli {
     /// Output results in JSON format (deprecated, use --format json).
     #[arg(long, global = true)]
     pub json: bool,
+    /// Also check the OSV database for known vulnerabilities and compromised hashes during verification.
+    #[arg(long, global = true, env = "PINNER_CHECK_OSV")]
+    pub check_osv: bool,
+    /// Fail verification if any dependency is not explicitly vetted in the configuration.
+    #[arg(long, global = true, env = "PINNER_STRICT")]
+    pub strict: bool,
     /// Base URL for the GitHub API (defaults to public GitHub).
     #[arg(
         long,
@@ -284,6 +290,8 @@ mod tests {
             offline: false,
             dry_run: false,
             json: false,
+            check_osv: false,
+            strict: false,
             github_token: None,
             bitbucket_token: None,
             gitlab_token: None,

@@ -84,9 +84,21 @@ impl Pipeline {
     pub async fn verify(
         &self,
         paths: &[PathBuf],
+        check_osv: bool,
+        strict: bool,
     ) -> Result<crate::core::VerificationResult, PinnerError> {
         let (tasks, _) = self.scanner.collect_tasks(paths).await?;
         let mut unpinned = Vec::new();
+        let mut compromised = Vec::new();
+        let mut non_vetted = Vec::new();
+
+        if !self.patcher.formatter.quiet
+            && self.patcher.formatter.format == crate::cli::OutputFormat::Text
+        {
+            eprintln!("{}", "Verifying workflow dependencies...".bold());
+        }
+
+        let client = reqwest::Client::new();
 
         for task in tasks {
             let is_pinned = if let Some(tag) = &task.current_tag {
@@ -105,23 +117,216 @@ impl Pipeline {
                     line: task.line,
                     column: task.column,
                 });
+
+                if !self.patcher.formatter.quiet
+                    && self.patcher.formatter.format == crate::cli::OutputFormat::Text
+                {
+                    let display_tag = task.current_tag.as_deref().unwrap_or("latest");
+                    eprintln!(
+                        "  {} {}@{} in {}:{}:{} [✗ unpinned]",
+                        "✗".red().bold(),
+                        task.action.to_string().yellow(),
+                        display_tag.yellow(),
+                        task.path.display().to_string().cyan(),
+                        task.line.to_string().magenta(),
+                        task.column.to_string().magenta(),
+                    );
+                }
+            } else {
+                let tag = task.current_tag.as_deref().unwrap_or("");
+                let mut status = self
+                    .patcher
+                    .formatter
+                    .check_hash_security(&task.action.to_string(), tag);
+
+                if status == crate::patcher::formatter::HashSecurityStatus::NotChecked && check_osv
+                {
+                    let action_str = task.action.to_string();
+                    let is_git_sha = tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit());
+
+                    if !is_git_sha {
+                        let image_name =
+                            action_str.strip_prefix("docker://").unwrap_or(&action_str);
+                        match self
+                            .resolver
+                            .registry
+                            .verify_provenance(image_name, tag)
+                            .await
+                        {
+                            Ok(true) => {}
+                            _ => {
+                                status = crate::patcher::formatter::HashSecurityStatus::Compromised;
+                            }
+                        }
+                    } else {
+                        #[derive(serde::Serialize)]
+                        struct OsvQuery {
+                            commit: String,
+                        }
+
+                        #[derive(serde::Deserialize)]
+                        struct OsvResponse {
+                            vulns: Option<Vec<serde_json::Value>>,
+                        }
+
+                        let base_url = std::env::var("PINNER_OSV_URL")
+                            .unwrap_or_else(|_| "https://api.osv.dev/v1/query".to_string());
+
+                        let response = client
+                            .post(&base_url)
+                            .json(&OsvQuery {
+                                commit: tag.to_string(),
+                            })
+                            .send()
+                            .await;
+
+                        if let Ok(resp) = response {
+                            if resp.status().is_success() {
+                                if let Ok(osv_resp) = resp.json::<OsvResponse>().await {
+                                    if let Some(vulns) = osv_resp.vulns {
+                                        if !vulns.is_empty() {
+                                            status = crate::patcher::formatter::HashSecurityStatus::Compromised;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                match status {
+                    crate::patcher::formatter::HashSecurityStatus::Compromised => {
+                        compromised.push(crate::core::CompromisedDependency {
+                            path: task.path.clone(),
+                            action: task.action.clone(),
+                            hash: tag.to_string(),
+                            line: task.line,
+                            column: task.column,
+                        });
+
+                        if !self.patcher.formatter.quiet
+                            && self.patcher.formatter.format == crate::cli::OutputFormat::Text
+                        {
+                            eprintln!(
+                                "  {} {}@{} in {}:{}:{} [✗ compromised]",
+                                "✗".red().bold(),
+                                task.action.to_string().yellow(),
+                                tag.red(),
+                                task.path.display().to_string().cyan(),
+                                task.line.to_string().magenta(),
+                                task.column.to_string().magenta(),
+                            );
+                        }
+                    }
+                    crate::patcher::formatter::HashSecurityStatus::NotChecked => {
+                        if strict {
+                            non_vetted.push(crate::core::NonVettedDependency {
+                                path: task.path.clone(),
+                                action: task.action.clone(),
+                                tag: task.current_tag.clone(),
+                                line: task.line,
+                                column: task.column,
+                            });
+
+                            if !self.patcher.formatter.quiet
+                                && self.patcher.formatter.format == crate::cli::OutputFormat::Text
+                            {
+                                eprintln!(
+                                    "  {} {}@{} in {}:{}:{} [✗ not vetted]",
+                                    "✗".red().bold(),
+                                    task.action.to_string().yellow(),
+                                    tag.yellow(),
+                                    task.path.display().to_string().cyan(),
+                                    task.line.to_string().magenta(),
+                                    task.column.to_string().magenta(),
+                                );
+                            }
+                        } else {
+                            if !self.patcher.formatter.quiet
+                                && self.patcher.formatter.format == crate::cli::OutputFormat::Text
+                            {
+                                let status_str = crate::patcher::formatter::format_security_status(
+                                    status,
+                                    self.patcher.formatter.show_security_feedback,
+                                );
+                                eprintln!(
+                                    "  {} {}@{} in {}:{}:{}{}",
+                                    "✔".green().bold(),
+                                    task.action.to_string().yellow(),
+                                    tag.green(),
+                                    task.path.display().to_string().cyan(),
+                                    task.line.to_string().magenta(),
+                                    task.column.to_string().magenta(),
+                                    status_str,
+                                );
+                            }
+                        }
+                    }
+                    crate::patcher::formatter::HashSecurityStatus::Vetted => {
+                        if !self.patcher.formatter.quiet
+                            && self.patcher.formatter.format == crate::cli::OutputFormat::Text
+                        {
+                            let status_str = crate::patcher::formatter::format_security_status(
+                                status,
+                                self.patcher.formatter.show_security_feedback,
+                            );
+                            eprintln!(
+                                "  {} {}@{} in {}:{}:{}{}",
+                                "✔".green().bold(),
+                                task.action.to_string().yellow(),
+                                tag.green(),
+                                task.path.display().to_string().cyan(),
+                                task.line.to_string().magenta(),
+                                task.column.to_string().magenta(),
+                                status_str,
+                            );
+                        }
+                    }
+                }
             }
         }
 
-        let result = crate::core::VerificationResult { unpinned };
+        let result = crate::core::VerificationResult {
+            unpinned,
+            compromised,
+            non_vetted,
+        };
 
         if !result.is_success() {
             if !self.patcher.formatter.quiet
                 && self.patcher.formatter.format == crate::cli::OutputFormat::Text
             {
                 eprintln!(
-                    "{}",
-                    "Verification failed! Unpinned actions found:".red().bold()
+                    "\n{}",
+                    "Verification failed! Unpinned, compromised, or non-vetted actions found:"
+                        .red()
+                        .bold()
                 );
                 for dep in &result.unpinned {
                     let display_tag = dep.tag.as_deref().unwrap_or("latest");
                     eprintln!(
-                        "  {}@{} in {}:{}:{}",
+                        "  {}@{} in {}:{}:{} (unpinned)",
+                        dep.action.to_string().yellow(),
+                        display_tag.yellow(),
+                        dep.path.display().to_string().cyan(),
+                        dep.line.to_string().magenta(),
+                        dep.column.to_string().magenta(),
+                    );
+                }
+                for dep in &result.compromised {
+                    eprintln!(
+                        "  {}@{} in {}:{}:{} (compromised)",
+                        dep.action.to_string().yellow(),
+                        dep.hash.red(),
+                        dep.path.display().to_string().cyan(),
+                        dep.line.to_string().magenta(),
+                        dep.column.to_string().magenta(),
+                    );
+                }
+                for dep in &result.non_vetted {
+                    let display_tag = dep.tag.as_deref().unwrap_or("unknown");
+                    eprintln!(
+                        "  {}@{} in {}:{}:{} (not vetted)",
                         dep.action.to_string().yellow(),
                         display_tag.yellow(),
                         dep.path.display().to_string().cyan(),
@@ -133,7 +338,12 @@ impl Pipeline {
         } else if !self.patcher.formatter.quiet
             && self.patcher.formatter.format == crate::cli::OutputFormat::Text
         {
-            eprintln!("{}", "✔ All actions are correctly pinned!".green().bold());
+            eprintln!(
+                "\n{}",
+                "✔ All actions are correctly pinned and secure!"
+                    .green()
+                    .bold()
+            );
         }
 
         Ok(result)
@@ -781,7 +991,7 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         Commands::Pin => pipeline.pin(&paths).await?,
         Commands::Upgrade { interactive } => pipeline.upgrade(&paths, interactive).await?,
         Commands::Verify => {
-            let result = pipeline.verify(&paths).await?;
+            let result = pipeline.verify(&paths, cli.check_osv, cli.strict).await?;
             if cli.output_format() == crate::cli::OutputFormat::Json {
                 println!(
                     "{}",
@@ -791,7 +1001,8 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
             }
             if !result.is_success() {
                 return Err(PinnerError::VerificationFailed(
-                    "Some actions are not pinned to a SHA".into(),
+                    "Some actions are not pinned to a SHA, are compromised, or are not vetted"
+                        .into(),
                 ));
             }
         }
@@ -1010,7 +1221,10 @@ mod tests {
         );
         let pipeline = Pipeline::new(scanner, resolver, patcher);
 
-        let res = pipeline.verify(std::slice::from_ref(&f)).await.unwrap();
+        let res = pipeline
+            .verify(std::slice::from_ref(&f), false, false)
+            .await
+            .unwrap();
         assert!(!res.is_success()); // v3 is not pinned
 
         fs::write(
@@ -1018,7 +1232,10 @@ mod tests {
             "uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
         )
         .unwrap();
-        let res = pipeline.verify(std::slice::from_ref(&f)).await.unwrap();
+        let res = pipeline
+            .verify(std::slice::from_ref(&f), false, false)
+            .await
+            .unwrap();
         assert!(res.is_success());
     }
 
@@ -1187,5 +1404,62 @@ mod tests {
             status,
             crate::patcher::formatter::HashSecurityStatus::Vetted
         );
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_getters() {
+        let scanner = Scanner::new(vec![]);
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let _ = pipeline.scanner();
+        let _ = pipeline.resolver();
+        let _ = pipeline.patcher();
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_upgrade_interactive() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v3").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("v4".to_string()));
+        remote
+            .expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(crate::core::DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let resolver = Resolver::new(
+            Arc::new(remote),
+            Arc::new(MockRegistryProvider::new()),
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        pipeline
+            .upgrade(std::slice::from_ref(&f), true)
+            .await
+            .unwrap();
     }
 }

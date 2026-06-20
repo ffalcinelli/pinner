@@ -278,4 +278,125 @@ mod tests {
         assert!(patches[0].new_content.contains("a/b@sha1 # v1"));
         assert!(patches[0].new_content.contains("c/d@sha2 # v2"));
     }
+
+    #[test]
+    fn test_calculate_patches_file_not_found() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, false);
+
+        let path = PathBuf::from("notfound.yml");
+        let file_contents = HashMap::new();
+
+        let res = UpdateResult {
+            task: UpdateTask {
+                path: path.clone(),
+                ..Default::default()
+            },
+            action: "a".into(),
+            path: path.clone(),
+            old_tag: None,
+            new_sha: DependencyRef::GitSha("sha".to_string()),
+            new_tag: None,
+        };
+
+        let err = patcher.calculate_patches(vec![res], &file_contents);
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_apply_patches_dry_run_text() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, true);
+
+        let patch = FilePatch {
+            path: PathBuf::from("dummy.yml"),
+            original_content: "uses: a/b@v1".to_string(),
+            new_content: "uses: a/b@sha1 # v1".to_string(),
+            changes: vec![(
+                "uses: a/b@v1".to_string(),
+                "uses: a/b@sha1 # v1".to_string(),
+            )],
+            results: vec![UpdateResult {
+                task: UpdateTask {
+                    path: PathBuf::from("dummy.yml"),
+                    key: "uses".to_string(),
+                    ..Default::default()
+                },
+                action: "a/b".into(),
+                path: PathBuf::from("dummy.yml"),
+                old_tag: Some("v1".to_string()),
+                new_sha: DependencyRef::GitSha("sha1".to_string()),
+                new_tag: Some("v1".to_string()),
+            }],
+        };
+
+        let res = patcher.apply_patches(vec![patch]).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_apply_patches_dry_run_non_text() {
+        let formatter = Formatter::new(OutputFormat::Json, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, true);
+
+        let patch = FilePatch {
+            path: PathBuf::from("dummy.yml"),
+            original_content: "uses: a/b@v1".to_string(),
+            new_content: "uses: a/b@sha1 # v1".to_string(),
+            changes: vec![(
+                "uses: a/b@v1".to_string(),
+                "uses: a/b@sha1 # v1".to_string(),
+            )],
+            results: vec![UpdateResult {
+                task: UpdateTask {
+                    path: PathBuf::from("dummy.yml"),
+                    key: "uses".to_string(),
+                    ..Default::default()
+                },
+                action: "a/b".into(),
+                path: PathBuf::from("dummy.yml"),
+                old_tag: Some("v1".to_string()),
+                new_sha: DependencyRef::GitSha("sha1".to_string()),
+                new_tag: Some("v1".to_string()),
+            }],
+        };
+
+        let res = patcher.apply_patches(vec![patch]).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_apply_patches_user_skipped() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: false });
+        let patcher = Patcher::new(formatter, ui, false);
+
+        let patch = FilePatch {
+            path: PathBuf::from("dummy.yml"),
+            original_content: "uses: a/b@v1".to_string(),
+            new_content: "uses: a/b@sha1 # v1".to_string(),
+            changes: vec![(
+                "uses: a/b@v1".to_string(),
+                "uses: a/b@sha1 # v1".to_string(),
+            )],
+            results: vec![UpdateResult {
+                task: UpdateTask {
+                    path: PathBuf::from("dummy.yml"),
+                    key: "uses".to_string(),
+                    ..Default::default()
+                },
+                action: "a/b".into(),
+                path: PathBuf::from("dummy.yml"),
+                old_tag: Some("v1".to_string()),
+                new_sha: DependencyRef::GitSha("sha1".to_string()),
+                new_tag: Some("v1".to_string()),
+            }],
+        };
+
+        let res = patcher.apply_patches(vec![patch]).await;
+        assert!(res.is_ok());
+    }
 }
