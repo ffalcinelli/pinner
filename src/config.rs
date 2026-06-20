@@ -454,10 +454,10 @@ fn format_security_list(list: &[SecurityEntry]) -> String {
         if i < list.len() - 1 {
             s.push_str(",\n");
         } else {
-            s.push_str("\n");
+            s.push('\n');
         }
     }
-    s.push_str("]");
+    s.push(']');
     s
 }
 
@@ -915,23 +915,26 @@ mod tests {
 
     #[test]
     fn test_to_formatted_string() {
-        let mut config = Config::default();
-        config.vetted = Some(vec![
-            SecurityEntry {
-                reference: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10".to_string(),
-                tag: Some("v6.0.3".to_string()),
-                timestamp: Some("2026-06-19T08:37:29Z".to_string()),
-            },
-            SecurityEntry {
-                reference:
-                    "taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651"
+        let config = Config {
+            vetted: Some(vec![
+                SecurityEntry {
+                    reference: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10"
                         .to_string(),
-                tag: Some("v1.11.0".to_string()),
-                timestamp: Some("2026-06-19T08:37:29Z".to_string()),
-            },
-        ]);
-        config.yes = Some(false);
-        config.concurrency = Some(10);
+                    tag: Some("v6.0.3".to_string()),
+                    timestamp: Some("2026-06-19T08:37:29Z".to_string()),
+                },
+                SecurityEntry {
+                    reference:
+                        "taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651"
+                            .to_string(),
+                    tag: Some("v1.11.0".to_string()),
+                    timestamp: Some("2026-06-19T08:37:29Z".to_string()),
+                },
+            ]),
+            yes: Some(false),
+            concurrency: Some(10),
+            ..Default::default()
+        };
 
         let toml_str = config.to_formatted_string().unwrap();
         println!("Serialized:\n{}", toml_str);

@@ -360,7 +360,7 @@ mod tests {
             new_tag: Some("v2".to_string()),
         };
 
-        formatter_json.print_results(&[res.clone()]);
-        formatter_md.print_results(&[res]);
+        formatter_json.print_results(std::slice::from_ref(&res));
+        formatter_md.print_results(std::slice::from_ref(&res));
     }
 }
