@@ -48,7 +48,6 @@
 - `--dry-run`: Show diff without writing changes.
 - `--quiet` (`-q`): Suppress console output.
 - `--verbose`: Enable debug logging.
-- `--json`: Output results in JSON format.
 
 ## Development Conventions
 - **Clean Code**: Logic is decoupled from side effects.

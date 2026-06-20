@@ -154,8 +154,16 @@ impl Pipeline {
                             .await
                         {
                             Ok(true) => {}
-                            _ => {
+                            Ok(false) => {
                                 status = crate::patcher::formatter::HashSecurityStatus::Compromised;
+                            }
+                            Err(e) => {
+                                if !self.patcher.formatter.quiet {
+                                    eprintln!(
+                                        "Warning: Could not verify OCI provenance for {}@{} due to error: {}",
+                                        image_name, tag, e
+                                    );
+                                }
                             }
                         }
                     } else {
@@ -580,12 +588,11 @@ impl Pipeline {
                         ));
                     }
                     Err(e) => {
-                        is_compromised = true;
-                        reasons.push((
-                            "PROVENANCE_ERR".to_string(),
-                            format!("Provenance verification error: {}", e),
-                            true,
-                        ));
+                        eprintln!(
+                            "Warning: Could not verify OCI provenance for {}@{} due to error: {}",
+                            image_name, sha_str, e
+                        );
+                        continue;
                     }
                 }
 
@@ -893,8 +900,7 @@ impl Pipeline {
             config.vetted = Some(vetted_list);
             config.compromised = Some(compromised_list);
 
-            let toml_str =
-                toml::to_string_pretty(&config).map_err(|e| PinnerError::Config(e.to_string()))?;
+            let toml_str = config.to_formatted_string()?;
             std::fs::write(".pinner.toml", toml_str)?;
             println!("\n{} Updated .pinner.toml", "✔".green().bold());
         }
@@ -913,6 +919,30 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     registry: R,
     paths: Vec<PathBuf>,
 ) -> Result<(), PinnerError> {
+    if cli.offline {
+        match cli.command {
+            Commands::Verify {
+                check_osv: true, ..
+            } => {
+                return Err(PinnerError::Config(
+                    "Cannot check OSV when offline mode is enabled".into(),
+                ));
+            }
+            Commands::Scan { .. } => {
+                return Err(PinnerError::Config(
+                    "Cannot run scan in offline mode".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    let upgrade_strategy = match &cli.command {
+        Commands::Upgrade {
+            upgrade_strategy, ..
+        }
+        | Commands::Scan { upgrade_strategy } => upgrade_strategy.clone(),
+        _ => crate::cli::UpgradeStrategy::Latest,
+    };
     let config = crate::config::Config::load();
     let scanner = Scanner::new(cli.ignore.clone());
     let local_vetted: Vec<String> = config
@@ -961,7 +991,7 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     }
 
     let formatter = Formatter::new(
-        cli.output_format(),
+        cli.format.clone(),
         cli.quiet,
         vetted,
         compromised,
@@ -979,7 +1009,7 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     let resolver = Resolver::new(
         Arc::new(CachedProvider::new(remote, disk_cache, cli.offline)),
         Arc::new(registry),
-        cli.upgrade_strategy.clone(),
+        upgrade_strategy,
         cli.concurrency.unwrap_or(10),
     );
     let ui = Arc::new(crate::patcher::ui::ConsoleUi::new(cli.yes));
@@ -989,10 +1019,10 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
 
     match cli.command {
         Commands::Pin => pipeline.pin(&paths).await?,
-        Commands::Upgrade { interactive } => pipeline.upgrade(&paths, interactive).await?,
-        Commands::Verify => {
-            let result = pipeline.verify(&paths, cli.check_osv, cli.strict).await?;
-            if cli.output_format() == crate::cli::OutputFormat::Json {
+        Commands::Upgrade { interactive, .. } => pipeline.upgrade(&paths, interactive).await?,
+        Commands::Verify { check_osv, strict } => {
+            let result = pipeline.verify(&paths, check_osv, strict).await?;
+            if cli.format == crate::cli::OutputFormat::Json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&result)
@@ -1010,7 +1040,7 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         Commands::InstallHook => install_git_hook()?,
         Commands::Init => init_project()?,
         Commands::ExportSbom => pipeline.export_sbom(&paths).await?,
-        Commands::Scan => pipeline.scan(&paths, cli.yes).await?,
+        Commands::Scan { .. } => pipeline.scan(&paths, cli.yes).await?,
         Commands::GenerateCompletion { .. } => {}
     }
 

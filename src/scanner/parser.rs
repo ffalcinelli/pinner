@@ -303,16 +303,29 @@ fn create_task(
 
     let (action_part, tag) = if let Some((a, t)) = value.split_once('@') {
         (a, Some(t))
-    } else if value.starts_with("docker://") && value.contains(':') {
-        if let Some(last_colon) = value.rfind(':') {
-            (&value[..last_colon], Some(&value[last_colon + 1..]))
+    } else {
+        let is_docker = value.starts_with("docker://");
+        let path_to_check = if is_docker {
+            value.strip_prefix("docker://").unwrap()
+        } else {
+            value.as_str()
+        };
+
+        if let Some(last_colon) = path_to_check.rfind(':') {
+            let after_colon = &path_to_check[last_colon + 1..];
+            if after_colon.contains('/') {
+                (value.as_str(), None)
+            } else {
+                let split_idx = if is_docker {
+                    last_colon + "docker://".len()
+                } else {
+                    last_colon
+                };
+                (&value[..split_idx], Some(&value[split_idx + 1..]))
+            }
         } else {
             (value.as_str(), None)
         }
-    } else if let Some((a, t)) = value.split_once(':') {
-        (a, Some(t))
-    } else {
-        (value.as_str(), None)
     };
 
     let action = DependencyName::from(action_part);
@@ -658,5 +671,32 @@ jobs:
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|r| r.action.0 == "actions/checkout"));
         assert!(results.iter().any(|r| r.action.0 == "redis"));
+    }
+
+    #[test]
+    fn test_create_task_with_ports() {
+        let yaml = r#"
+- image: localhost:5000/my-image:v1.0.0
+- image: localhost:5000/my-image
+- image: docker://localhost:5000/my-image:v2.0.0
+- image: docker://localhost:5000/my-image
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new("bitbucket-pipelines.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 4);
+
+        assert_eq!(results[0].action.0, "localhost:5000/my-image");
+        assert_eq!(results[0].current_tag.as_deref(), Some("v1.0.0"));
+
+        assert_eq!(results[1].action.0, "localhost:5000/my-image");
+        assert_eq!(results[1].current_tag.as_deref(), None);
+
+        assert_eq!(results[2].action.0, "docker://localhost:5000/my-image");
+        assert_eq!(results[2].current_tag.as_deref(), Some("v2.0.0"));
+
+        assert_eq!(results[3].action.0, "docker://localhost:5000/my-image");
+        assert_eq!(results[3].current_tag.as_deref(), None);
     }
 }

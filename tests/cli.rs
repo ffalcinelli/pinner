@@ -73,3 +73,30 @@ fn test_cli_env_override() {
         .success()
         .stderr(predicate::str::contains("Request failed"));
 }
+
+#[test]
+fn test_cli_quiet_verbose_conflict_binary() {
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.arg("--quiet").arg("--verbose").arg("verify");
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "the argument '--quiet' cannot be used with '--verbose'",
+    ));
+}
+
+#[test]
+fn test_cli_oci_username_requires_password_binary() {
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.arg("--oci-username").arg("foo").arg("verify");
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "the following required arguments were not provided:\n  --oci-password <OCI_PASSWORD>",
+    ));
+}
+
+#[test]
+fn test_cli_json_removed_binary() {
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.arg("--json").arg("verify");
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "unexpected argument '--json' found",
+    ));
+}

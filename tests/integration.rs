@@ -416,8 +416,8 @@ async fn test_verify_strict_mode() {
         "pinner",
         "--workflows",
         workflows.to_str().unwrap(),
-        "--strict",
         "verify",
+        "--strict",
     ])
     .unwrap();
 
@@ -445,4 +445,87 @@ vetted = [
     assert!(res.is_ok());
 
     std::env::set_current_dir(original_dir).unwrap();
+}
+
+#[tokio::test]
+async fn test_offline_and_check_osv_conflict() {
+    use pinner::Cli;
+    // Test that offline mode and check_osv verify conflict and return an error
+    let cli = Cli {
+        command: pinner::Commands::Verify {
+            check_osv: true,
+            strict: false,
+        },
+        workflows: vec![],
+        yes: false,
+        quiet: true,
+        verbose: false,
+        no_cache: true,
+        offline: true,
+        dry_run: false,
+        github_token: None,
+        bitbucket_token: None,
+        gitlab_token: None,
+        forgejo_token: None,
+        circleci_token: None,
+        format: pinner::cli::OutputFormat::Text,
+        github_url: "https://api.github.com".to_string(),
+        bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+        gitlab_url: "https://gitlab.com".to_string(),
+        forgejo_url: "https://codeberg.org".to_string(),
+        circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+        concurrency: None,
+        ignore: vec![],
+        oci_username: None,
+        oci_password: None,
+    };
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(cli, provider, registry, vec![]).await;
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.err().unwrap());
+    assert!(err_msg.contains("Cannot check OSV when offline mode is enabled"));
+}
+
+#[tokio::test]
+async fn test_offline_and_scan_conflict() {
+    use pinner::Cli;
+    // Test that offline mode and scan command conflict and return an error
+    let cli = Cli {
+        command: pinner::Commands::Scan {
+            upgrade_strategy: pinner::cli::UpgradeStrategy::Latest,
+        },
+        workflows: vec![],
+        yes: false,
+        quiet: true,
+        verbose: false,
+        no_cache: true,
+        offline: true,
+        dry_run: false,
+        github_token: None,
+        bitbucket_token: None,
+        gitlab_token: None,
+        forgejo_token: None,
+        circleci_token: None,
+        format: pinner::cli::OutputFormat::Text,
+        github_url: "https://api.github.com".to_string(),
+        bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+        gitlab_url: "https://gitlab.com".to_string(),
+        forgejo_url: "https://codeberg.org".to_string(),
+        circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+        concurrency: None,
+        ignore: vec![],
+        oci_username: None,
+        oci_password: None,
+    };
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(cli, provider, registry, vec![]).await;
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.err().unwrap());
+    assert!(err_msg.contains("Cannot run scan in offline mode"));
 }
