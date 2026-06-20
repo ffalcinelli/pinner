@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2026-06-20
+
+### Added
+- 🛡️ **Vulnerability and Strictness Checks in Verification**: Added `--check-osv` and `--strict` options to the `verify` command to query the OSV database for known vulnerabilities/compromised hashes and fail verification if dependencies are not explicitly vetted.
+- 📁 **Global Configuration Support**: Automatically load and merge user configurations from global paths (e.g., config and home directories).
+- 🔑 **CircleCI Token Configuration**: Added support for the `CIRCLECI_TOKEN` environment variable to configure the GraphQL API token.
+
+### Changed
+- 🛠️ **CLI Scoping and Refinements**:
+  - Relocated `--upgrade-strategy` from a global option to a subcommand-specific argument for the `upgrade` and `scan` commands.
+  - Added mutual exclusion check between `--quiet` and `--verbose`.
+  - Added mutual dependency validation for `--oci-username` and `--oci-password`.
+  - Deprecated and removed the global `--json` flag (use `--format json` instead).
+  - Aligned environment variables for OCI registry to use `PINNER_OCI_USERNAME` and `PINNER_OCI_PASSWORD`.
+- 📦 **Compact Configuration Format**: Serialized the `.pinner.toml` config's `vetted` and `compromised` security lists as compact inline arrays instead of verbose tables.
+
+### Fixed
+- 🐳 **Docker Port Registry Parsing**: Fixed a parsing issue where Docker image tags containing registry hosts with custom ports (e.g. `localhost:5000/my-image:v1.0.0`) were parsed incorrectly.
+- 🧪 **Offline Mode Safeguards**: Added validation checks to prevent running online-only operations like OSV checks and scans in offline mode.
+
 ## [0.0.10] - 2026-06-19
 
 ### Added
