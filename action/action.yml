@@ -78,43 +78,47 @@ runs:
         FORGEJO_TOKEN: ${{ inputs.forgejo-token }}
         CIRCLECI_TOKEN: ${{ inputs.circleci-token }}
       run: |
-        ARGS=""
+        GLOBAL_ARGS=""
+        CMD_ARGS=""
         
         if [ "${{ inputs.yes }}" = "true" ]; then
-          ARGS="$ARGS --yes"
+          GLOBAL_ARGS="$GLOBAL_ARGS --yes"
         fi
         
         if [ "${{ inputs.dry-run }}" = "true" ]; then
-          ARGS="$ARGS --dry-run"
+          GLOBAL_ARGS="$GLOBAL_ARGS --dry-run"
         fi
         
         if [ "${{ inputs.offline }}" = "true" ]; then
-          ARGS="$ARGS --offline"
+          GLOBAL_ARGS="$GLOBAL_ARGS --offline"
         fi
         
         if [ -n "${{ inputs.workflows }}" ]; then
           # Split by comma if multiple workflows provided, otherwise pass directly
           IFS=',' read -ra ADDR <<< "${{ inputs.workflows }}"
           for path in "${ADDR[@]}"; do
-            ARGS="$ARGS --workflows $path"
+            GLOBAL_ARGS="$GLOBAL_ARGS --workflows $path"
           done
         fi
         
         if [ -n "${{ inputs.format }}" ]; then
-          ARGS="$ARGS --format ${{ inputs.format }}"
-        fi
-        
-        if [ -n "${{ inputs.upgrade-strategy }}" ]; then
-          ARGS="$ARGS --upgrade-strategy ${{ inputs.upgrade-strategy }}"
+          GLOBAL_ARGS="$GLOBAL_ARGS --format ${{ inputs.format }}"
         fi
         
         if [ -n "${{ inputs.concurrency }}" ]; then
-          ARGS="$ARGS --concurrency ${{ inputs.concurrency }}"
+          GLOBAL_ARGS="$GLOBAL_ARGS --concurrency ${{ inputs.concurrency }}"
         fi
         
         if [ -n "${{ inputs.ignore }}" ]; then
-          ARGS="$ARGS --ignore ${{ inputs.ignore }}"
+          GLOBAL_ARGS="$GLOBAL_ARGS --ignore ${{ inputs.ignore }}"
         fi
         
-        echo "Running: pinner $ARGS ${{ inputs.command }}"
-        pinner $ARGS ${{ inputs.command }}
+        CMD="${{ inputs.command }}"
+        if [ "$CMD" = "upgrade" ] || [ "$CMD" = "scan" ]; then
+          if [ -n "${{ inputs.upgrade-strategy }}" ]; then
+            CMD_ARGS="$CMD_ARGS --upgrade-strategy ${{ inputs.upgrade-strategy }}"
+          fi
+        fi
+        
+        echo "Running: pinner $GLOBAL_ARGS $CMD $CMD_ARGS"
+        pinner $GLOBAL_ARGS $CMD $CMD_ARGS

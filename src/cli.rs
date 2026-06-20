@@ -57,10 +57,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub yes: bool,
     /// Suppress all console output except for critical errors.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
     pub quiet: bool,
     /// Print verbose output for debugging.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, conflicts_with = "quiet")]
     pub verbose: bool,
     /// Disable persistent disk caching.
     #[arg(long, global = true, env = "PINNER_NO_CACHE")]
@@ -91,9 +91,6 @@ pub struct Cli {
     /// Output results in the specified format.
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
-    /// Output results in JSON format (deprecated, use --format json).
-    #[arg(long, global = true)]
-    pub json: bool,
     /// Base URL for the GitHub API (defaults to public GitHub).
     #[arg(
         long,
@@ -134,14 +131,7 @@ pub struct Cli {
         default_value = "https://circleci.com/graphql-unstable"
     )]
     pub circleci_url: String,
-    /// Strategy to use when upgrading actions.
-    #[arg(
-        long,
-        global = true,
-        env = "PINNER_UPGRADE_STRATEGY",
-        default_value = "latest"
-    )]
-    pub upgrade_strategy: UpgradeStrategy,
+
     /// Number of concurrent API requests to make.
     #[arg(long, global = true, env = "PINNER_CONCURRENCY")]
     pub concurrency: Option<usize>,
@@ -150,10 +140,20 @@ pub struct Cli {
     pub ignore: Vec<String>,
 
     /// Username for OCI registry authentication.
-    #[arg(long, global = true, env = "PINNER_OCI_USERNAME")]
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_OCI_USERNAME",
+        requires = "oci_password"
+    )]
     pub oci_username: Option<String>,
     /// Password for OCI registry authentication.
-    #[arg(long, global = true, env = "PINNER_OCI_PASSWORD")]
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_OCI_PASSWORD",
+        requires = "oci_username"
+    )]
     pub oci_password: Option<String>,
 }
 
@@ -161,15 +161,6 @@ impl Cli {
     /// Returns true if the quiet flag is set.
     pub fn quiet(&self) -> bool {
         self.quiet
-    }
-
-    /// Returns the effective output format, considering the deprecated --json flag.
-    pub fn output_format(&self) -> OutputFormat {
-        if self.json {
-            OutputFormat::Json
-        } else {
-            self.format.clone()
-        }
     }
 }
 
@@ -183,9 +174,19 @@ pub enum Commands {
         /// Interactively select which actions to upgrade.
         #[arg(short, long)]
         interactive: bool,
+        /// Strategy to use when upgrading actions.
+        #[arg(long, env = "PINNER_UPGRADE_STRATEGY", default_value = "latest")]
+        upgrade_strategy: UpgradeStrategy,
     },
     /// Verify that all actions are pinned to commit SHAs.
-    Verify,
+    Verify {
+        /// Also check the OSV database for known vulnerabilities and compromised hashes during verification.
+        #[arg(long, env = "PINNER_CHECK_OSV", conflicts_with = "offline")]
+        check_osv: bool,
+        /// Fail verification if any dependency is not explicitly vetted in the configuration.
+        #[arg(long, env = "PINNER_STRICT")]
+        strict: bool,
+    },
     /// Set a specific action to a specific commit SHA.
     Set {
         /// Action name (e.g., actions/checkout)
@@ -200,7 +201,11 @@ pub enum Commands {
     /// Export a Software Bill of Materials (SBOM) for all dependencies in the workflows.
     ExportSbom,
     /// Scan workflows and query OSV to identify compromised dependencies, updating .pinner.toml.
-    Scan,
+    Scan {
+        /// Strategy to use when upgrading actions.
+        #[arg(long, env = "PINNER_UPGRADE_STRATEGY", default_value = "latest")]
+        upgrade_strategy: UpgradeStrategy,
+    },
     /// Generate shell completions.
     GenerateCompletion {
         /// Shell to generate completions for. If omitted, attempts to detect from the SHELL environment variable.
@@ -219,29 +224,38 @@ mod tests {
         assert!(!cli.yes);
         assert!(!cli.quiet());
         assert!(!cli.dry_run);
-        assert!(!cli.json);
     }
 
     #[test]
     fn test_cli_verify() {
         let cli = Cli::try_parse_from(["pinner", "verify"]).unwrap();
-        assert_eq!(cli.command, Commands::Verify);
+        assert_eq!(
+            cli.command,
+            Commands::Verify {
+                check_osv: false,
+                strict: false
+            }
+        );
     }
     #[test]
     fn test_cli_flags() {
-        let cli =
-            Cli::try_parse_from(["pinner", "-y", "-q", "--dry-run", "--json", "pin"]).unwrap();
+        let cli = Cli::try_parse_from(["pinner", "-y", "-q", "--dry-run", "pin"]).unwrap();
         assert_eq!(cli.command, Commands::Pin);
         assert!(cli.yes);
         assert!(cli.quiet);
         assert!(cli.dry_run);
-        assert!(cli.json);
     }
 
     #[test]
     fn test_cli_upgrade() {
         let cli = Cli::try_parse_from(["pinner", "upgrade"]).unwrap();
-        assert_eq!(cli.command, Commands::Upgrade { interactive: false });
+        assert_eq!(
+            cli.command,
+            Commands::Upgrade {
+                interactive: false,
+                upgrade_strategy: UpgradeStrategy::Latest
+            }
+        );
     }
 
     #[test]
@@ -283,7 +297,6 @@ mod tests {
             no_cache: false,
             offline: false,
             dry_run: false,
-            json: false,
             github_token: None,
             bitbucket_token: None,
             gitlab_token: None,
@@ -297,23 +310,63 @@ mod tests {
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
             circleci_url: "https://circleci.com/graphql-unstable".to_string(),
-            upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
         };
         assert!(cli.quiet());
-        assert_eq!(cli.output_format(), OutputFormat::Text);
+        assert_eq!(cli.format, OutputFormat::Text);
         assert!(!cli.offline);
-
-        let mut cli_json = cli.clone();
-        cli_json.json = true;
-        assert_eq!(cli_json.output_format(), OutputFormat::Json);
     }
 
     #[test]
     fn test_cli_offline() {
         let cli = Cli::try_parse_from(["pinner", "--offline", "pin"]).unwrap();
         assert!(cli.offline);
+    }
+
+    #[test]
+    fn test_cli_verify_options() {
+        let cli = Cli::try_parse_from(["pinner", "verify", "--check-osv", "--strict"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Commands::Verify {
+                check_osv: true,
+                strict: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_quiet_verbose_conflict() {
+        let res = Cli::try_parse_from(["pinner", "--quiet", "--verbose", "pin"]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_cli_oci_username_requires_password() {
+        let res = Cli::try_parse_from(["pinner", "--oci-username", "foo", "pin"]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_cli_oci_password_requires_username() {
+        let res = Cli::try_parse_from(["pinner", "--oci-password", "bar", "pin"]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_cli_oci_both_ok() {
+        let cli = Cli::try_parse_from([
+            "pinner",
+            "--oci-username",
+            "foo",
+            "--oci-password",
+            "bar",
+            "pin",
+        ])
+        .unwrap();
+        assert_eq!(cli.oci_username, Some("foo".to_string()));
+        assert_eq!(cli.oci_password, Some("bar".to_string()));
     }
 
     #[test]

@@ -431,11 +431,10 @@ impl ProviderRegistry {
 
         // GitHub is the primary provider and also handles Azure tasks (which are hosted on GitHub).
         registry.register(
-            Arc::new(CachedProvider::new(
-                ReqwestGithubProvider::new(config.github_url.clone(), config.github_token.clone())?,
-                config.disk_cache_path.clone(),
-                config.offline,
-            )),
+            Arc::new(ReqwestGithubProvider::new(
+                config.github_url.clone(),
+                config.github_token.clone(),
+            )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["github.com".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
@@ -444,14 +443,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(
-                ReqwestAzureProvider::new(ReqwestGithubProvider::new(
-                    config.github_url.clone(),
-                    config.github_token.clone(),
-                )?),
-                config.disk_cache_path.clone(),
-                config.offline,
-            )),
+            Arc::new(ReqwestAzureProvider::new(ReqwestGithubProvider::new(
+                config.github_url.clone(),
+                config.github_token.clone(),
+            )?)) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec![],
                 keys: vec!["task".to_string(), "template".to_string()],
@@ -460,11 +455,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(
-                ReqwestBitbucketProvider::new(config.bitbucket_url, config.bitbucket_token)?,
-                config.disk_cache_path.clone(),
-                config.offline,
-            )),
+            Arc::new(ReqwestBitbucketProvider::new(
+                config.bitbucket_url,
+                config.bitbucket_token,
+            )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["bitbucket.org".to_string()],
                 keys: vec!["pipe".to_string(), "image".to_string()],
@@ -473,11 +467,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(
-                ReqwestGitLabProvider::new(config.gitlab_url, config.gitlab_token)?,
-                config.disk_cache_path.clone(),
-                config.offline,
-            )),
+            Arc::new(ReqwestGitLabProvider::new(
+                config.gitlab_url,
+                config.gitlab_token,
+            )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["gitlab.com".to_string()],
                 keys: vec![
@@ -490,11 +483,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(
-                ReqwestForgejoProvider::new(config.forgejo_url, config.forgejo_token)?,
-                config.disk_cache_path.clone(),
-                config.offline,
-            )),
+            Arc::new(ReqwestForgejoProvider::new(
+                config.forgejo_url,
+                config.forgejo_token,
+            )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["codeberg.org".to_string(), "forgejo".to_string()],
                 keys: vec!["uses".to_string(), "image".to_string()],
@@ -503,11 +495,10 @@ impl ProviderRegistry {
         );
 
         registry.register(
-            Arc::new(CachedProvider::new(
-                ReqwestCircleCiProvider::new(config.circleci_url, config.circleci_token)?,
-                config.disk_cache_path.clone(),
-                config.offline,
-            )),
+            Arc::new(ReqwestCircleCiProvider::new(
+                config.circleci_url,
+                config.circleci_token,
+            )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec![],
                 keys: vec!["orbs".to_string()],

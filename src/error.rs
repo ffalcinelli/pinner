@@ -119,6 +119,32 @@ mod tests {
     }
 
     #[test]
+    fn test_error_is_fatal_exhaustive() {
+        assert!(PinnerError::Authentication("".into()).is_fatal());
+        assert!(PinnerError::Unsupported("".into()).is_fatal());
+        assert!(PinnerError::Offline("".into()).is_fatal());
+        assert!(!PinnerError::Registry("".into()).is_fatal());
+    }
+
+    #[tokio::test]
+    async fn test_error_is_fatal_async() {
+        let reqwest_err1 = reqwest::Client::new()
+            .get("https://invalid.domain.xyz.abc.123")
+            .send()
+            .await
+            .unwrap_err();
+        let reqwest_err2 = reqwest::Client::new()
+            .get("https://invalid.domain.xyz.abc.123")
+            .send()
+            .await
+            .unwrap_err();
+        let middleware_err = reqwest_middleware::Error::Reqwest(reqwest_err2);
+
+        assert!(!PinnerError::Http(reqwest_err1).is_fatal());
+        assert!(!PinnerError::Middleware(middleware_err).is_fatal());
+    }
+
+    #[test]
     fn test_error_from_io() {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "not found");
         let err = PinnerError::from(io_err);

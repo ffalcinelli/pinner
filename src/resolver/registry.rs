@@ -441,4 +441,90 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
     }
+
+    #[test]
+    fn test_oci_registry_provider_default() {
+        let _ = OciRegistryProvider::default();
+    }
+
+    #[test]
+    fn test_oci_registry_provider_with_base_urls() {
+        let _ = OciRegistryProvider::with_base_urls("auth_url".to_string(), "base_url".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_oci_registry_provider_verify_provenance_online() {
+        let provider = OciRegistryProvider::new(None, None);
+        let res = provider
+            .verify_provenance("alpine", "sha256:digest")
+            .await
+            .unwrap();
+        assert!(res);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_digest_docker_hub_with_credentials() {
+        let mut server = Server::new_async().await;
+        let token_resp = r#"{"token":"test-token"}"#;
+        let auth_path = "/token";
+        let auth = b64_encode("user:pass");
+        let _m1 = server
+            .mock("GET", mockito::Matcher::Any)
+            .match_header("Authorization", format!("Basic {}", auth).as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(token_resp)
+            .create_async()
+            .await;
+
+        let digest = "sha256:12345";
+        let _m2 = server
+            .mock("GET", "/v2/library/alpine/manifests/latest")
+            .with_status(200)
+            .with_header("Docker-Content-Digest", digest)
+            .create_async()
+            .await;
+
+        let mut provider = OciRegistryProvider::new(Some("user".into()), Some("pass".into()));
+        provider.auth_url = format!("{}{}", server.url(), auth_path);
+        provider.base_url_template =
+            format!("{}{}", server.url(), "/v2/{repository}/manifests/{tag}");
+
+        let res = provider.resolve_digest("alpine", "latest").await.unwrap();
+        assert_eq!(res, digest);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_digest_docker_hub_auth_failure() {
+        let mut server = Server::new_async().await;
+        let auth_path = "/token";
+        let _m1 = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(401)
+            .create_async()
+            .await;
+
+        let mut provider = OciRegistryProvider::new(None, None);
+        provider.auth_url = format!("{}{}", server.url(), auth_path);
+
+        let res = provider.resolve_digest("alpine", "latest").await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_digest_manifest_failure() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/v2/repo/manifests/latest")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let mut provider = OciRegistryProvider::new(None, None);
+        provider.base_url_template =
+            format!("{}{}", server.url(), "/v2/{repository}/manifests/{tag}");
+
+        let res = provider.resolve_digest("localhost/repo", "latest").await;
+        assert!(res.is_err());
+    }
 }

@@ -313,4 +313,54 @@ mod tests {
         assert!(diff.contains("uses: actions/checkout@hash3"));
         assert!(!diff.contains("[✓ vetted]"));
     }
+
+    #[test]
+    fn test_format_security_status_compromised() {
+        assert_eq!(
+            format_security_status(HashSecurityStatus::Compromised, true),
+            format!("{}", " [✗ compromised]".red().bold())
+        );
+    }
+
+    #[test]
+    fn test_check_hash_security_docker() {
+        let formatter = Formatter::new(
+            OutputFormat::Text,
+            false,
+            vec!["docker://alpine@sha256:vetted".to_string()],
+            vec!["docker://alpine@sha256:comp".to_string()],
+            true,
+        );
+
+        assert_eq!(
+            formatter.check_hash_security("docker://alpine", "sha256:vetted"),
+            HashSecurityStatus::Vetted
+        );
+        assert_eq!(
+            formatter.check_hash_security("docker://alpine", "sha256:comp"),
+            HashSecurityStatus::Compromised
+        );
+        assert_eq!(
+            formatter.check_hash_security("docker://alpine", "sha256:other"),
+            HashSecurityStatus::NotChecked
+        );
+    }
+
+    #[test]
+    fn test_print_results_json_markdown() {
+        let formatter_json = Formatter::new(OutputFormat::Json, false, vec![], vec![], true);
+        let formatter_md = Formatter::new(OutputFormat::Markdown, false, vec![], vec![], true);
+
+        let res = UpdateResult {
+            task: UpdateTask::default(),
+            action: "actions/checkout".into(),
+            path: PathBuf::from("f.yml"),
+            old_tag: Some("v2".to_string()),
+            new_sha: DependencyRef::GitSha("hash3".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+
+        formatter_json.print_results(std::slice::from_ref(&res));
+        formatter_md.print_results(std::slice::from_ref(&res));
+    }
 }

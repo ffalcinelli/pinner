@@ -10,7 +10,7 @@ use figment::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::cli::{Cli, OutputFormat, UpgradeStrategy};
+use crate::cli::{Cli, Commands, OutputFormat, UpgradeStrategy};
 
 /// Configuration for Pinner, typically loaded from a file or environment.
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -59,6 +59,10 @@ pub struct Config {
     pub compromised: Option<Vec<SecurityEntry>>,
     /// Disable visual security feedback.
     pub no_security_feedback: Option<bool>,
+    /// Automatically check the OSV database during verification.
+    pub check_osv: Option<bool>,
+    /// Fail verification if any dependency is not explicitly vetted in the configuration.
+    pub strict: Option<bool>,
     /// Username for OCI registry authentication.
     pub oci_username: Option<String>,
     /// Password for OCI registry authentication.
@@ -71,18 +75,21 @@ impl Config {
     /// Loads configuration from default locations and environment variables.
     ///
     /// Precedence (from lowest to highest):
-    /// 1. Default values.
-    /// 2. `.pinner.toml`
-    /// 3. `.pinner.yaml` or `.pinner.yml`
+    /// 1. Global config files
+    /// 2. Local `.pinner.toml`
+    /// 3. Local `.pinner.yaml` or `.pinner.yml`
     /// 4. Environment variables prefixed with `PINNER_` (e.g., `PINNER_YES=true`).
     pub fn load() -> Self {
-        Figment::new()
+        let mut global = Config::load_global();
+        let local = Figment::new()
             .merge(Toml::file(".pinner.toml"))
             .merge(Yaml::file(".pinner.yaml"))
             .merge(Yaml::file(".pinner.yml"))
             .merge(Env::prefixed("PINNER_"))
             .extract()
-            .unwrap_or_else(|_| Config::default())
+            .unwrap_or_else(|_| Config::default());
+        global.merge_all(local);
+        global
     }
 
     /// Loads configuration from global user locations.
@@ -92,6 +99,14 @@ impl Config {
     /// 2. `dirs::config_dir()/pinner/config.toml`
     /// 3. `dirs::home_dir()/.pinner.toml`
     pub fn load_global() -> Self {
+        let is_test = cfg!(test)
+            || std::env::current_exe()
+                .map(|path| path.to_string_lossy().contains("/deps/"))
+                .unwrap_or(false);
+        if is_test && std::env::var("PINNER_TEST_ALLOW_GLOBAL").is_err() {
+            return Config::default();
+        }
+
         let mut global = Config::default();
 
         if let Some(mut p) = dirs::cache_dir() {
@@ -100,7 +115,7 @@ impl Config {
             if p.exists() {
                 if let Ok(content) = std::fs::read_to_string(&p) {
                     if let Ok(cfg) = toml::from_str::<Config>(&content) {
-                        global.merge_lists(cfg);
+                        global.merge_all(cfg);
                     }
                 }
             }
@@ -112,7 +127,7 @@ impl Config {
             if p.exists() {
                 if let Ok(content) = std::fs::read_to_string(&p) {
                     if let Ok(cfg) = toml::from_str::<Config>(&content) {
-                        global.merge_lists(cfg);
+                        global.merge_all(cfg);
                     }
                 }
             }
@@ -123,7 +138,7 @@ impl Config {
             if p.exists() {
                 if let Ok(content) = std::fs::read_to_string(&p) {
                     if let Ok(cfg) = toml::from_str::<Config>(&content) {
-                        global.merge_lists(cfg);
+                        global.merge_all(cfg);
                     }
                 }
             }
@@ -151,6 +166,86 @@ impl Config {
                 }
             }
         }
+    }
+
+    /// Merges all configuration options from another configuration into this one.
+    pub fn merge_all(&mut self, other: Config) {
+        if other.workflows.is_some() {
+            self.workflows = other.workflows.clone();
+        }
+        if other.yes.is_some() {
+            self.yes = other.yes;
+        }
+        if other.quiet.is_some() {
+            self.quiet = other.quiet;
+        }
+        if other.verbose.is_some() {
+            self.verbose = other.verbose;
+        }
+        if other.dry_run.is_some() {
+            self.dry_run = other.dry_run;
+        }
+        if other.github_token.is_some() {
+            self.github_token = other.github_token.clone();
+        }
+        if other.bitbucket_token.is_some() {
+            self.bitbucket_token = other.bitbucket_token.clone();
+        }
+        if other.gitlab_token.is_some() {
+            self.gitlab_token = other.gitlab_token.clone();
+        }
+        if other.forgejo_token.is_some() {
+            self.forgejo_token = other.forgejo_token.clone();
+        }
+        if other.circleci_token.is_some() {
+            self.circleci_token = other.circleci_token.clone();
+        }
+        if other.format.is_some() {
+            self.format = other.format.clone();
+        }
+        if other.github_url.is_some() {
+            self.github_url = other.github_url.clone();
+        }
+        if other.bitbucket_url.is_some() {
+            self.bitbucket_url = other.bitbucket_url.clone();
+        }
+        if other.gitlab_url.is_some() {
+            self.gitlab_url = other.gitlab_url.clone();
+        }
+        if other.forgejo_url.is_some() {
+            self.forgejo_url = other.forgejo_url.clone();
+        }
+        if other.circleci_url.is_some() {
+            self.circleci_url = other.circleci_url.clone();
+        }
+        if other.upgrade_strategy.is_some() {
+            self.upgrade_strategy = other.upgrade_strategy.clone();
+        }
+        if other.concurrency.is_some() {
+            self.concurrency = other.concurrency;
+        }
+        if other.ignore.is_some() {
+            self.ignore = other.ignore.clone();
+        }
+        if other.no_security_feedback.is_some() {
+            self.no_security_feedback = other.no_security_feedback;
+        }
+        if other.check_osv.is_some() {
+            self.check_osv = other.check_osv;
+        }
+        if other.strict.is_some() {
+            self.strict = other.strict;
+        }
+        if other.oci_username.is_some() {
+            self.oci_username = other.oci_username.clone();
+        }
+        if other.oci_password.is_some() {
+            self.oci_password = other.oci_password.clone();
+        }
+        if other.offline.is_some() {
+            self.offline = other.offline;
+        }
+        self.merge_lists(other);
     }
 
     /// Merges this configuration with CLI arguments, with CLI taking precedence.
@@ -193,6 +288,31 @@ impl Config {
         if !cli.offline {
             if let Some(offline) = self.offline {
                 cli.offline = offline;
+            }
+        }
+
+        if let Commands::Verify { check_osv, strict } = &mut cli.command {
+            if !*check_osv {
+                if let Some(val) = self.check_osv {
+                    *check_osv = val;
+                }
+            }
+            if !*strict {
+                if let Some(val) = self.strict {
+                    *strict = val;
+                }
+            }
+        }
+
+        if let Commands::Upgrade {
+            upgrade_strategy, ..
+        }
+        | Commands::Scan { upgrade_strategy } = &mut cli.command
+        {
+            if *upgrade_strategy == UpgradeStrategy::Latest {
+                if let Some(strategy) = self.upgrade_strategy {
+                    *upgrade_strategy = strategy;
+                }
             }
         }
 
@@ -250,16 +370,9 @@ impl Config {
         }
 
         // Output format: CLI > Config
-        if cli.format == OutputFormat::Text && !cli.json {
+        if cli.format == OutputFormat::Text {
             if let Some(format) = self.format {
                 cli.format = format;
-            }
-        }
-
-        // Upgrade strategy: CLI > Config
-        if cli.upgrade_strategy == UpgradeStrategy::Latest {
-            if let Some(strategy) = self.upgrade_strategy {
-                cli.upgrade_strategy = strategy;
             }
         }
 
@@ -285,6 +398,67 @@ impl Config {
 
         cli
     }
+
+    /// Serializes the configuration to a pretty TOML string, formatting the `vetted`
+    /// and `compromised` security lists as compact inline table arrays.
+    pub fn to_formatted_string(&self) -> Result<String, crate::error::PinnerError> {
+        let mut temp_config = self.clone();
+        temp_config.vetted = None;
+        temp_config.compromised = None;
+
+        let mut toml_str = toml::to_string_pretty(&temp_config)
+            .map_err(|e| crate::error::PinnerError::Config(e.to_string()))?;
+
+        // Ensure there is a trailing newline if not empty
+        if !toml_str.ends_with('\n') && !toml_str.is_empty() {
+            toml_str.push('\n');
+        }
+
+        if let Some(ref vetted) = self.vetted {
+            if !toml_str.is_empty() {
+                toml_str.push('\n');
+            }
+            toml_str.push_str("vetted = ");
+            toml_str.push_str(&format_security_list(vetted));
+            toml_str.push('\n');
+        }
+
+        if let Some(ref compromised) = self.compromised {
+            if !toml_str.is_empty() {
+                toml_str.push('\n');
+            }
+            toml_str.push_str("compromised = ");
+            toml_str.push_str(&format_security_list(compromised));
+            toml_str.push('\n');
+        }
+
+        Ok(toml_str)
+    }
+}
+
+fn format_security_list(list: &[SecurityEntry]) -> String {
+    if list.is_empty() {
+        return "[]".to_string();
+    }
+    let mut s = "[\n".to_string();
+    for (i, entry) in list.iter().enumerate() {
+        let mut parts = Vec::new();
+        parts.push(format!("ref = \"{}\"", entry.reference));
+        if let Some(ref tag) = entry.tag {
+            parts.push(format!("tag = \"{}\"", tag));
+        }
+        if let Some(ref ts) = entry.timestamp {
+            parts.push(format!("timestamp = \"{}\"", ts));
+        }
+        s.push_str(&format!("    {{ {} }}", parts.join(", ")));
+        if i < list.len() - 1 {
+            s.push_str(",\n");
+        } else {
+            s.push('\n');
+        }
+    }
+    s.push(']');
+    s
 }
 
 /// Represents an entry in the vetted or compromised lists, which can include a version and timestamp.
@@ -403,13 +577,11 @@ mod tests {
             forgejo_token: None,
             circleci_token: None,
             format: OutputFormat::Text,
-            json: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
             circleci_url: "https://circleci.com/graphql-unstable".to_string(),
-            upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
             oci_username: None,
@@ -418,7 +590,6 @@ mod tests {
 
         let merged = config.merge_with_cli(cli);
         assert_eq!(merged.github_url, "https://api.github.com");
-        assert_eq!(merged.upgrade_strategy, UpgradeStrategy::Latest);
     }
 
     #[test]
@@ -440,7 +611,10 @@ mod tests {
         };
 
         let cli = Cli {
-            command: Commands::Pin,
+            command: Commands::Upgrade {
+                interactive: false,
+                upgrade_strategy: UpgradeStrategy::Latest,
+            },
             workflows: vec![],
             yes: false,
             quiet: false,
@@ -454,13 +628,11 @@ mod tests {
             forgejo_token: None,
             circleci_token: None,
             format: OutputFormat::Text,
-            json: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
             circleci_url: "https://circleci.com/graphql-unstable".to_string(),
-            upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
             oci_username: None,
@@ -475,7 +647,14 @@ mod tests {
         assert!(merged.dry_run);
         assert_eq!(merged.github_token, Some("config_token".into()));
         assert_eq!(merged.github_url, "https://config.github.com");
-        assert_eq!(merged.upgrade_strategy, UpgradeStrategy::Major);
+        if let Commands::Upgrade {
+            upgrade_strategy, ..
+        } = merged.command
+        {
+            assert_eq!(upgrade_strategy, UpgradeStrategy::Major);
+        } else {
+            panic!("Expected Commands::Upgrade");
+        }
         assert_eq!(merged.concurrency, Some(10));
         assert_eq!(merged.ignore, vec!["ignore1".to_string()]);
     }
@@ -491,7 +670,10 @@ mod tests {
         };
 
         let cli = Cli {
-            command: Commands::Pin,
+            command: Commands::Upgrade {
+                interactive: false,
+                upgrade_strategy: UpgradeStrategy::Commit,
+            },
             workflows: vec![PathBuf::from("cli_wf")],
             yes: true,
             quiet: false,
@@ -505,13 +687,11 @@ mod tests {
             forgejo_token: None,
             circleci_token: None,
             format: OutputFormat::Text,
-            json: false,
             github_url: "https://cli.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
             circleci_url: "https://circleci.com/graphql-unstable".to_string(),
-            upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
             oci_username: None,
@@ -523,6 +703,14 @@ mod tests {
         assert!(merged.yes);
         assert_eq!(merged.github_token, Some("cli_token".into()));
         assert_eq!(merged.github_url, "https://cli.github.com");
+        if let Commands::Upgrade {
+            upgrade_strategy, ..
+        } = merged.command
+        {
+            assert_eq!(upgrade_strategy, UpgradeStrategy::Commit);
+        } else {
+            panic!("Expected Commands::Upgrade");
+        }
     }
 
     #[test]
@@ -566,13 +754,11 @@ mod tests {
             forgejo_token: None,
             circleci_token: None,
             format: OutputFormat::Text,
-            json: false,
             github_url: "https://api.github.com".to_string(),
             bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
             gitlab_url: "https://gitlab.com".to_string(),
             forgejo_url: "https://codeberg.org".to_string(),
             circleci_url: "https://circleci.com/graphql-unstable".to_string(),
-            upgrade_strategy: UpgradeStrategy::Latest,
             concurrency: None,
             ignore: vec![],
             oci_username: None,
@@ -580,5 +766,184 @@ mod tests {
         };
         let merged = config.merge_with_cli(cli);
         assert!(merged.offline);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_load_global_with_files() {
+        use std::env;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let home_path = tmp.path().join("home");
+        let config_path = tmp.path().join("config");
+        let cache_path = tmp.path().join("cache");
+
+        std::fs::create_dir_all(&home_path).unwrap();
+        std::fs::create_dir_all(&config_path).unwrap();
+        std::fs::create_dir_all(&cache_path).unwrap();
+
+        // Write config files
+        let cache_config = cache_path.join("pinner").join("config.toml");
+        std::fs::create_dir_all(cache_config.parent().unwrap()).unwrap();
+        std::fs::write(&cache_config, "vetted = ['cache_vet']\n").unwrap();
+
+        let config_config = config_path.join("pinner").join("config.toml");
+        std::fs::create_dir_all(config_config.parent().unwrap()).unwrap();
+        std::fs::write(&config_config, "vetted = ['config_vet']\n").unwrap();
+
+        let home_config = home_path.join(".pinner.toml");
+        std::fs::write(&home_config, "vetted = ['home_vet']\n").unwrap();
+
+        // Save original env vars
+        let orig_home = env::var_os("HOME");
+        let orig_config = env::var_os("XDG_CONFIG_HOME");
+        let orig_cache = env::var_os("XDG_CACHE_HOME");
+
+        // Set env vars to our temp paths
+        env::set_var("HOME", &home_path);
+        env::set_var("XDG_CONFIG_HOME", &config_path);
+        env::set_var("XDG_CACHE_HOME", &cache_path);
+        env::set_var("PINNER_TEST_ALLOW_GLOBAL", "true");
+
+        let config = Config::load_global();
+
+        env::remove_var("PINNER_TEST_ALLOW_GLOBAL");
+
+        // Restore env vars
+        if let Some(val) = orig_home {
+            env::set_var("HOME", val);
+        } else {
+            env::remove_var("HOME");
+        }
+        if let Some(val) = orig_config {
+            env::set_var("XDG_CONFIG_HOME", val);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+        if let Some(val) = orig_cache {
+            env::set_var("XDG_CACHE_HOME", val);
+        } else {
+            env::remove_var("XDG_CACHE_HOME");
+        }
+
+        let vetted_refs: Vec<String> = config
+            .vetted
+            .unwrap()
+            .into_iter()
+            .map(|e| e.reference)
+            .collect();
+        assert!(vetted_refs.contains(&"cache_vet".to_string()));
+        assert!(vetted_refs.contains(&"config_vet".to_string()));
+        assert!(vetted_refs.contains(&"home_vet".to_string()));
+    }
+
+    #[test]
+    fn test_merge_with_cli_other_fields() {
+        let config = Config {
+            check_osv: Some(true),
+            strict: Some(true),
+            bitbucket_url: Some("https://my-bitbucket".to_string()),
+            gitlab_url: Some("https://my-gitlab".to_string()),
+            forgejo_url: Some("https://my-forgejo".to_string()),
+            circleci_url: Some("https://my-circleci".to_string()),
+            format: Some(OutputFormat::Json),
+            ..Default::default()
+        };
+        let cli = Cli {
+            command: Commands::Verify {
+                check_osv: false,
+                strict: false,
+            },
+            workflows: vec![],
+            yes: false,
+            quiet: false,
+            verbose: false,
+            no_cache: false,
+            offline: false,
+            dry_run: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            circleci_token: None,
+            format: OutputFormat::Text,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+            concurrency: None,
+            ignore: vec![],
+            oci_username: None,
+            oci_password: None,
+        };
+        let merged = config.merge_with_cli(cli);
+        if let Commands::Verify { check_osv, strict } = merged.command {
+            assert!(check_osv);
+            assert!(strict);
+        } else {
+            panic!("Expected Commands::Verify");
+        }
+        assert_eq!(merged.bitbucket_url, "https://my-bitbucket");
+        assert_eq!(merged.gitlab_url, "https://my-gitlab");
+        assert_eq!(merged.forgejo_url, "https://my-forgejo");
+        assert_eq!(merged.circleci_url, "https://my-circleci");
+        assert_eq!(merged.format, OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_security_entry_from_string() {
+        let entry = SecurityEntry::from("hello".to_string());
+        assert_eq!(entry.reference, "hello");
+    }
+
+    #[test]
+    fn test_security_entry_deserialize_failures_and_ignored() {
+        // Ignored field test
+        let toml_str = r#"
+            ref = "my-ref"
+            unknown_field = 42
+        "#;
+        let entry: SecurityEntry = toml::from_str(toml_str).unwrap();
+        assert_eq!(entry.reference, "my-ref");
+
+        // Expecting/invalid type test
+        let res: Result<SecurityEntry, _> = toml::from_str("123");
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_to_formatted_string() {
+        let config = Config {
+            vetted: Some(vec![
+                SecurityEntry {
+                    reference: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10"
+                        .to_string(),
+                    tag: Some("v6.0.3".to_string()),
+                    timestamp: Some("2026-06-19T08:37:29Z".to_string()),
+                },
+                SecurityEntry {
+                    reference:
+                        "taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651"
+                            .to_string(),
+                    tag: Some("v1.11.0".to_string()),
+                    timestamp: Some("2026-06-19T08:37:29Z".to_string()),
+                },
+            ]),
+            yes: Some(false),
+            concurrency: Some(10),
+            ..Default::default()
+        };
+
+        let toml_str = config.to_formatted_string().unwrap();
+        println!("Serialized:\n{}", toml_str);
+
+        assert!(toml_str.contains("vetted = ["));
+        assert!(toml_str
+            .contains("ref = \"actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10\""));
+        assert!(toml_str.contains("tag = \"v6.0.3\""));
+        assert!(toml_str.contains("timestamp = \"2026-06-19T08:37:29Z\""));
+        assert!(!toml_str.contains("[[vetted]]"));
     }
 }

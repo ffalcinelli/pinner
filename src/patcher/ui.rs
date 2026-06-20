@@ -129,3 +129,51 @@ impl UserInterface for TestUi {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{DependencyName, DependencyRef, UpdateResult, UpdateTask};
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_console_ui_confirm_patch_yes() {
+        let ui = ConsoleUi::new(true);
+        assert!(ui.confirm_patch(Path::new("dummy.yaml")));
+    }
+
+    #[test]
+    fn test_console_ui_report_success() {
+        let ui = ConsoleUi::new(true);
+        ui.report_success(Path::new("dummy.yaml"));
+    }
+
+    #[test]
+    fn test_console_ui_report_skipped() {
+        let ui = ConsoleUi::new(true);
+        ui.report_skipped(Path::new("dummy.yaml"));
+    }
+
+    #[test]
+    fn test_console_ui_prompt_upgrade_empty() {
+        let ui = ConsoleUi::new(true);
+        let results = vec![];
+        let res = ui.prompt_upgrade(results).unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[test]
+    fn test_console_ui_prompt_upgrade_no_updates() {
+        let ui = ConsoleUi::new(true);
+        let results = vec![UpdateResult {
+            task: UpdateTask::default(),
+            action: DependencyName::from("actions/checkout"),
+            path: PathBuf::from("dummy.yaml"),
+            old_tag: Some("v3".to_string()),
+            new_sha: DependencyRef::GitSha("hash1".to_string()),
+            new_tag: Some("v3".to_string()), // same tag
+        }];
+        let res = ui.prompt_upgrade(results).unwrap();
+        assert!(res.is_empty());
+    }
+}

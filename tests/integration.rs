@@ -6,6 +6,7 @@ use std::fs;
 use tempfile::tempdir;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_full_pin_cycle() {
     let mut github_server = Server::new_async().await;
     let _m1 = github_server
@@ -47,6 +48,7 @@ async fn test_full_pin_cycle() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_verify_command() {
     let dir = tempdir().unwrap();
     let workflows = dir.path().join(".github/workflows");
@@ -98,6 +100,7 @@ async fn test_verify_command() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_verify_false_positive() {
     let dir = tempdir().unwrap();
     let workflows = dir.path().join(".github/workflows");
@@ -146,6 +149,7 @@ jobs:
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_github_url_env() {
     let mut server = Server::new_async().await;
     let _m = server
@@ -185,6 +189,7 @@ async fn test_github_url_env() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_upgrade_command() {
     let mut github_server = Server::new_async().await;
     let _m1 = github_server
@@ -232,6 +237,7 @@ async fn test_upgrade_command() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_upgrade_command_does_not_upgrade_to_branch() {
     let mut github_server = Server::new_async().await;
     let _m1 = github_server
@@ -284,6 +290,7 @@ async fn test_upgrade_command_does_not_upgrade_to_branch() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_set_command() {
     let dir = tempdir().unwrap();
     let wf = dir.path().join("ci.yml");
@@ -313,6 +320,7 @@ async fn test_set_command() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_install_hook_command() {
     let dir = tempdir().unwrap();
     let original_dir = std::env::current_dir().unwrap();
@@ -333,6 +341,7 @@ async fn test_install_hook_command() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_generate_completion_command() {
     let cli = Cli::try_parse_from(["pinner", "generate-completion", "bash"]).unwrap();
     let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
@@ -341,4 +350,182 @@ async fn test_generate_completion_command() {
     // This command currently returns Ok(()) in pinner::run and is handled in main.rs
     // But we still want to cover the match arm in pinner::run
     run(cli, provider, registry, vec![]).await.unwrap();
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_verify_compromised_hashes() {
+    let dir = tempdir().unwrap();
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    // Create a workflow with a compromised hash
+    let workflows = dir.path().join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    let wf_path = workflows.join("ci.yml");
+    fs::write(
+        &wf_path,
+        "uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    )
+    .unwrap();
+
+    // Write a .pinner.toml blacklisting this hash
+    let pinner_toml = r#"
+compromised = [
+    { ref = "actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" }
+]
+"#;
+    fs::write(dir.path().join(".pinner.toml"), pinner_toml).unwrap();
+
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--workflows",
+        workflows.to_str().unwrap(),
+        "verify",
+    ])
+    .unwrap();
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(cli, provider, registry, vec![workflows]).await;
+    assert!(res.is_err());
+
+    std::env::set_current_dir(original_dir).unwrap();
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_verify_strict_mode() {
+    let dir = tempdir().unwrap();
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    // Create a workflow with a pinned hash
+    let workflows = dir.path().join(".github/workflows");
+    fs::create_dir_all(&workflows).unwrap();
+    let wf_path = workflows.join("ci.yml");
+    fs::write(
+        &wf_path,
+        "uses: actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    )
+    .unwrap();
+
+    // 1. Without being vetted, verify with --strict should fail
+    let cli = Cli::try_parse_from([
+        "pinner",
+        "--workflows",
+        workflows.to_str().unwrap(),
+        "verify",
+        "--strict",
+    ])
+    .unwrap();
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(
+        cli.clone(),
+        provider.clone(),
+        registry.clone(),
+        vec![workflows.clone()],
+    )
+    .await;
+    assert!(res.is_err());
+
+    // 2. Vetted hash, verify with --strict should succeed
+    let pinner_toml = r#"
+vetted = [
+    { ref = "actions/checkout@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" }
+]
+"#;
+    fs::write(dir.path().join(".pinner.toml"), pinner_toml).unwrap();
+
+    let res = run(cli, provider, registry, vec![workflows]).await;
+    assert!(res.is_ok());
+
+    std::env::set_current_dir(original_dir).unwrap();
+}
+
+#[tokio::test]
+async fn test_offline_and_check_osv_conflict() {
+    use pinner::Cli;
+    // Test that offline mode and check_osv verify conflict and return an error
+    let cli = Cli {
+        command: pinner::Commands::Verify {
+            check_osv: true,
+            strict: false,
+        },
+        workflows: vec![],
+        yes: false,
+        quiet: true,
+        verbose: false,
+        no_cache: true,
+        offline: true,
+        dry_run: false,
+        github_token: None,
+        bitbucket_token: None,
+        gitlab_token: None,
+        forgejo_token: None,
+        circleci_token: None,
+        format: pinner::cli::OutputFormat::Text,
+        github_url: "https://api.github.com".to_string(),
+        bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+        gitlab_url: "https://gitlab.com".to_string(),
+        forgejo_url: "https://codeberg.org".to_string(),
+        circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+        concurrency: None,
+        ignore: vec![],
+        oci_username: None,
+        oci_password: None,
+    };
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(cli, provider, registry, vec![]).await;
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.err().unwrap());
+    assert!(err_msg.contains("Cannot check OSV when offline mode is enabled"));
+}
+
+#[tokio::test]
+async fn test_offline_and_scan_conflict() {
+    use pinner::Cli;
+    // Test that offline mode and scan command conflict and return an error
+    let cli = Cli {
+        command: pinner::Commands::Scan {
+            upgrade_strategy: pinner::cli::UpgradeStrategy::Latest,
+        },
+        workflows: vec![],
+        yes: false,
+        quiet: true,
+        verbose: false,
+        no_cache: true,
+        offline: true,
+        dry_run: false,
+        github_token: None,
+        bitbucket_token: None,
+        gitlab_token: None,
+        forgejo_token: None,
+        circleci_token: None,
+        format: pinner::cli::OutputFormat::Text,
+        github_url: "https://api.github.com".to_string(),
+        bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+        gitlab_url: "https://gitlab.com".to_string(),
+        forgejo_url: "https://codeberg.org".to_string(),
+        circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+        concurrency: None,
+        ignore: vec![],
+        oci_username: None,
+        oci_password: None,
+    };
+
+    let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
+    let registry = OciRegistryProvider::new(None, None);
+
+    let res = run(cli, provider, registry, vec![]).await;
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.err().unwrap());
+    assert!(err_msg.contains("Cannot run scan in offline mode"));
 }
