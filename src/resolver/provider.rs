@@ -1534,7 +1534,7 @@ mod tests {
     fn test_encode_decode_cached_value() {
         let val = "my_tag_value";
         let encoded = encode_cached_value(val);
-        
+
         // Decode within TTL (1 hour) should succeed
         let decoded = decode_cached_value(encoded.as_bytes(), Duration::from_secs(3600));
         assert_eq!(decoded, Some(val.to_string()));

@@ -63,7 +63,7 @@ pub struct Cli {
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     pub verbose: bool,
     /// Disable persistent disk caching.
-    #[arg(long, global = true, env = "PINNER_NO_CACHE")]
+    #[arg(long, global = true, env = "PINNER_NO_CACHE", conflicts_with = "cache_ttl")]
     pub no_cache: bool,
     /// Cache TTL in seconds (default: 3600).
     #[arg(long, global = true, env = "PINNER_CACHE_TTL")]
@@ -71,7 +71,6 @@ pub struct Cli {
     /// Force offline mode, preventing any network requests.
     #[arg(long, global = true, env = "PINNER_OFFLINE")]
     pub offline: bool,
-
 
     /// Print what would be changed without actually modifying any files.
 
@@ -344,6 +343,12 @@ mod tests {
     #[test]
     fn test_cli_quiet_verbose_conflict() {
         let res = Cli::try_parse_from(["pinner", "--quiet", "--verbose", "pin"]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_cli_no_cache_cache_ttl_conflict() {
+        let res = Cli::try_parse_from(["pinner", "--no-cache", "--cache-ttl", "3600", "pin"]);
         assert!(res.is_err());
     }
 

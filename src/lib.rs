@@ -1013,7 +1013,12 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     };
 
     let resolver = Resolver::new(
-        Arc::new(CachedProvider::new(remote, disk_cache, cli.offline, cache_ttl)),
+        Arc::new(CachedProvider::new(
+            remote,
+            disk_cache,
+            cli.offline,
+            cache_ttl,
+        )),
         Arc::new(registry),
         upgrade_strategy,
         cli.concurrency.unwrap_or(10),
