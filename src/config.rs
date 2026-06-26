@@ -69,6 +69,10 @@ pub struct Config {
     pub oci_password: Option<String>,
     /// Force offline mode, preventing any network requests.
     pub offline: Option<bool>,
+    /// Disable persistent disk caching.
+    pub no_cache: Option<bool>,
+    /// Cache TTL in seconds.
+    pub cache_ttl: Option<u64>,
 }
 
 impl Config {
@@ -245,6 +249,12 @@ impl Config {
         if other.offline.is_some() {
             self.offline = other.offline;
         }
+        if other.no_cache.is_some() {
+            self.no_cache = other.no_cache;
+        }
+        if other.cache_ttl.is_some() {
+            self.cache_ttl = other.cache_ttl;
+        }
         self.merge_lists(other);
     }
 
@@ -289,6 +299,16 @@ impl Config {
             if let Some(offline) = self.offline {
                 cli.offline = offline;
             }
+        }
+
+        if !cli.no_cache {
+            if let Some(no_cache) = self.no_cache {
+                cli.no_cache = no_cache;
+            }
+        }
+
+        if cli.cache_ttl.is_none() {
+            cli.cache_ttl = self.cache_ttl;
         }
 
         if let Commands::Verify { check_osv, strict } = &mut cli.command {
@@ -569,6 +589,7 @@ mod tests {
             quiet: false,
             verbose: false,
             no_cache: false,
+            cache_ttl: None,
             offline: false,
             dry_run: false,
             github_token: None,
@@ -620,6 +641,7 @@ mod tests {
             quiet: false,
             verbose: false,
             no_cache: false,
+            cache_ttl: None,
             offline: false,
             dry_run: false,
             github_token: None,
@@ -679,6 +701,7 @@ mod tests {
             quiet: false,
             verbose: false,
             no_cache: false,
+            cache_ttl: None,
             offline: false,
             dry_run: false,
             github_token: Some("cli_token".into()),
@@ -746,6 +769,7 @@ mod tests {
             quiet: false,
             verbose: false,
             no_cache: false,
+            cache_ttl: None,
             offline: false,
             dry_run: false,
             github_token: None,
@@ -860,6 +884,7 @@ mod tests {
             quiet: false,
             verbose: false,
             no_cache: false,
+            cache_ttl: None,
             offline: false,
             dry_run: false,
             github_token: None,
@@ -945,5 +970,43 @@ mod tests {
         assert!(toml_str.contains("tag = \"v6.0.3\""));
         assert!(toml_str.contains("timestamp = \"2026-06-19T08:37:29Z\""));
         assert!(!toml_str.contains("[[vetted]]"));
+    }
+
+    #[test]
+    fn test_merge_cache_settings() {
+        let config = Config {
+            no_cache: Some(true),
+            cache_ttl: Some(7200),
+            ..Default::default()
+        };
+        let cli = Cli {
+            command: Commands::Pin,
+            workflows: vec![],
+            yes: false,
+            quiet: false,
+            verbose: false,
+            no_cache: false,
+            cache_ttl: None,
+            offline: false,
+            dry_run: false,
+            github_token: None,
+            bitbucket_token: None,
+            gitlab_token: None,
+            forgejo_token: None,
+            circleci_token: None,
+            format: OutputFormat::Text,
+            github_url: "https://api.github.com".to_string(),
+            bitbucket_url: "https://api.bitbucket.org/2.0".to_string(),
+            gitlab_url: "https://gitlab.com".to_string(),
+            forgejo_url: "https://codeberg.org".to_string(),
+            circleci_url: "https://circleci.com/graphql-unstable".to_string(),
+            concurrency: None,
+            ignore: vec![],
+            oci_username: None,
+            oci_password: None,
+        };
+        let merged = config.merge_with_cli(cli);
+        assert!(merged.no_cache);
+        assert_eq!(merged.cache_ttl, Some(7200));
     }
 }
