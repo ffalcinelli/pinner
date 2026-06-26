@@ -65,9 +65,13 @@ pub struct Cli {
     /// Disable persistent disk caching.
     #[arg(long, global = true, env = "PINNER_NO_CACHE")]
     pub no_cache: bool,
+    /// Cache TTL in seconds (default: 3600).
+    #[arg(long, global = true, env = "PINNER_CACHE_TTL")]
+    pub cache_ttl: Option<u64>,
     /// Force offline mode, preventing any network requests.
     #[arg(long, global = true, env = "PINNER_OFFLINE")]
     pub offline: bool,
+
 
     /// Print what would be changed without actually modifying any files.
 
@@ -295,6 +299,7 @@ mod tests {
             quiet: true,
             verbose: false,
             no_cache: false,
+            cache_ttl: None,
             offline: false,
             dry_run: false,
             github_token: None,
