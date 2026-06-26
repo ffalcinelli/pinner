@@ -63,7 +63,12 @@ pub struct Cli {
     #[arg(short, long, global = true, conflicts_with = "quiet")]
     pub verbose: bool,
     /// Disable persistent disk caching.
-    #[arg(long, global = true, env = "PINNER_NO_CACHE", conflicts_with = "cache_ttl")]
+    #[arg(
+        long,
+        global = true,
+        env = "PINNER_NO_CACHE",
+        conflicts_with = "cache_ttl"
+    )]
     pub no_cache: bool,
     /// Cache TTL in seconds (default: 3600).
     #[arg(long, global = true, env = "PINNER_CACHE_TTL")]
