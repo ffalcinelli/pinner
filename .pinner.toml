@@ -2,7 +2,6 @@ yes = false
 upgrade_strategy = "latest"
 concurrency = 10
 ignore = []
-compromised = []
 no_security_feedback = false
 
 vetted = [
@@ -13,5 +12,9 @@ vetted = [
     { ref = "Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4", tag = "v2.9.1", timestamp = "2026-06-19T08:37:29Z" },
     { ref = "taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595", tag = "v2.81.11", timestamp = "2026-06-19T08:37:29Z" },
     { ref = "taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5", tag = "v2.82.0", timestamp = "2026-06-19T08:37:29Z" },
-    { ref = "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f", tag = "v7.0.0", timestamp = "2026-06-19T08:37:29Z" }
+    { ref = "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f", tag = "v7.0.0", timestamp = "2026-06-19T08:37:29Z" },
+    { ref = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", tag = "v7.0.0", timestamp = "2026-06-22T04:22:26Z" },
+    { ref = "taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9", tag = "v2.82.2", timestamp = "2026-06-22T04:22:26Z" }
 ]
+
+compromised = []
