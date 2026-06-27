@@ -3,88 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configuration & Options - Pinner</title>
+    
+    <!-- SEO Metadata -->
+    <title>Configuration, Subcommands & Options Reference - Pinner</title>
+    <meta name="description" content="Complete reference for Pinner CLI arguments, subcommand behaviors, environment variable authentication, cache controls, and .pinner.toml configuration schemas.">
+    <meta name="keywords" content="pinner options, command line arguments, configuration file schema, credentials, registry overrides, cache duration">
+    <link rel="canonical" href="https://ffalcinelli.github.io/pinner/configuration.html">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ffalcinelli.github.io/pinner/configuration.html">
+    <meta property="og:title" content="Configuration & Command Reference - Pinner">
+    <meta property="og:description" content="Explore CLI flags, global configurations, and custom rules. Configure caching overrides, strict OSV verify checks, and multiple repository tokens.">
+    <meta property="og:image" content="https://ffalcinelli.github.io/pinner/favicon.svg">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        body {
-            background-color: #0d1117;
-            color: #c9d1d9;
-        }
-        .hero-gradient {
-            background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.05) 0%, rgba(13, 17, 23, 0) 50%);
-        }
-        .card {
-            background-color: #161b22;
-            border: 1px solid #30363d;
-        }
-        .terminal {
-            background-color: #010409;
-            border: 1px solid #30363d;
-        }
-        pre {
-            background-color: #010409 !important;
-            border: 1px solid #30363d;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            overflow-x: auto;
-        }
-        @media (min-width: 768px) {
-            pre {
-                white-space: pre-wrap !important;
-                word-wrap: break-word;
-            }
-        }
-        code {
-            color: #38bdf8;
-        }
-    </style>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/components.js" defer></script>
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
-    <!-- Navbar -->
-    <nav class="flex items-center justify-between px-4 md:px-8 py-6 max-w-7xl mx-auto">
-        <div class="flex items-center space-x-2">
-            <a href="index.html" class="flex items-center space-x-2 group">
-                <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
-                <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
-            </a>
-        </div>
-        <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
-            <a href="getting-started.html" class="hover:text-sky-400 transition-colors" title="Getting Started"><i class="fas fa-rocket md:mr-2"></i><span class="hidden md:inline">Getting Started</span></a>
-            <a href="configuration.html" class="text-sky-400 transition-colors font-bold" title="Configuration"><i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Configuration</span></a>
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors" title="GitHub"><i class="fab fa-github md:mr-2"></i><span class="hidden md:inline">GitHub</span></a>
-            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors" title="API Docs"><i class="fas fa-book md:mr-2"></i><span class="hidden md:inline">API Docs</span></a>
-        </div>
-    </nav>
+    <div class="hero-glow"></div>
+
+    <!-- Reusable Navbar -->
+    <pinner-navbar active-page="configuration"></pinner-navbar>
 
     <!-- Header Section -->
-    <section class="relative pt-16 pb-12 hero-gradient border-b border-gray-800/50">
+    <section class="relative pt-16 pb-12 hero-gradient border-b border-gray-800/40">
         <div class="max-w-4xl mx-auto px-4">
             <h1 class="text-4xl md:text-5xl font-extrabold text-white mb-6">
                 Configuration & <span class="text-sky-400">Options</span>
             </h1>
-            <p class="text-xl text-gray-400">
+            <p class="text-xl text-gray-400 leading-relaxed">
                 A comprehensive guide to CLI flags, environment variables, and the <code>.pinner.toml</code> configuration file.
             </p>
         </div>
     </section>
 
     <!-- Content -->
-    <main class="max-w-4xl mx-auto px-4 py-16 relative">
+    <main class="max-w-4xl mx-auto px-4 py-16 relative z-10">
         
         <!-- Global Options -->
-        <div class="mb-20">
+        <section class="mb-20" id="global-options">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
                 <i class="fas fa-globe text-sky-400 mr-4"></i> Global Options
             </h2>
-            <p class="text-gray-400 mb-8">These options can be used with any subcommand to modify Pinner's behavior.</p>
+            <p class="text-gray-400 mb-8 leading-relaxed">These options can be used with any subcommand to modify Pinner's behavior.</p>
             
             <div class="grid grid-cols-1 gap-6">
                 <div class="card p-6 rounded-xl">
                     <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
                         <code class="text-lg font-bold text-white">-w, --workflows &lt;PATH&gt;</code>
-                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Default: GitHub/GitLab/etc paths</span>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Default: Platform standard paths</span>
                     </div>
                     <p class="text-gray-400">Specify workflow files or directories to process. Can be used multiple times.</p>
                 </div>
@@ -94,7 +65,7 @@
                         <code class="text-lg font-bold text-white">-y, --yes</code>
                         <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Flag</span>
                     </div>
-                    <p class="text-gray-400">Automatically confirm all replacements without prompting. Ideal for non-interactive environments.</p>
+                    <p class="text-gray-400">Automatically confirm all replacements without prompting. Ideal for non-interactive environments (CI).</p>
                 </div>
 
                 <div class="card p-6 rounded-xl">
@@ -110,7 +81,7 @@
                         <code class="text-lg font-bold text-white">--format &lt;TYPE&gt;</code>
                         <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Values: text, json, markdown</span>
                     </div>
-                    <p class="text-gray-400">Output results in the specified format.</p>
+                    <p class="text-gray-400">Output results in the specified format. <code>markdown</code> format is ideal for integration in PR comments.</p>
                 </div>
 
                 <div class="card p-6 rounded-xl">
@@ -118,7 +89,7 @@
                         <code class="text-lg font-bold text-white">--concurrency &lt;NUM&gt;</code>
                         <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Default: 10</span>
                     </div>
-                    <p class="text-gray-400">Number of concurrent API requests to make. Increase for large projects, decrease to avoid rate limits.</p>
+                    <p class="text-gray-400">Number of concurrent API requests to make. Increase for large repositories, decrease to avoid rate limits.</p>
                 </div>
 
                 <div class="card p-6 rounded-xl">
@@ -126,14 +97,37 @@
                         <code class="text-lg font-bold text-white">--ignore &lt;PATTERN&gt;</code>
                         <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Multiple</span>
                     </div>
-                    <p class="text-gray-400">Actions or images to ignore (e.g., "actions/checkout"). Can be used multiple times.</p>
+                    <p class="text-gray-400">Actions or images to ignore (comma-separated, e.g., "actions/checkout"). Can be used multiple times.</p>
                 </div>
 
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">--no-cache</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Flag | Conflicts with --cache-ttl</span>
+                    </div>
+                    <p class="text-gray-400">Disable persistent disk caching (<code>cacache</code>) and memory caching completely for this run. Forces fresh remote requests.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">--cache-ttl &lt;SECONDS&gt;</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Default: 3600 | Conflicts with --no-cache</span>
+                    </div>
+                    <p class="text-gray-400">Set the cache Time-To-Live (TTL) in seconds. Cached entries older than this duration are automatically invalidated.</p>
+                </div>
+
+                <div class="card p-6 rounded-xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                        <code class="text-lg font-bold text-white">--offline</code>
+                        <span class="text-xs text-gray-500 uppercase tracking-widest mt-2 md:mt-0">Flag | Conflicts with --check-osv</span>
+                    </div>
+                    <p class="text-gray-400">Force offline mode, preventing any network requests. Only cached dependencies can be resolved. Fails on cache misses.</p>
+                </div>
             </div>
-        </div>
+        </section>
 
         <!-- Subcommands -->
-        <div class="mb-20">
+        <section class="mb-20" id="subcommands">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
                 <i class="fas fa-terminal text-sky-400 mr-4"></i> Subcommands
             </h2>
@@ -141,25 +135,39 @@
             <div class="space-y-8">
                 <div class="border-l-2 border-sky-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">pin</h3>
-                    <p class="text-gray-400">Scans your workflows and replaces all mutable tags with immutable commit SHAs. This is the primary command for securing your supply chain.</p>
+                    <p class="text-gray-400">Scans workflows and replaces all mutable tags with immutable commit SHAs or image digests. This is the primary command for securing your supply chain.</p>
                 </div>
 
-                <div class="border-l-2 border-emerald-500/30 pl-6">
+                <div class="border-l-2 border-amber-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">upgrade</h3>
-                    <p class="text-gray-400 mb-4">Updates pinned actions to their latest versions based on the subcommand-specific <code>--upgrade-strategy</code> option.</p>
+                    <p class="text-gray-400 mb-2">Updates pinned dependencies to newer versions based on the subcommand-specific <code>--upgrade-strategy</code> option.</p>
+                    <div class="text-xs text-gray-400 mb-4">
+                        Options:
+                        <ul class="list-disc pl-5 mt-1 space-y-1">
+                            <li><code>--upgrade-strategy &lt;STRATEGY&gt;</code>: Select bump strategy (<code>latest</code>, <code>major</code>, <code>minor</code>, <code>commit</code>).</li>
+                            <li><code>-i, --interactive</code>: Prompt and select upgrades individually.</li>
+                        </ul>
+                    </div>
                     <div class="bg-amber-400/5 p-4 rounded-lg border border-amber-400/10 text-xs text-amber-400/80">
-                        <i class="fas fa-exclamation-triangle mr-2"></i> Always review changes after an upgrade to maintain security.
+                        <i class="fas fa-exclamation-triangle mr-2"></i> Always review upgraded hashes to maintain security.
                     </div>
                 </div>
 
-                <div class="border-l-2 border-purple-500/30 pl-6">
+                <div class="border-l-2 border-emerald-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">verify</h3>
-                    <p class="text-gray-400">Checks if all actions in your workflows are pinned. Returns a non-zero exit code if unpinned actions are found. Perfect for CI/CD.</p>
+                    <p class="text-gray-400 mb-2">Checks if all actions and images are pinned. Returns a non-zero exit code if unpinned dependencies are found. Perfect for CI/CD environments.</p>
+                    <div class="text-xs text-gray-400">
+                        Options:
+                        <ul class="list-disc pl-5 mt-1 space-y-1">
+                            <li><code>--check-osv</code>: Query OpenSSF OSV to fail validation if any dependency hash has known vulnerabilities (requires online connection).</li>
+                            <li><code>--strict</code>: Fail validation if any dependency is not explicitly added to the <code>vetted</code> whitelist in <code>.pinner.toml</code>.</li>
+                        </ul>
+                    </div>
                 </div>
 
                 <div class="border-l-2 border-blue-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">set &lt;ACTION&gt; &lt;HASH&gt;</h3>
-                    <p class="text-gray-400">Forcibly sets a specific action to a provided hash across all matching occurrences in your workflows.</p>
+                    <p class="text-gray-400">Forcibly sets a specific action or image to a provided hash across all matching occurrences in your workflows.</p>
                 </div>
 
                 <div class="border-l-2 border-orange-500/30 pl-6">
@@ -174,28 +182,29 @@
 
                 <div class="border-l-2 border-pink-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">export-sbom</h3>
-                    <p class="text-gray-400">Generates and exports a Software Bill of Materials (SBOM) for all actions and images used in your workflows.</p>
+                    <p class="text-gray-400">Generates and exports a Software Bill of Materials (SBOM) for all actions and container images used in your workflows.</p>
                 </div>
 
                 <div class="border-l-2 border-red-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">scan</h3>
-                    <p class="text-gray-400">Queries the OpenSSF OSV database for both current dependency commit hashes and upgrade candidates, performs Cosign/Sigstore signature verification for OCI images, and prompts to save vetted whitelists and compromised blacklists.</p>
+                    <p class="text-gray-400 mb-2">Queries OpenSSF OSV for vulnerabilities, performs Cosign provenance verification for OCI images, and prompts to save vetted whitelists and compromised blacklists in `.pinner.toml`.</p>
+                    <p class="text-xs text-gray-400">Supports the <code>--upgrade-strategy</code> flag to scan candidates.</p>
                 </div>
 
                 <div class="border-l-2 border-gray-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">generate-completion [SHELL]</h3>
-                    <p class="text-gray-400">Generates shell completion scripts for Bash, Zsh, Fish, Powershell, or Elvish. If the shell is omitted, Pinner will attempt to detect your current shell automatically.</p>
+                    <p class="text-gray-400">Generates shell completion scripts (Bash, Zsh, Fish, Powershell, Elvish). If the shell parameter is omitted, Pinner automatically detects your active shell environment.</p>
                 </div>
             </div>
-        </div>
+        </section>
 
         <!-- Environment Variables -->
-        <div class="mb-20">
+        <section class="mb-20" id="environment-variables">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
                 <i class="fas fa-key text-sky-400 mr-4"></i> Environment Variables
             </h2>
             
-            <p class="text-gray-400 mb-8">Pinner automatically reads these variables for authentication and configuration.</p>
+            <p class="text-gray-400 mb-8 leading-relaxed">Pinner automatically reads these variables for authentication, caching overrides, and API configurations.</p>
 
             <h3 class="text-lg font-bold text-white mb-4">Authentication & APIs</h3>
             <div class="overflow-x-auto rounded-xl border border-gray-800 card mb-12">
@@ -204,71 +213,43 @@
                         <tr>
                             <th class="px-6 py-4 font-bold">Variable</th>
                             <th class="px-6 py-4 font-bold">Description</th>
-                            <th class="px-6 py-4 font-bold">Default</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-800 text-gray-400">
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>GITHUB_TOKEN</code></td>
-                            <td class="px-6 py-4">Auth token for GitHub API</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">API authentication token for GitHub (bypasses low rate-limits)</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>GITLAB_TOKEN</code></td>
-                            <td class="px-6 py-4">Auth token for GitLab API</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">Auth token for GitLab API access</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>BITBUCKET_TOKEN</code></td>
-                            <td class="px-6 py-4">Auth token for Bitbucket API</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">Auth token for Bitbucket API access</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>FORGEJO_TOKEN</code></td>
-                            <td class="px-6 py-4">Auth token for Forgejo/Gitea API</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">Auth token for Forgejo/Gitea instances</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>CIRCLECI_TOKEN</code></td>
-                            <td class="px-6 py-4">Auth token for CircleCI GraphQL API</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">Token for CircleCI GraphQL API orb queries</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>PINNER_OCI_USERNAME</code></td>
-                            <td class="px-6 py-4">Username for OCI Registries (Use <code>AWS</code> for ECR)</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">Username for OCI Registries (use <code>AWS</code> for AWS ECR)</td>
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>PINNER_OCI_PASSWORD</code></td>
-                            <td class="px-6 py-4">Password for OCI Registries (ECR login token)</td>
-                            <td class="px-6 py-4">-</td>
+                            <td class="px-6 py-4">Password or login token for OCI Registries authentication</td>
                         </tr>
-                        </tbody>
-                        </table>
-                        </div>
+                    </tbody>
+                </table>
+            </div>
 
-                        <h3 class="text-lg font-bold text-white mb-4">Cloud Provider Notes</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                        <div class="card p-6 rounded-xl">
-                        <h4 class="text-white font-bold mb-2">AWS ECR</h4>
-                        <p class="text-sm text-gray-400">To pin private ECR images, pass the token from the AWS CLI:</p>
-                        <pre class="mt-4 text-xs"><code>PINNER_OCI_USERNAME=AWS \
-                        PINNER_OCI_PASSWORD=$(aws ecr get-login-password) \
-                        pinner pin</code></pre>
-                        </div>
-                        <div class="card p-6 rounded-xl">
-                        <h4 class="text-white font-bold mb-2">Azure Marketplace</h4>
-                        <p class="text-sm text-gray-400">Azure DevOps tasks are mapped to the <code>microsoft/azure-pipelines-tasks</code> monorepo to resolve SHAs from the latest releases.</p>
-                        </div>
-                        <div class="card p-6 rounded-xl">
-                        <h4 class="text-white font-bold mb-2">CircleCI</h4>
-                        <p class="text-sm text-gray-400">Pinner supports pinning Docker images (<code>cimg/*</code>) used in CircleCI workflows. CircleCI Orbs use semantic versions and are not hash-pinned.</p>
-                        </div>
-                        </div>
-
-                        <h3 class="text-lg font-bold text-white mb-4">Configuration Overrides</h3>
-            <p class="text-gray-400 mb-6">Any setting from <code>.pinner.toml</code> can be overridden using an environment variable with the <code>PINNER_</code> prefix.</p>
-            <div class="overflow-x-auto rounded-xl border border-gray-800 card">
+            <h3 class="text-lg font-bold text-white mb-4">Configuration Overrides</h3>
+            <div class="overflow-x-auto rounded-xl border border-gray-800 card mb-12">
                 <table class="min-w-full text-left text-sm">
                     <thead class="bg-gray-800/50 text-white border-b border-gray-800">
                         <tr>
@@ -277,6 +258,14 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-800 text-gray-400">
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>PINNER_NO_CACHE</code></td>
+                            <td class="px-6 py-4">Set to <code>true</code> to disable persistent disk caching (caches are bypassed).</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>PINNER_CACHE_TTL</code></td>
+                            <td class="px-6 py-4">Configure custom cache TTL duration in seconds.</td>
+                        </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>PINNER_CONCURRENCY</code></td>
                             <td class="px-6 py-4">Override the number of concurrent API requests.</td>
@@ -287,21 +276,46 @@
                         </tr>
                         <tr>
                             <td class="px-6 py-4 text-white font-medium"><code>PINNER_GITHUB_URL</code></td>
-                            <td class="px-6 py-4">Override the GitHub API URL.</td>
+                            <td class="px-6 py-4">Override default GitHub API URL. Also available for GitLab, Bitbucket, Forgejo, and CircleCI.</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
-        </div>
+
+            <h3 class="text-lg font-bold text-white mb-4">Cloud Provider Resolution</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="card p-6 rounded-xl">
+                    <h4 class="text-white font-bold mb-2">AWS ECR</h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        To resolve private OCI digests from AWS ECR, pass the login token:
+                    </p>
+                    <pre class="mt-4 text-[10px]"><code>PINNER_OCI_USERNAME=AWS \
+PINNER_OCI_PASSWORD=$(aws ecr get-login-password) \
+pinner pin</code></pre>
+                </div>
+                <div class="card p-6 rounded-xl">
+                    <h4 class="text-white font-bold mb-2">Azure Marketplace</h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        Tasks are automatically resolved to the <code>microsoft/azure-pipelines-tasks</code> monorepo to safely query and map release commit hashes.
+                    </p>
+                </div>
+                <div class="card p-6 rounded-xl">
+                    <h4 class="text-white font-bold mb-2">CircleCI Orbs</h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        Pinner supports Docker images inside CircleCI configs. CircleCI Orbs use semantic version routing and are not hash-pinned.
+                    </p>
+                </div>
+            </div>
+        </section>
 
         <!-- Configuration File -->
-        <div class="mb-20">
+        <section class="mb-20" id="configuration-file">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
                 <i class="fas fa-file-code text-sky-400 mr-4"></i> Configuration File
             </h2>
             
-            <p class="text-gray-400 mb-8">
-                Create a <code>.pinner.toml</code> file in your repository root to persist settings and share them with your team.
+            <p class="text-gray-400 mb-8 leading-relaxed">
+                Create a <code>.pinner.toml</code> file in your repository root to persist settings and share security whitelists with your team.
             </p>
 
             <div class="card p-8 rounded-xl mb-12">
@@ -309,19 +323,21 @@
                 <pre class="text-sm"><code># Actions to exclude from processing
 ignore = ["actions/checkout", "my-org/private-repo"]
 
-# Execution settings
+# Execution and Caching settings
 concurrency = 5
+no_cache = false
+cache_ttl = 3600 # Cache TTL in seconds
 
-# API URL overrides (for Enterprise)
+# API URL overrides (for Enterprise instances)
 github_url = "https://github.mycompany.com/api/v3"
 gitlab_url = "https://gitlab.mycompany.com/api/v4"
 
-# Whitelist of vetted dependency hashes/references (supports plain strings or maps)
+# Whitelist of vetted dependency hashes/references
 vetted = [
-    # Plain string format (backwards compatible)
+    # Plain string format
     "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332",
 
-    # Structured format with original tag and timestamp of insertion
+    # Structured format with original tag and insertion timestamp
     { ref = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", tag = "v6.0.3", timestamp = "2026-06-18T15:28:25Z" }
 ]
 
@@ -335,34 +351,25 @@ compromised = [
 no_security_feedback = false</code></pre>
             </div>
 
-            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <i class="fas fa-globe text-sky-400 mr-4"></i> Global Configuration & Overrides
-            </h2>
-            
+            <h3 class="text-lg font-bold text-white mb-4">Global Configuration Hierarchy</h3>
             <p class="text-gray-400 mb-6 leading-relaxed">
-                Pinner automatically loads security configurations from global user locations, allowing you to share whitelists and blacklists across multiple repositories:
+                Pinner automatically aggregates whitelists and blacklists from standard configuration paths. Locations checked (from lowest to highest precedence):
             </p>
-            <ul class="list-disc pl-6 text-gray-400 mb-8 space-y-2">
-                <li><code>~/.cache/pinner/config.toml</code> (Global cache)</li>
-                <li><code>~/.config/pinner/config.toml</code> (Standard user configuration)</li>
-                <li><code>~/.pinner.toml</code> (User's home directory configuration)</li>
+            <ul class="list-disc pl-6 text-gray-400 mb-8 space-y-2 text-sm">
+                <li><code>~/.cache/pinner/config.toml</code> (Global caching)</li>
+                <li><code>~/.config/pinner/config.toml</code> (Global config)</li>
+                <li><code>~/.pinner.toml</code> (Home config)</li>
+                <li><code>.pinner.toml</code> (Local project config - overrides all global values)</li>
             </ul>
-            <p class="text-gray-400 mb-6 leading-relaxed">
-                <strong>Precedence (Local Overrides)</strong>:<br>
-                The local project-level <code>.pinner.toml</code> file acts as a strict override. If an entry is marked <code>vetted</code> locally, it will override any global <code>compromised</code> entry, and if marked <code>compromised</code> locally, it overrides any global <code>vetted</code> entry. Non-conflicting local and global entries are automatically combined.
-            </p>
-        </div>
+            <div class="bg-sky-500/5 p-4 rounded-xl border border-sky-500/20 text-xs text-gray-400 leading-relaxed">
+                <strong>Local Precedence Rules</strong>:
+                A project-level <code>.pinner.toml</code> serves as a strict override. If a dependency reference is marked <code>vetted</code> locally, it overrides global <code>compromised</code> flags, and if marked <code>compromised</code> locally, it overrides global <code>vetted</code> entries.
+            </div>
+        </section>
 
     </main>
 
-    <!-- Footer -->
-    <footer class="py-16 text-center text-gray-500">
-        <div class="flex items-center justify-center space-x-4 mb-6">
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-white transition-colors"><i class="fab fa-github text-xl"></i></a>
-            <div class="h-4 w-px bg-gray-800"></div>
-            <a href="https://docs.rs/pinner" class="hover:text-white transition-colors text-sm font-bold uppercase tracking-tighter">Docs.rs</a>
-        </div>
-        <p class="text-xs">&copy; 2026 Fabio Falcinelli. Released under the MIT License.</p>
-    </footer>
+    <!-- Reusable Footer -->
+    <pinner-footer></pinner-footer>
 </body>
 </html>

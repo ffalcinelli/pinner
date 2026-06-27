@@ -1,5 +1,15 @@
 # Pinner Project Context
 
+## Detailed LLM Context Documents
+To get deep contextual understanding of specific codebase components, refer to these dedicated documentation files:
+*   **[Architecture & Domain Pipeline](file:///home/fabio/Workspace/pinner/docs/llm/overview.md)**: High-level system goals, core pipeline stages, and file mappings.
+*   **[Scanner & Tree-Sitter Parser](file:///home/fabio/Workspace/pinner/docs/llm/scanner.md)**: File traversal details, YAML parsing queries, and trailing comment mapping logic.
+*   **[Resolver & Network Providers](file:///home/fabio/Workspace/pinner/docs/llm/resolver.md)**: Trait specifications, the `CachedProvider` wrapper, and OCI image digest fetching.
+*   **[Patcher & Surgical Mutation](file:///home/fabio/Workspace/pinner/docs/llm/patcher.md)**: Safe edit sequencing via reverse offset sorting, comment preservation, and security tag diff rendering.
+*   **[Developer & Extension Guide](file:///home/fabio/Workspace/pinner/docs/llm/development.md)**: Building, linting, unit & integration test strategies, and guidelines for adding new providers.
+
+---
+
 ## Project Overview
 `pinner` is a high-performance Rust CLI utility designed to hash-pin actions and Docker images in CI/CD workflow files. It automates the security best practice of replacing mutable tags (like `@v1` or `:latest`) with immutable commit SHA-1 hashes or digest hashes to prevent supply chain attacks. It supports multiple platforms including GitHub, GitLab, Bitbucket, Forgejo, and OCI registries.
 

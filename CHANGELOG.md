@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.12] - 2026-06-27
+
+### Added
+- 💾 **Cache Controls Override**: Added `--no-cache` global flag (env `PINNER_NO_CACHE`) to completely bypass persistent cache and `--cache-ttl` global option (env `PINNER_CACHE_TTL`) to customize cache validation duration.
+- 🚫 **Mutual Parameter Validation**: Validated that `--no-cache` and `--cache-ttl` cannot be used together.
+
+### Changed
+- 🛠️ **Dependency Bumps**:
+  - Upgraded `toml_edit` to `0.25.12+spec-1.1.0`.
+  - Upgraded `actions/checkout` from `v6.0.3` to `v7.0.0` in CI/CD workflows.
+  - Upgraded `taiki-e/install-action` from `2.82.0` to `2.82.2`.
+- 📖 **Documentation Improvements**: Refactored landing pages using reusable custom Web Components, extracted shared styles, aligned content with version 0.0.12, and optimized SEO metadata.
+
+### Fixed
+- 🛡️ **Vulnerability Resolution**: Upgraded `quinn-proto` to `0.11.15` to resolve security vulnerability `RUSTSEC-2026-0185`.
+
 ## [0.0.11] - 2026-06-20
 
 ### Added

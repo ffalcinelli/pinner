@@ -3,92 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- SEO Metadata -->
     <title>Getting Started with Pinner - Secure Your CI/CD Workflows</title>
+    <meta name="description" content="Step-by-step guide to installing and running Pinner. Secure your pipelines by translating mutable GitHub Actions and OCI Docker images into cryptographic digests.">
+    <meta name="keywords" content="install pinner, verify, hash-pinning setup, github actions verification, cargo installation">
+    <link rel="canonical" href="https://ffalcinelli.github.io/pinner/getting-started.html">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ffalcinelli.github.io/pinner/getting-started.html">
+    <meta property="og:title" content="Getting Started with Pinner - Step-by-Step Guide">
+    <meta property="og:description" content="Set up Pinner in minutes. Follow this guide to install, initialize, and audit your CI/CD workflows using secure commit SHAs.">
+    <meta property="og:image" content="https://ffalcinelli.github.io/pinner/favicon.svg">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        body {
-            background-color: #0d1117;
-            color: #c9d1d9;
-        }
-        .hero-gradient {
-            background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.05) 0%, rgba(13, 17, 23, 0) 50%);
-        }
-        .card {
-            background-color: #161b22;
-            border: 1px solid #30363d;
-        }
-        .terminal {
-            background-color: #010409;
-            border: 1px solid #30363d;
-        }
-        pre {
-            background-color: #010409 !important;
-            border: 1px solid #30363d;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            overflow-x: auto;
-        }
-        @media (min-width: 768px) {
-            pre {
-                white-space: pre-wrap !important;
-                word-wrap: break-word;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/components.js" defer></script>
 </head>
 <body class="font-sans antialiased overflow-x-hidden">
-    <!-- Navbar -->
-    <nav class="flex items-center justify-between px-4 md:px-8 py-6 max-w-7xl mx-auto">
-        <div class="flex items-center space-x-2">
-            <a href="index.html" class="flex items-center space-x-2 group">
-                <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
-                <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
-            </a>
-        </div>
-        <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
-            <a href="getting-started.html" class="text-sky-400 transition-colors font-bold" title="Getting Started"><i class="fas fa-rocket md:mr-2"></i><span class="hidden md:inline">Getting Started</span></a>
-            <a href="configuration.html" class="hover:text-sky-400 transition-colors" title="Configuration"><i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Configuration</span></a>
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-sky-400 transition-colors" title="GitHub"><i class="fab fa-github md:mr-2"></i><span class="hidden md:inline">GitHub</span></a>
-            <a href="https://docs.rs/pinner" class="hover:text-sky-400 transition-colors" title="API Docs"><i class="fas fa-book md:mr-2"></i><span class="hidden md:inline">API Docs</span></a>
-        </div>
-    </nav>
+    <div class="hero-glow"></div>
+
+    <!-- Reusable Navbar -->
+    <pinner-navbar active-page="getting-started"></pinner-navbar>
 
     <!-- Header Section -->
-    <section class="relative pt-16 pb-12 hero-gradient border-b border-gray-800/50">
+    <section class="relative pt-16 pb-12 hero-gradient border-b border-gray-800/40">
         <div class="max-w-4xl mx-auto px-4">
             <h1 class="text-4xl md:text-5xl font-extrabold text-white mb-6">
                 Getting <span class="text-sky-400">Started</span>
             </h1>
-            <p class="text-xl text-gray-400">
+            <p class="text-xl text-gray-400 leading-relaxed">
                 Secure your CI/CD pipelines in minutes with this comprehensive guide to Pinner.
             </p>
         </div>
     </section>
 
     <!-- Content -->
-    <main class="max-w-4xl mx-auto px-4 py-16 relative">
+    <main class="max-w-4xl mx-auto px-4 py-16 relative z-10">
         <!-- Tooltip Feedback -->
         <div id="copy-feedback" class="fixed top-8 left-1/2 -translate-x-1/2 px-4 py-2 bg-sky-500 text-white text-xs font-bold rounded shadow-lg opacity-0 pointer-events-none transition-all duration-300 z-50">
             Copied to clipboard!
         </div>
 
         <!-- Step 1: Installation -->
-        <div class="mb-16">
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">1</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">1</span>
                 Installation
             </h2>
             
-            <p class="text-gray-400 mb-6">Choose the installation method that best fits your environment.</p>
+            <p class="text-gray-400 mb-6 leading-relaxed">Choose the installation method that best fits your environment.</p>
             
             <div class="space-y-6">
                 <div class="card p-6 rounded-xl">
                     <h3 class="text-lg font-bold text-white mb-4">Shell (macOS & Linux)</h3>
-                    <div class="terminal p-1 flex items-center justify-between bg-black/40 border-gray-700/50">
+                    <div class="terminal p-1 flex items-center justify-between bg-black/40 border border-gray-800">
                         <code class="px-4 py-3 font-mono text-emerald-400 text-sm flex-1 break-all">curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh</code>
-                        <button onclick="copyCmd('curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh', this)" class="px-4 py-3 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
+                        <button onclick="window.copyCmd('curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh', this)" class="px-4 py-3 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group" title="Copy to clipboard">
                             <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                         </button>
                     </div>
@@ -96,9 +70,9 @@
 
                 <div class="card p-6 rounded-xl">
                     <h3 class="text-lg font-bold text-white mb-4">PowerShell (Windows)</h3>
-                    <div class="terminal p-1 flex items-center justify-between bg-black/40 border-gray-700/50">
+                    <div class="terminal p-1 flex items-center justify-between bg-black/40 border border-gray-800">
                         <code class="px-4 py-3 font-mono text-emerald-400 text-sm flex-1 break-all">powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex"</code>
-                        <button onclick="copyCmd('powershell -ExecutionPolicy ByPass -c \"irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex\"', this)" class="px-4 py-3 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
+                        <button onclick="window.copyCmd('powershell -ExecutionPolicy ByPass -c \"irm https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.ps1 | iex\"', this)" class="px-4 py-3 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group" title="Copy to clipboard">
                             <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                         </button>
                     </div>
@@ -106,24 +80,24 @@
 
                 <div class="card p-6 rounded-xl">
                     <h3 class="text-lg font-bold text-white mb-4">Cargo (Rust)</h3>
-                    <div class="terminal p-1 flex items-center justify-between bg-black/40 border-gray-700/50">
+                    <div class="terminal p-1 flex items-center justify-between bg-black/40 border border-gray-800">
                         <code class="px-4 py-3 font-mono text-emerald-400 text-sm flex-1 break-all">cargo install pinner</code>
-                        <button onclick="copyCmd('cargo install pinner', this)" class="px-4 py-3 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group">
+                        <button onclick="window.copyCmd('cargo install pinner', this)" class="px-4 py-3 hover:bg-emerald-400/10 rounded-md transition-all text-gray-400 hover:text-emerald-400 flex-shrink-0 group" title="Copy to clipboard">
                             <i class="far fa-copy group-active:scale-90 transition-transform"></i>
                         </button>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
 
         <!-- Step 2: First Run -->
-        <div class="mb-16">
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">2</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">2</span>
                 Pin Your First Workflow
             </h2>
             
-            <p class="text-gray-400 mb-6">
+            <p class="text-gray-400 mb-6 leading-relaxed">
                 Navigate to your repository and run the <code class="text-sky-300">pin</code> command. 
                 By default, Pinner looks for files in <code class="text-gray-300">.github/workflows/</code>.
             </p>
@@ -141,17 +115,17 @@
             <p class="text-gray-400 mt-6 italic">
                 <i class="fas fa-info-circle mr-2 text-sky-400"></i> Tip: Use <code class="text-sky-300">--dry-run</code> to see changes without writing to files.
             </p>
-        </div>
+        </section>
 
         <!-- Step 3: Security Scan -->
-        <div class="mb-16">
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">3</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">3</span>
                 Security Scan & Vetting
             </h2>
             
-            <p class="text-gray-400 mb-6">
-                Audit your dependencies for vulnerabilities. Pinner queries the OpenSSF OSV database for both current pinned hashes and proposed upgrade candidates, and executes Sigstore/Cosign signature/provenance checks on OCI container images automatically.
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Audit your dependencies for vulnerabilities. Pinner queries the OpenSSF OSV database for both current pinned hashes and proposed upgrade candidates. It also executes Sigstore/Cosign signature/provenance verification on container images.
                 Run the <code class="text-sky-300">scan</code> command to inspect your dependencies:
             </p>
 
@@ -166,25 +140,25 @@
                 </div>
             </div>
             
-            <p class="text-gray-400 mt-6">
+            <p class="text-gray-400 mt-6 leading-relaxed">
                 This adds vetted hashes to your whitelist in <code class="text-gray-300">.pinner.toml</code>. When proposing upgrades or pinning, Pinner displays visual feedback (e.g. <span class="text-emerald-400 font-bold">[✓ vetted]</span>) to ensure supply-chain integrity.
             </p>
-        </div>
+        </section>
 
         <!-- Step 4: Supported Platforms -->
-        <div class="mb-16">
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">4</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">4</span>
                 Supported Platforms & Forges
             </h2>
             
-            <p class="text-gray-400 mb-6">Pinner is designed for multi-forge environments and enterprise setups.</p>
+            <p class="text-gray-400 mb-6 leading-relaxed">Pinner is designed for multi-forge environments and enterprise setups.</p>
 
             <div class="overflow-x-auto rounded-xl border border-gray-800 card">
                 <table class="min-w-full text-left text-sm">
                     <thead class="bg-gray-800/50 text-white border-b border-gray-800">
                         <tr>
-                            <th class="px-6 py-4 font-bold">Forge</th>
+                            <th class="px-6 py-4 font-bold">Forge / Registry</th>
                             <th class="px-6 py-4 font-bold">API Environment Variable</th>
                             <th class="px-6 py-4 font-bold">Default URL</th>
                         </tr>
@@ -211,7 +185,7 @@
                             <td class="px-6 py-4">https://codeberg.org</td>
                         </tr>
                         <tr>
-                            <td class="px-6 py-4 text-white font-medium">Azure Marketplace</td>
+                            <td class="px-6 py-4 text-white font-medium">Azure DevOps</td>
                             <td class="px-6 py-4"><code class="text-sky-300 text-xs">GITHUB_TOKEN</code></td>
                             <td class="px-6 py-4">Monorepo Mapping</td>
                         </tr>
@@ -228,41 +202,49 @@
                     </tbody>
                 </table>
             </div>
-        </div>
+        </section>
 
         <!-- Step 5: Configuration -->
-        <div class="mb-16">
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">5</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">5</span>
                 Configuration File
             </h2>
             
-            <p class="text-gray-400 mb-6">
-                Create a <code class="text-gray-300">.pinner.toml</code> file in your repository root to customize behavior globally.
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Create a <code class="text-gray-300">.pinner.toml</code> file in your repository root to customize behavior globally and share with your team.
             </p>
 
             <div class="card p-6 rounded-xl">
-                <pre class="text-xs md:text-sm text-gray-300"><code># List of actions to ignore during pinning/upgrading
-ignore = ["actions/checkout", "my-org/private-action"]
+                <pre class="text-xs md:text-sm text-gray-300"><code># Actions to exclude from processing
+ignore = ["actions/checkout", "my-org/private-repo"]
 
-# Number of concurrent API requests (default: 10)
+# Concurrency and Caching settings
 concurrency = 5
+no_cache = false
+cache_ttl = 7200  # Persistent caching duration in seconds (2h)
 
-# Custom API URLs (for Enterprise instances)
+# API URL overrides (for Enterprise instances)
 github_url = "https://github.mycompany.com/api/v3"
-gitlab_url = "https://gitlab.mycompany.com/api/v4"</code></pre>
-            </div>
-        </div>
+gitlab_url = "https://gitlab.mycompany.com/api/v4"
 
-        <!-- Step 6: Verification -->
-        <div class="mb-16">
+# Whitelist of vetted dependency references (compact inline array)
+vetted = [
+    "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332",
+    { ref = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", tag = "v6.0.3", timestamp = "2026-06-18T15:28:25Z" }
+]</code></pre>
+            </div>
+        </section>
+
+        <!-- Step 6: Verification in CI -->
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">6</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">6</span>
                 Verify in CI
             </h2>
             
-            <p class="text-gray-400 mb-6">
-                Prevent unpinned actions from being merged into your codebase by adding Pinner to your CI pipeline. You can use the native GitHub Action:
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Prevent unpinned actions from being merged into your codebase by adding Pinner to your CI pipeline. You can enable vulnerability checks using <code>check-osv</code> and require explicit vetting with <code>strict</code> mode:
             </p>
 
             <div class="card p-6 rounded-xl mb-6">
@@ -274,10 +256,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
-      - name: Verify Pinning
+      - name: Verify Pinning & Audit OSV
         uses: ffalcinelli/pinner/action@main
         with:
-          command: 'verify'</code></pre>
+          command: 'verify'
+          check-osv: true
+          strict: true</code></pre>
             </div>
 
             <!-- Pinnerception Warning -->
@@ -290,12 +274,12 @@ jobs:
                         Pinnerception Warning <span class="ml-2 px-1.5 py-0.5 bg-sky-500/10 text-sky-400 text-[9px] rounded uppercase tracking-wider">Recursive</span>
                     </h4>
                     <p class="text-xs text-gray-400 leading-relaxed">
-                        Remember to pin the pinner! Trusting a security tool to verify your pinned dependencies using a mutable tag is like hiring a security guard who leaves the keys under the doormat. If we didn't pin the pinner, who would pin the pinner's pinners? (Warning: may cause mild existential dread or recursive loops in your CI logs).
+                        Remember to pin the pinner! Trusting a security tool to verify your pinned dependencies using a mutable tag is like hiring a security guard who leaves the keys under the doormat. If we didn't pin the pinner, who would pin the pinner's pinners?
                     </p>
                 </div>
             </div>
 
-            <p class="text-gray-400 mb-6">
+            <p class="text-gray-400 mb-6 leading-relaxed">
                 Alternatively, you can install the CLI tool directly:
             </p>
 
@@ -311,36 +295,36 @@ jobs:
       - name: Install Pinner
         run: curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
       - name: Verify Pinning
-        run: pinner verify</code></pre>
+        run: pinner verify --check-osv --strict</code></pre>
             </div>
-        </div>
+        </section>
 
-        <!-- Step 7: Code Completion -->
-        <div class="mb-16">
+        <!-- Step 7: Shell Completion -->
+        <section class="mb-16">
             <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
-                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm">7</span>
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">7</span>
                 Shell Completion
             </h2>
             
-            <p class="text-gray-400 mb-6">
-                Enhance your terminal experience by generating tab-completion scripts for your favorite shell.
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Generate tab-completion scripts. If you omit the shell argument, Pinner will attempt to detect your current shell automatically:
             </p>
 
             <div class="space-y-4">
+                <div class="card p-5 rounded-xl border-l-4 border-emerald-500">
+                    <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Auto-Detection</h3>
+                    <code class="text-emerald-400 text-xs md:text-sm">pinner generate-completion > ~/.pinner_completion</code>
+                </div>
                 <div class="card p-5 rounded-xl border-l-4 border-sky-500">
-                    <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Bash</h3>
+                    <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Bash (Explicit)</h3>
                     <code class="text-emerald-400 text-xs md:text-sm">pinner generate-completion bash > /etc/bash_completion.d/pinner</code>
                 </div>
                 <div class="card p-5 rounded-xl border-l-4 border-purple-500">
-                    <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Zsh</h3>
+                    <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Zsh (Explicit)</h3>
                     <code class="text-emerald-400 text-xs md:text-sm">pinner generate-completion zsh > "${fpath[1]}/_pinner"</code>
                 </div>
-                <div class="card p-5 rounded-xl border-l-4 border-blue-500">
-                    <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Fish</h3>
-                    <code class="text-emerald-400 text-xs md:text-sm">pinner generate-completion fish > ~/.config/fish/completions/pinner.fish</code>
-                </div>
             </div>
-        </div>
+        </section>
 
         <!-- Next Steps -->
         <div class="p-8 bg-sky-500/5 border border-sky-500/10 rounded-2xl">
@@ -352,41 +336,19 @@ jobs:
                         <strong class="text-white">Learn about Upgrades:</strong> Use <code class="text-sky-300">pinner upgrade</code> to move to newer versions.
                         <p class="mt-2 text-xs text-amber-400/80 bg-amber-400/5 p-2 rounded border border-amber-400/10">
                             <i class="fas fa-exclamation-triangle mr-1"></i> 
-                            <strong>Security Note:</strong> Automatic upgrades can undermine your security. Use <code>upgrade</code> as an intentional step followed by a review to ensure you are only running vetted code.
+                            <strong>Security Note:</strong> Automatic upgrades can undermine security. Use <code>upgrade</code> as an intentional step followed by a manual check of changes.
                         </p>
                     </span>
                 </li>
                 <li class="flex items-start">
                     <i class="fas fa-check-circle text-sky-400 mt-1 mr-3"></i>
-                    <span class="text-gray-400"><strong class="text-white">API Reference:</strong> Check out the <a href="https://docs.rs/pinner" class="text-sky-400 hover:underline">Rust API documentation</a> for library usage.</span>
+                    <span class="text-gray-400"><strong class="text-white">API Reference:</strong> Check out the <a href="https://docs.rs/pinner" class="text-sky-400 hover:underline">Rust API documentation</a> for library usage details.</span>
                 </li>
             </ul>
         </div>
     </main>
 
-    <!-- Footer -->
-    <footer class="py-16 text-center text-gray-500">
-        <div class="flex items-center justify-center space-x-4 mb-6">
-            <a href="https://github.com/ffalcinelli/pinner" class="hover:text-white transition-colors"><i class="fab fa-github text-xl"></i></a>
-            <div class="h-4 w-px bg-gray-800"></div>
-            <a href="https://docs.rs/pinner" class="hover:text-white transition-colors text-sm font-bold uppercase tracking-tighter">Docs.rs</a>
-        </div>
-        <p class="text-xs">&copy; 2026 Fabio Falcinelli. Released under the MIT License.</p>
-    </footer>
-
-    <script>
-        function copyCmd(text, btn) {
-            navigator.clipboard.writeText(text);
-            
-            const feedback = document.getElementById('copy-feedback');
-            feedback.classList.remove('opacity-0');
-            feedback.classList.add('opacity-100');
-            
-            setTimeout(() => {
-                feedback.classList.remove('opacity-100');
-                feedback.classList.add('opacity-0');
-            }, 2000);
-        }
-    </script>
+    <!-- Reusable Footer -->
+    <pinner-footer></pinner-footer>
 </body>
 </html>
