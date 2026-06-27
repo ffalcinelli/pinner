@@ -1006,8 +1006,19 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         })
     };
 
+    let cache_ttl = if cli.no_cache {
+        std::time::Duration::from_secs(0)
+    } else {
+        std::time::Duration::from_secs(cli.cache_ttl.unwrap_or(3600))
+    };
+
     let resolver = Resolver::new(
-        Arc::new(CachedProvider::new(remote, disk_cache, cli.offline)),
+        Arc::new(CachedProvider::new(
+            remote,
+            disk_cache,
+            cli.offline,
+            cache_ttl,
+        )),
         Arc::new(registry),
         upgrade_strategy,
         cli.concurrency.unwrap_or(10),

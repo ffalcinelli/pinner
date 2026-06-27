@@ -67,31 +67,63 @@ pub struct CachedProvider<T: RemoteProvider> {
     branch_cache: Cache<DependencyName, BranchName>,
     disk_cache_path: Option<PathBuf>,
     offline: bool,
+    ttl: Duration,
 }
 
 impl<T: RemoteProvider> CachedProvider<T> {
     /// Wraps a provider with a cache.
     ///
     /// Default TTL for memory caches is 1 hour. Persistent disk cache is stored in the provided path if any.
-    pub fn new(inner: T, disk_cache_path: Option<PathBuf>, offline: bool) -> Self {
+    pub fn new(inner: T, disk_cache_path: Option<PathBuf>, offline: bool, ttl: Duration) -> Self {
+        let memory_ttl = if ttl > Duration::from_secs(0) {
+            ttl
+        } else {
+            Duration::from_secs(1)
+        };
         Self {
             inner,
             sha_cache: Cache::builder()
                 .max_capacity(1000)
-                .time_to_live(Duration::from_secs(3600))
+                .time_to_live(memory_ttl)
                 .build(),
             release_cache: Cache::builder()
                 .max_capacity(500)
-                .time_to_live(Duration::from_secs(3600))
+                .time_to_live(memory_ttl)
                 .build(),
             branch_cache: Cache::builder()
                 .max_capacity(500)
-                .time_to_live(Duration::from_secs(3600))
+                .time_to_live(memory_ttl)
                 .build(),
             disk_cache_path,
             offline,
+            ttl,
         }
     }
+}
+
+fn encode_cached_value(value: &str) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{}:{}", now, value)
+}
+
+fn decode_cached_value(data: &[u8], ttl: Duration) -> Option<String> {
+    let s = String::from_utf8_lossy(data);
+    let parts: Vec<&str> = s.splitn(2, ':').collect();
+    if parts.len() == 2 {
+        if let Ok(timestamp) = parts[0].parse::<u64>() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now >= timestamp && now - timestamp < ttl.as_secs() {
+                return Some(parts[1].to_string());
+            }
+        }
+    }
+    None
 }
 
 #[async_trait]
@@ -103,17 +135,21 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         key: &str,
     ) -> Result<DependencyRef, PinnerError> {
         let mem_key = (action.clone(), tag.to_string());
-        if let Some(sha) = self.sha_cache.get(&mem_key).await {
-            return Ok(sha);
-        }
-
-        // Try disk cache
-        let disk_key = format!("sha:{}:{}:{}", action, tag, key);
-        if let Some(path) = &self.disk_cache_path {
-            if let Ok(data) = cacache::read(path, &disk_key).await {
-                let sha = DependencyRef::from(String::from_utf8_lossy(&data).to_string());
-                self.sha_cache.insert(mem_key, sha.clone()).await;
+        if self.ttl > Duration::from_secs(0) {
+            if let Some(sha) = self.sha_cache.get(&mem_key).await {
                 return Ok(sha);
+            }
+
+            // Try disk cache
+            let disk_key = format!("sha:{}:{}:{}", action, tag, key);
+            if let Some(path) = &self.disk_cache_path {
+                if let Ok(data) = cacache::read(path, &disk_key).await {
+                    if let Some(val) = decode_cached_value(&data, self.ttl) {
+                        let sha = DependencyRef::from(val);
+                        self.sha_cache.insert(mem_key, sha.clone()).await;
+                        return Ok(sha);
+                    }
+                }
             }
         }
 
@@ -127,9 +163,13 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         let sha = self.inner.get_commit_sha(action, tag, key).await?;
 
         // Update caches
-        self.sha_cache.insert(mem_key, sha.clone()).await;
-        if let Some(path) = &self.disk_cache_path {
-            let _ = cacache::write(path, &disk_key, sha.to_string().as_bytes()).await;
+        if self.ttl > Duration::from_secs(0) {
+            self.sha_cache.insert(mem_key, sha.clone()).await;
+            if let Some(path) = &self.disk_cache_path {
+                let disk_key = format!("sha:{}:{}:{}", action, tag, key);
+                let encoded = encode_cached_value(&sha.to_string());
+                let _ = cacache::write(path, &disk_key, encoded.as_bytes()).await;
+            }
         }
 
         Ok(sha)
@@ -140,17 +180,20 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<String, PinnerError> {
-        if let Some(tag) = self.release_cache.get(action).await {
-            return Ok(tag);
-        }
-
-        // Try disk cache
-        let disk_key = format!("release:{}:{}", action, key);
-        if let Some(path) = &self.disk_cache_path {
-            if let Ok(data) = cacache::read(path, &disk_key).await {
-                let tag = String::from_utf8_lossy(&data).to_string();
-                self.release_cache.insert(action.clone(), tag.clone()).await;
+        if self.ttl > Duration::from_secs(0) {
+            if let Some(tag) = self.release_cache.get(action).await {
                 return Ok(tag);
+            }
+
+            // Try disk cache
+            let disk_key = format!("release:{}:{}", action, key);
+            if let Some(path) = &self.disk_cache_path {
+                if let Ok(data) = cacache::read(path, &disk_key).await {
+                    if let Some(val) = decode_cached_value(&data, self.ttl) {
+                        self.release_cache.insert(action.clone(), val.clone()).await;
+                        return Ok(val);
+                    }
+                }
             }
         }
 
@@ -164,9 +207,13 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         let tag = self.inner.get_latest_release(action, key).await?;
 
         // Update caches
-        self.release_cache.insert(action.clone(), tag.clone()).await;
-        if let Some(path) = &self.disk_cache_path {
-            let _ = cacache::write(path, &disk_key, tag.as_bytes()).await;
+        if self.ttl > Duration::from_secs(0) {
+            self.release_cache.insert(action.clone(), tag.clone()).await;
+            if let Some(path) = &self.disk_cache_path {
+                let disk_key = format!("release:{}:{}", action, key);
+                let encoded = encode_cached_value(&tag);
+                let _ = cacache::write(path, &disk_key, encoded.as_bytes()).await;
+            }
         }
 
         Ok(tag)
@@ -192,19 +239,23 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<BranchName, PinnerError> {
-        if let Some(branch) = self.branch_cache.get(action).await {
-            return Ok(branch);
-        }
-
-        // Try disk cache
-        let disk_key = format!("branch:{}:{}", action, key);
-        if let Some(path) = &self.disk_cache_path {
-            if let Ok(data) = cacache::read(path, &disk_key).await {
-                let branch = BranchName(String::from_utf8_lossy(&data).to_string());
-                self.branch_cache
-                    .insert(action.clone(), branch.clone())
-                    .await;
+        if self.ttl > Duration::from_secs(0) {
+            if let Some(branch) = self.branch_cache.get(action).await {
                 return Ok(branch);
+            }
+
+            // Try disk cache
+            let disk_key = format!("branch:{}:{}", action, key);
+            if let Some(path) = &self.disk_cache_path {
+                if let Ok(data) = cacache::read(path, &disk_key).await {
+                    if let Some(val) = decode_cached_value(&data, self.ttl) {
+                        let branch = BranchName(val);
+                        self.branch_cache
+                            .insert(action.clone(), branch.clone())
+                            .await;
+                        return Ok(branch);
+                    }
+                }
             }
         }
 
@@ -218,11 +269,15 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         let branch = self.inner.get_default_branch(action, key).await?;
 
         // Update caches
-        self.branch_cache
-            .insert(action.clone(), branch.clone())
-            .await;
-        if let Some(path) = &self.disk_cache_path {
-            let _ = cacache::write(path, &disk_key, branch.0.as_bytes()).await;
+        if self.ttl > Duration::from_secs(0) {
+            self.branch_cache
+                .insert(action.clone(), branch.clone())
+                .await;
+            if let Some(path) = &self.disk_cache_path {
+                let disk_key = format!("branch:{}:{}", action, key);
+                let encoded = encode_cached_value(&branch.0);
+                let _ = cacache::write(path, &disk_key, encoded.as_bytes()).await;
+            }
         }
 
         Ok(branch)
@@ -1260,6 +1315,7 @@ mod tests {
             ReqwestGithubProvider::new(s.url(), None).unwrap(),
             None,
             false,
+            Duration::from_secs(3600),
         );
         let action = DependencyName::from("o/r");
 
@@ -1454,7 +1510,7 @@ mod tests {
     #[tokio::test]
     async fn test_cached_provider_offline_mode() {
         let remote = MockRemoteProvider::new();
-        let provider = CachedProvider::new(remote, None, true);
+        let provider = CachedProvider::new(remote, None, true, Duration::from_secs(3600));
         let action = DependencyName::from("o/r");
 
         let res = provider.get_commit_sha(&action, "v1", "uses").await;
@@ -1472,5 +1528,23 @@ mod tests {
         let res = provider.get_default_branch(&action, "uses").await;
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+    }
+
+    #[test]
+    fn test_encode_decode_cached_value() {
+        let val = "my_tag_value";
+        let encoded = encode_cached_value(val);
+
+        // Decode within TTL (1 hour) should succeed
+        let decoded = decode_cached_value(encoded.as_bytes(), Duration::from_secs(3600));
+        assert_eq!(decoded, Some(val.to_string()));
+
+        // Decode with expired TTL should return None
+        let decoded_expired = decode_cached_value(encoded.as_bytes(), Duration::from_secs(0));
+        assert_eq!(decoded_expired, None);
+
+        // Decode legacy cache entry (no timestamp prefix) should return None
+        let decoded_legacy = decode_cached_value(b"legacy_raw_value", Duration::from_secs(3600));
+        assert_eq!(decoded_legacy, None);
     }
 }
