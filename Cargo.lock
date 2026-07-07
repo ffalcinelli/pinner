@@ -1658,6 +1658,7 @@ dependencies = [
  "docker_credential",
  "figment",
  "futures",
+ "globset",
  "http",
  "ignore",
  "mockall",

@@ -1,6 +1,7 @@
 use crate::core::UpdateTask;
 use crate::core::{CiProvider, DependencyName};
 use crate::error::PinnerError;
+use globset::Glob;
 use std::path::Path;
 use std::sync::LazyLock;
 use tree_sitter::{Node, Point, Query, QueryCursor, StreamingIterator};
@@ -10,7 +11,7 @@ impl CiProvider {
     ///
     /// This heuristic matches standard CI/CD directory structures (e.g., `.github/workflows`).
     pub fn from_path(path: &Path) -> Self {
-        let path_str = path.to_string_lossy();
+        let path_str = path.to_string_lossy().to_lowercase();
         let mappings = [
             (".github/workflows", CiProvider::GitHub),
             (".forgejo/workflows", CiProvider::Forgejo),
@@ -20,6 +21,9 @@ impl CiProvider {
             (".circleci", CiProvider::CircleCI),
             ("azure-pipelines", CiProvider::AzureDevOps),
             ("buildspec", CiProvider::AwsCodeBuild),
+            ("tekton", CiProvider::Tekton),
+            ("kubernetes", CiProvider::Kubernetes),
+            ("k8s", CiProvider::Kubernetes),
         ];
 
         for (pattern, provider) in mappings {
@@ -27,6 +31,32 @@ impl CiProvider {
                 return provider;
             }
         }
+
+        // Check common Kubernetes manifest file names
+        if let Some(file_name) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.to_lowercase())
+        {
+            if file_name == "pod.yaml"
+                || file_name == "pod.yml"
+                || file_name == "deployment.yaml"
+                || file_name == "deployment.yml"
+                || file_name == "statefulset.yaml"
+                || file_name == "statefulset.yml"
+                || file_name == "daemonset.yaml"
+                || file_name == "daemonset.yml"
+                || file_name == "replicaset.yaml"
+                || file_name == "replicaset.yml"
+                || file_name == "job.yaml"
+                || file_name == "job.yml"
+                || file_name == "cronjob.yaml"
+                || file_name == "cronjob.yml"
+            {
+                return CiProvider::Kubernetes;
+            }
+        }
+
         CiProvider::Unknown
     }
 
@@ -44,6 +74,8 @@ impl CiProvider {
             CiProvider::CircleCI => matches!(key, "image" | "orbs"),
             CiProvider::AzureDevOps => matches!(key, "task" | "template" | "image"),
             CiProvider::AwsCodeBuild => matches!(key, "image"),
+            CiProvider::Tekton => matches!(key, "bundle" | "image"),
+            CiProvider::Kubernetes => matches!(key, "image"),
             CiProvider::Unknown => true,
         }
     }
@@ -65,7 +97,7 @@ static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
             (plain_scalar (string_scalar) @key)
           ]
           value: (_) @value
-          (#match? @key "^(uses|pipe|image|include|ref|task|template)$"))
+          (#match? @key "^(uses|pipe|image|include|ref|task|template|bundle)$"))
 
         ; Capture CircleCI Orbs which have a nested structure: orbs -> name -> value.
         (block_mapping_pair
@@ -160,6 +192,9 @@ pub fn find_tasks(
         ignore_list,
     };
 
+    let content_str = std::str::from_utf8(content).unwrap_or("");
+    let lines: Vec<&str> = content_str.lines().collect();
+
     // We keep track of the last value found to associate it with a potential comment
     // on the same line. Because tree-sitter queries can return captures in sequence,
     // we "buffer" the value until we see if a comment follows it on the same line.
@@ -178,18 +213,21 @@ pub fn find_tasks(
                 // If we had a buffered value from a previous match that didn't have a same-line comment,
                 // push it now.
                 if let Some((start, end, value, pos, key)) = last_value.take() {
-                    if let Some(task) = create_task(
+                    let task_line = pos.row + 1;
+                    let preceding_comments = collect_preceding_comments(&lines, task_line);
+                    if let Some(mut task) = create_task(
                         ctx,
                         Position {
                             start,
                             end,
-                            line: pos.row + 1,
+                            line: task_line,
                             column: pos.column + 1,
                         },
                         value,
                         None,
                         key,
                     ) {
+                        task.preceding_comments = preceding_comments;
                         results.push(task);
                     }
                 }
@@ -214,38 +252,42 @@ pub fn find_tasks(
             } else if Some(cap.index) == comment_idx {
                 if let Some((start, end, value, pos, key)) = last_value.take() {
                     let comment_node = cap.node;
+                    let task_line = pos.row + 1;
+                    let preceding_comments = collect_preceding_comments(&lines, task_line);
                     // Check if the comment is on the same line as the buffered value.
                     if comment_node.start_position().row == pos.row {
                         let comment_text =
                             comment_node.utf8_text(content).unwrap_or("").to_string();
-                        if let Some(task) = create_task(
+                        if let Some(mut task) = create_task(
                             ctx,
                             Position {
                                 start,
                                 end,
-                                line: pos.row + 1,
+                                line: task_line,
                                 column: pos.column + 1,
                             },
                             value,
                             Some(comment_text),
                             key,
                         ) {
+                            task.preceding_comments = preceding_comments;
                             results.push(task);
                         }
                     } else {
                         // The comment is on a different line, so the buffered value has no comment.
-                        if let Some(task) = create_task(
+                        if let Some(mut task) = create_task(
                             ctx,
                             Position {
                                 start,
                                 end,
-                                line: pos.row + 1,
+                                line: task_line,
                                 column: pos.column + 1,
                             },
                             value,
                             None,
                             key,
                         ) {
+                            task.preceding_comments = preceding_comments;
                             results.push(task);
                         }
                     }
@@ -255,22 +297,54 @@ pub fn find_tasks(
     }
 
     if let Some((start, end, value, pos, key)) = last_value {
-        if let Some(task) = create_task(
+        let task_line = pos.row + 1;
+        let preceding_comments = collect_preceding_comments(&lines, task_line);
+        if let Some(mut task) = create_task(
             ctx,
             Position {
                 start,
                 end,
-                line: pos.row + 1,
+                line: task_line,
                 column: pos.column + 1,
             },
             value,
             None,
             key,
         ) {
+            task.preceding_comments = preceding_comments;
             results.push(task);
         }
     }
     Ok(results)
+}
+
+fn collect_preceding_comments(lines: &[&str], line: usize) -> Option<String> {
+    if line < 2 {
+        return None;
+    }
+
+    let mut collected = Vec::new();
+    let mut curr_idx = line - 2;
+
+    loop {
+        let trimmed = lines[curr_idx].trim();
+        if trimmed.starts_with('#') {
+            collected.push(trimmed.to_string());
+            if curr_idx == 0 {
+                break;
+            }
+            curr_idx -= 1;
+        } else {
+            break;
+        }
+    }
+
+    if collected.is_empty() {
+        None
+    } else {
+        collected.reverse();
+        Some(collected.join("\n"))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -330,11 +404,25 @@ fn create_task(
 
     let action = DependencyName::from(action_part);
 
-    if ctx
-        .ignore_list
-        .iter()
-        .any(|pattern| action.0.contains(pattern))
-    {
+    let mut ignored = false;
+    for pattern in ctx.ignore_list {
+        let has_wildcards = pattern
+            .chars()
+            .any(|c| matches!(c, '*' | '?' | '[' | ']' | '{' | '}'));
+        if has_wildcards {
+            if let Ok(glob) = Glob::new(pattern) {
+                if glob.compile_matcher().is_match(&action.0) {
+                    ignored = true;
+                    break;
+                }
+            }
+        } else if action.0.contains(pattern) {
+            ignored = true;
+            break;
+        }
+    }
+
+    if ignored {
         return None;
     }
 
@@ -347,6 +435,7 @@ fn create_task(
         action,
         current_tag: tag.map(|s| s.to_string()),
         comment,
+        preceding_comments: None,
         key,
         provider: ctx.provider,
     })
@@ -698,5 +787,116 @@ jobs:
 
         assert_eq!(results[3].action.0, "docker://localhost:5000/my-image");
         assert_eq!(results[3].current_tag.as_deref(), None);
+    }
+
+    #[test]
+    fn test_find_tasks_ignore_list_glob() {
+        let yaml = r#"
+- uses: actions/checkout@v3
+- uses: actions/setup-node@v2
+- uses: docker://gcr.io/internal/my-image@sha256:abc
+- uses: docker://gcr.io/external/other-image@sha256:123
+- uses: normal/action@v1
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+
+        // Ignore patterns:
+        // 1. "actions/*" -> Matches actions/checkout and actions/setup-node
+        // 2. "*internal/*" -> Matches docker://gcr.io/internal/my-image
+        // 3. "normal/action" -> Matches normal/action (exact substring)
+        let ignore_list = vec![
+            "actions/*".to_string(),
+            "*internal/*".to_string(),
+            "normal/action".to_string(),
+        ];
+
+        let results = find_tasks(path, tree.root_node(), &content, &ignore_list).unwrap();
+
+        // Only docker://gcr.io/external/other-image should remain!
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "docker://gcr.io/external/other-image");
+    }
+
+    #[test]
+    fn test_ci_provider_from_path_tekton_k8s() {
+        assert_eq!(
+            CiProvider::from_path(Path::new("tekton/task.yaml")),
+            CiProvider::Tekton
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new("k8s/deployment.yaml")),
+            CiProvider::Kubernetes
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new("pod.yaml")),
+            CiProvider::Kubernetes
+        );
+    }
+
+    #[test]
+    fn test_find_tasks_tekton_bundle() {
+        let yaml = r#"
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  taskRef:
+    name: git-clone
+    bundle: gcr.io/tekton-releases/catalog/git-clone:0.1
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new("tekton/git-clone.yaml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].action.0,
+            "gcr.io/tekton-releases/catalog/git-clone"
+        );
+        assert_eq!(results[0].current_tag.as_deref(), Some("0.1"));
+        assert_eq!(results[0].key, "bundle");
+    }
+
+    #[test]
+    fn test_find_tasks_kubernetes_image() {
+        let yaml = r#"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  containers:
+  - name: web
+    image: nginx:1.21.0
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new("pod.yaml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "nginx");
+        assert_eq!(results[0].current_tag.as_deref(), Some("1.21.0"));
+        assert_eq!(results[0].key, "image");
+    }
+
+    #[test]
+    fn test_find_tasks_preceding_comments() {
+        let yaml = r#"
+# This is a block comment
+# that explains checkout.
+- uses: actions/checkout@v3
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "actions/checkout");
+        assert_eq!(
+            results[0].preceding_comments.as_deref(),
+            Some("# This is a block comment\n# that explains checkout.")
+        );
     }
 }

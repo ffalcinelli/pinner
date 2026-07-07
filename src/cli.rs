@@ -36,6 +36,10 @@ pub enum OutputFormat {
     Json,
     /// Markdown table format suitable for PR comments.
     Markdown,
+    /// GitHub Actions workflow command annotations.
+    Github,
+    /// JUnit XML test results format.
+    Junit,
 }
 
 /// The main command-line interface for Pinner.
@@ -213,6 +217,19 @@ pub enum Commands {
         /// Strategy to use when upgrading actions.
         #[arg(long, env = "PINNER_UPGRADE_STRATEGY", default_value = "latest")]
         upgrade_strategy: UpgradeStrategy,
+    },
+    /// Automatically commit changes, push to a new branch, and create a Pull Request/Merge Request.
+    PrCreate {
+        /// Git commit message.
+        #[arg(
+            short,
+            long,
+            default_value = "security: pin dependencies to secure commit hashes"
+        )]
+        message: String,
+        /// Name of the new git branch.
+        #[arg(short, long, default_value = "pinner/pin-dependencies")]
+        branch: String,
     },
     /// Generate shell completions.
     GenerateCompletion {

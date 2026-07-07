@@ -22,6 +22,10 @@ pub enum CiProvider {
     AzureDevOps,
     /// AWS CodeBuild (`image`).
     AwsCodeBuild,
+    /// Tekton Pipelines (`bundle`, `image`).
+    Tekton,
+    /// Kubernetes manifest (`image`).
+    Kubernetes,
     /// Fallback for unknown or generic YAML files.
     #[default]
     Unknown,
