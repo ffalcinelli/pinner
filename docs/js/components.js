@@ -2,8 +2,23 @@
  * Reusable Components for the Pinner Documentation Site
  */
 
+async function fetchLatestVersion() {
+    try {
+        const response = await fetch('https://api.github.com/repos/ffalcinelli/pinner/releases/latest');
+        if (response.ok) {
+            const data = await response.json();
+            if (data && data.tag_name) {
+                return data.tag_name;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to fetch latest version from GitHub, using fallback.', e);
+    }
+    return 'v0.0.12'; // Fallback
+}
+
 class PinnerNavbar extends HTMLElement {
-    connectedCallback() {
+    async connectedCallback() {
         const activePage = this.getAttribute('active-page') || '';
         
         const getLinkClass = (page) => {
@@ -18,6 +33,7 @@ class PinnerNavbar extends HTMLElement {
                 <a href="index.html" class="flex items-center space-x-2 group">
                     <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
                     <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
+                    <span class="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-1.5 py-0.5 rounded font-mono select-none pinner-version-badge">v0.0.12</span>
                 </a>
             </div>
             <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
@@ -35,6 +51,14 @@ class PinnerNavbar extends HTMLElement {
                 </a>
             </div>
         </nav>`;
+
+        const version = await fetchLatestVersion();
+        document.querySelectorAll('.pinner-version-badge').forEach(el => {
+            el.textContent = version;
+        });
+        document.querySelectorAll('.pinner-version-text').forEach(el => {
+            el.textContent = `Latest Release: ${version}`;
+        });
     }
 }
 customElements.define('pinner-navbar', PinnerNavbar);
