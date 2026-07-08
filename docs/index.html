@@ -64,6 +64,9 @@
     <!-- Hero Section -->
     <section class="relative pt-20 pb-32 hero-gradient">
         <div class="max-w-4xl mx-auto text-center px-4">
+            <div class="inline-flex items-center space-x-2 bg-sky-500/10 border border-sky-500/30 rounded-full px-4 py-1.5 text-sky-400 text-xs font-bold font-mono tracking-wide mb-6 uppercase select-none">
+                <span class="pinner-version-text">Latest Release: v0.0.12</span>
+            </div>
             <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
                 Secure your CI/CD workflows with <span class="text-sky-400">Pinner</span>
             </h1>
@@ -128,7 +131,7 @@
 
     <!-- Features -->
     <section class="py-24 max-w-7xl mx-auto px-4 md:px-8 relative z-10" id="features">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             <div class="card p-8 rounded-2xl hover:border-sky-500/50">
                 <div class="w-12 h-12 bg-sky-500/10 rounded-lg flex items-center justify-center mb-6">
                     <i class="fas fa-bolt text-sky-400 text-xl"></i>
@@ -163,6 +166,24 @@
                 <h3 class="text-xl font-bold text-white mb-4">Enterprise Controls</h3>
                 <p class="text-gray-400 leading-relaxed text-sm">
                     Configure trust whitelists, local policy overrides, and rate-limits in <code>.pinner.toml</code>. Supports private registries, AWS ECR, Azure DevOps, and custom git forges.
+                </p>
+            </div>
+            <div class="card p-8 rounded-2xl hover:border-violet-500/50">
+                <div class="w-12 h-12 bg-violet-500/10 rounded-lg flex items-center justify-center mb-6">
+                    <i class="fas fa-code-pull-request text-violet-400 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white mb-4">Automated PR Mitigation</h3>
+                <p class="text-gray-400 leading-relaxed text-sm">
+                    Automatically runs pinning, branches locally, commits and pushes changes, and creates Pull Requests (GitHub) or Merge Requests (GitLab) using secure API tokens.
+                </p>
+            </div>
+            <div class="card p-8 rounded-2xl hover:border-pink-500/50">
+                <div class="w-12 h-12 bg-pink-500/10 rounded-lg flex items-center justify-center mb-6">
+                    <i class="fas fa-cubes text-pink-400 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white mb-4">Kubernetes & Tekton</h3>
+                <p class="text-gray-400 leading-relaxed text-sm">
+                    Natively parses Kubernetes Pod/Deployment manifests and Tekton Pipeline bundles to pin container images and secure your cloud-native deployments.
                 </p>
             </div>
         </div>

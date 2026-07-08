@@ -1,6 +1,7 @@
 use crate::cli::UpgradeStrategy;
 use crate::core::{DependencyRef, UpdateResult, UpdateTask};
 use crate::error::PinnerError;
+use crate::resolver::osv::OsvClient;
 use crate::resolver::provider::RemoteProvider;
 use crate::resolver::registry::RegistryProvider;
 use futures::stream::{self, StreamExt};
@@ -17,6 +18,8 @@ pub struct Resolver {
     pub remote: Arc<dyn RemoteProvider>,
     /// The provider used to fetch digests from OCI registries.
     pub registry: Arc<dyn RegistryProvider>,
+    /// Client to query the OSV vulnerability database.
+    pub osv: Arc<OsvClient>,
     /// The strategy to use when upgrading (e.g., Latest, Major, Minor).
     pub upgrade_strategy: UpgradeStrategy,
     /// Maximum number of concurrent network requests.
@@ -28,15 +31,22 @@ impl Resolver {
     pub fn new(
         remote: Arc<dyn RemoteProvider>,
         registry: Arc<dyn RegistryProvider>,
+        osv: Arc<OsvClient>,
         upgrade_strategy: UpgradeStrategy,
         concurrency: usize,
     ) -> Self {
         Self {
             remote,
             registry,
+            osv,
             upgrade_strategy,
             concurrency,
         }
+    }
+
+    /// Queries the OSV database for vulnerabilities related to a commit SHA.
+    pub async fn check_vulnerabilities(&self, commit: &str) -> Result<Option<String>, PinnerError> {
+        self.osv.query_commit(commit).await
     }
 
     /// Resolves a batch of tasks into results.
@@ -518,6 +528,7 @@ mod tests {
             action: "actions/checkout".into(),
             current_tag: Some("v3".to_string()),
             comment: None,
+            preceding_comments: None,
             key: "uses".to_string(),
             line: 1,
             column: 1,
@@ -554,6 +565,7 @@ mod tests {
             action: "actions/checkout".into(),
             current_tag: Some("v3".to_string()),
             comment: None,
+            preceding_comments: None,
             key: "uses".to_string(),
             line: 1,
             column: 1,
@@ -592,12 +604,13 @@ mod tests {
             path: "f.yml".into(),
             start: 0,
             end: 0,
+            line: 1,
+            column: 1,
             action: "actions/checkout".into(),
             current_tag: Some("v1.0.0".to_string()),
             comment: None,
+            preceding_comments: None,
             key: "uses".to_string(),
-            line: 1,
-            column: 1,
             provider: crate::core::CiProvider::GitHub,
         };
 
@@ -636,6 +649,7 @@ mod tests {
             action: "actions/checkout".into(),
             current_tag: Some("v3".to_string()),
             comment: None,
+            preceding_comments: None,
             key: "uses".to_string(),
             line: 1,
             column: 1,
@@ -672,12 +686,13 @@ mod tests {
             path: ".circleci/config.yml".into(),
             start: 0,
             end: 0,
+            line: 1,
+            column: 1,
             action: "circleci/node".into(),
             current_tag: Some("5.0.0".to_string()),
             comment: None,
+            preceding_comments: None,
             key: "orbs".to_string(),
-            line: 1,
-            column: 1,
             provider: crate::core::CiProvider::CircleCI,
         };
 
@@ -707,9 +722,15 @@ mod tests {
             .times(1)
             .returning(|_, _, _| Ok(DependencyRef::GitSha("hash".to_string())));
 
+        let osv = Arc::new(OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
         let resolver = Resolver::new(
             Arc::new(remote),
             Arc::new(MockRegistryProvider::new()),
+            osv,
             UpgradeStrategy::Latest,
             2,
         );
@@ -750,9 +771,15 @@ mod tests {
             .with(eq(DependencyName::from("fail")), always(), always())
             .returning(|_, _, _| Err(PinnerError::Api("non-fatal".into())));
 
+        let osv = Arc::new(OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
         let resolver = Resolver::new(
             Arc::new(remote),
             Arc::new(MockRegistryProvider::new()),
+            osv,
             UpgradeStrategy::Latest,
             2,
         );

@@ -170,19 +170,94 @@ impl OciRegistryProvider {
     }
 
     async fn verify_signature(&self, image: &str, digest: &str) -> Result<bool, PinnerError> {
-        // High-level structural implementation of Sigstore/Cosign verification.
-        // In a real environment, this would use the `sigstore` crate to verify
-        // that a signature exists in the transparency log and matches the digest.
-        #[cfg(not(test))]
-        {
-            // Note: sigstore crate has a complex API, we provide the structural integration.
-            let _ = (image, digest);
-            Ok(true)
+        if self.offline {
+            return Err(PinnerError::Offline(format!(
+                "Network request to verify OCI signature for {}@{} is disabled in offline mode",
+                image, digest
+            )));
         }
-        #[cfg(test)]
-        {
-            let _ = (image, digest);
-            Ok(true)
+
+        let digest_str = if digest.starts_with("sha256:") {
+            digest.to_string()
+        } else {
+            self.resolve_digest(image, digest).await?
+        };
+
+        let (registry, repository) = if let Some(pos) = image.find('/') {
+            let first_part = &image[..pos];
+            if first_part.contains('.') || first_part.contains(':') || first_part == "localhost" {
+                (first_part, &image[pos + 1..])
+            } else {
+                ("registry-1.docker.io", image)
+            }
+        } else {
+            ("registry-1.docker.io", image)
+        };
+
+        let full_repo = if registry == "registry-1.docker.io" && !repository.contains('/') {
+            format!("library/{}", repository)
+        } else {
+            repository.to_string()
+        };
+
+        let digest_hex = digest_str.strip_prefix("sha256:").unwrap_or(&digest_str);
+        let sig_tag = format!("sha256-{}.sig", digest_hex);
+
+        let token = self.get_token(registry, &full_repo).await?;
+
+        let url = self
+            .base_url_template
+            .replace("{registry}", registry)
+            .replace("{repository}", &full_repo)
+            .replace("{tag}", &sig_tag);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/vnd.oci.image.manifest.v1+json"),
+        );
+        headers.append(
+            ACCEPT,
+            HeaderValue::from_static("application/vnd.docker.distribution.manifest.v2+json"),
+        );
+
+        if !token.is_empty() {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {}", token))
+                    .map_err(|e| PinnerError::Api(e.to_string()))?,
+            );
+        } else {
+            let (u, p) = self.get_credentials(registry);
+            if let (Some(u), Some(p)) = (u, p) {
+                let auth = format!("{}:{}", u, p);
+                headers.insert(
+                    "Authorization",
+                    HeaderValue::from_str(&format!("Basic {}", b64_encode(&auth)))
+                        .map_err(|e| PinnerError::Api(e.to_string()))?,
+                );
+            }
+        }
+
+        let resp = self.client.get(&url).headers(headers).send().await;
+
+        match resp {
+            Ok(r) => {
+                if r.status().is_success() {
+                    Ok(true)
+                } else if r.status() == reqwest::StatusCode::NOT_FOUND {
+                    Ok(false)
+                } else {
+                    Err(PinnerError::Api(format!(
+                        "Failed to fetch signature manifest: HTTP {}",
+                        r.status()
+                    )))
+                }
+            }
+            Err(e) => Err(PinnerError::Api(format!(
+                "Failed to send signature manifest request: {}",
+                e
+            ))),
         }
     }
 }
@@ -453,10 +528,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_oci_registry_provider_verify_provenance_online() {
-        let provider = OciRegistryProvider::new(None, None);
+    async fn test_oci_registry_provider_verify_provenance_mocked() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/v2/repo/manifests/sha256-12345.sig")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let mut provider = OciRegistryProvider::new(None, None);
+        provider.base_url_template =
+            format!("{}{}", server.url(), "/v2/{repository}/manifests/{tag}");
+
         let res = provider
-            .verify_provenance("alpine", "sha256:digest")
+            .verify_provenance("localhost/repo", "sha256:12345")
+            .await
+            .unwrap();
+        assert!(res);
+    }
+
+    #[tokio::test]
+    async fn test_oci_registry_provider_verify_provenance_not_found() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/v2/repo/manifests/sha256-12345.sig")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let mut provider = OciRegistryProvider::new(None, None);
+        provider.base_url_template =
+            format!("{}{}", server.url(), "/v2/{repository}/manifests/{tag}");
+
+        let res = provider
+            .verify_provenance("localhost/repo", "sha256:12345")
+            .await
+            .unwrap();
+        assert!(!res);
+    }
+
+    #[tokio::test]
+    async fn test_oci_registry_provider_verify_provenance_tag_mocked() {
+        let mut server = Server::new_async().await;
+        let _m1 = server
+            .mock("GET", "/v2/repo/manifests/latest")
+            .with_status(200)
+            .with_header("Docker-Content-Digest", "sha256:12345")
+            .create_async()
+            .await;
+        let _m2 = server
+            .mock("GET", "/v2/repo/manifests/sha256-12345.sig")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let mut provider = OciRegistryProvider::new(None, None);
+        provider.base_url_template =
+            format!("{}{}", server.url(), "/v2/{repository}/manifests/{tag}");
+
+        let res = provider
+            .verify_provenance("localhost/repo", "latest")
             .await
             .unwrap();
         assert!(res);

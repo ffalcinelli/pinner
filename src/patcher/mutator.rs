@@ -32,7 +32,6 @@ pub fn apply_update(
         .map(|pos| res.task.end + pos)
         .unwrap_or(content.len());
 
-    let old_val_with_suffix = &content[res.task.start..line_end];
     let suffix = &content[res.task.end..line_end];
 
     // logic to handle existing comments:
@@ -88,14 +87,66 @@ pub fn apply_update(
         )
     };
 
-    if old_val_with_suffix == new_val {
+    // Calculate line starts in the original content to find the preceding line if any.
+    let mut line_starts = vec![0];
+    for (idx, c) in content.char_indices() {
+        if c == '\n' {
+            line_starts.push(idx + 1);
+        }
+    }
+
+    let mut start_range = res.task.start;
+    let mut prefix_replacement = "".to_string();
+
+    if res.task.line >= 2 {
+        let prev_line_idx = res.task.line - 2;
+        if prev_line_idx < line_starts.len() {
+            let start = line_starts[prev_line_idx];
+            let end = if prev_line_idx + 1 < line_starts.len() {
+                line_starts[prev_line_idx + 1]
+            } else {
+                content.len()
+            };
+            let prev_line_str = &content[start..end];
+            let trimmed = prev_line_str.trim();
+            if trimmed.starts_with('#') && COMMENT_REGEX.is_match(trimmed) {
+                if let Some(new_t) = &res.new_tag {
+                    let is_sha = (new_t.len() == 40
+                        && new_t.chars().all(|c| c.is_ascii_hexdigit()))
+                        || new_t.starts_with("sha256:");
+                    if !is_sha {
+                        let indent = prev_line_str.len() - prev_line_str.trim_start().len();
+                        let indent_str = &prev_line_str[..indent];
+                        let newline_str = if prev_line_str.ends_with('\n') {
+                            "\n"
+                        } else {
+                            ""
+                        };
+
+                        start_range = start;
+                        prefix_replacement = format!(
+                            "{}# {}{}{}",
+                            indent_str,
+                            new_t,
+                            newline_str,
+                            &content[end..res.task.start]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let full_new_text = format!("{}{}", prefix_replacement, new_val);
+    let full_old_text = content[start_range..line_end].to_string();
+
+    if full_old_text == full_new_text {
         return Ok(None);
     }
 
-    let old_val = old_val_with_suffix.to_string();
     // Surgically replace the range in the original content string.
-    content.replace_range(res.task.start..line_end, &new_val);
-    Ok(Some((old_val, new_val)))
+    content.replace_range(start_range..line_end, &full_new_text);
+    Ok(Some((full_old_text, full_new_text)))
 }
 
 #[cfg(test)]
@@ -118,6 +169,7 @@ mod tests {
                 action: DependencyName::from("actions/checkout"),
                 current_tag: Some("v3".to_string()),
                 comment: None,
+                preceding_comments: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -130,6 +182,34 @@ mod tests {
         let result = apply_update(&mut content, &res).unwrap();
         assert!(result.is_some());
         assert_eq!(content, "uses: actions/checkout@hashv3 # v3");
+    }
+
+    #[test]
+    fn test_apply_update_preceding_comment() {
+        let mut content = "# v1\nuses: actions/checkout@v1".to_string();
+        let res = UpdateResult {
+            action: DependencyName::from("actions/checkout"),
+            path: PathBuf::from("f.yml"),
+            old_tag: Some("v1".to_string()),
+            task: UpdateTask {
+                path: PathBuf::from("f.yml"),
+                start: 11,
+                end: 30,
+                action: DependencyName::from("actions/checkout"),
+                current_tag: Some("v1".to_string()),
+                comment: None,
+                preceding_comments: Some("# v1".to_string()),
+                key: "uses".to_string(),
+                line: 2,
+                column: 7,
+                provider: crate::core::CiProvider::GitHub,
+            },
+            new_sha: DependencyRef::from("hashv2".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "# v2\nuses: actions/checkout@hashv2 # v2");
     }
 
     #[test]
@@ -146,6 +226,7 @@ mod tests {
                 action: DependencyName::from("o/r"),
                 current_tag: Some("v1".to_string()),
                 comment: Some("# keep me".to_string()),
+                preceding_comments: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -173,6 +254,7 @@ mod tests {
                 action: DependencyName::from("o/r"),
                 current_tag: Some("v1".to_string()),
                 comment: Some("# v1".to_string()),
+                preceding_comments: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -200,6 +282,7 @@ mod tests {
                 action: DependencyName::from("cimg/base"),
                 current_tag: Some("sha256:oldhash".to_string()),
                 comment: Some("# stable".to_string()),
+                preceding_comments: None,
                 key: "image".to_string(),
                 line: 1,
                 column: 1,
@@ -228,6 +311,7 @@ mod tests {
                 action: DependencyName::from("proj"),
                 current_tag: Some("v1".to_string()),
                 comment: None,
+                preceding_comments: None,
                 key: "ref".to_string(),
                 line: 1,
                 column: 1,

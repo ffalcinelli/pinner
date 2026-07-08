@@ -101,7 +101,7 @@ impl<T: RemoteProvider> CachedProvider<T> {
     }
 }
 
-fn encode_cached_value(value: &str) -> String {
+pub(crate) fn encode_cached_value(value: &str) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -109,7 +109,7 @@ fn encode_cached_value(value: &str) -> String {
     format!("{}:{}", now, value)
 }
 
-fn decode_cached_value(data: &[u8], ttl: Duration) -> Option<String> {
+pub(crate) fn decode_cached_value(data: &[u8], ttl: Duration) -> Option<String> {
     let s = String::from_utf8_lossy(data);
     let parts: Vec<&str> = s.splitn(2, ':').collect();
     if parts.len() == 2 {
