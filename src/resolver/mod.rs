@@ -11,6 +11,7 @@ pub mod circleci;
 pub mod forgejo;
 pub mod github;
 pub mod gitlab;
+pub mod osv;
 pub mod provider;
 pub mod registry;
 pub mod unified;
@@ -18,6 +19,7 @@ pub mod unified;
 pub use azure::ReqwestAzureProvider;
 pub use bitbucket::ReqwestBitbucketProvider;
 pub use circleci::ReqwestCircleCiProvider;
+pub use osv::OsvClient;
 pub use provider::{
     CachedProvider, ProviderType, RemoteProvider, UnifiedProvider, UnifiedProviderConfig,
 };
