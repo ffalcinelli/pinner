@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.13] - 2026-07-08
+
+### Added
+- 🚀 **Auto-Mitigation & PR Creation**: Added a new `pr-create` subcommand to automatically run pinning on workflows, create a git branch, commit changes, push to the remote repository, and open a Pull Request (GitHub) or Merge Request (GitLab) via REST API.
+- 💬 **Preceding Comments Support**: Added surgical updating of version-only preceding line comments (e.g. `# v1` -> `# v2`) above workflow dependencies.
+- 📊 **SBOM Exporting**: Added an SBOM exporter (`export_sbom`) to output dependencies in CycloneDX format.
+- 📡 **Enterprise & Test API Overrides**: Added `PINNER_GITHUB_URL` and `PINNER_GITLAB_URL` environment variable overrides to allow target host configuration (including Mockito testing).
+- 🏷️ **Dynamic Release Version Badge**: Replaced the static release tag in documentation and landing pages with an asynchronous lookup to the GitHub Releases API (with instant local fallback).
+
+### Changed
+- 🧪 **Pipeline Test Coverage Boost**: Added robust unit and integration testing blocks for Git PR creation flow, project initialization (`init`), and SBOM generation, boosting total line coverage to `87.15%` (logical ~100% coverage ceiling).
+
+### Fixed
+- 🛡️ **Vulnerability Resolution**: Upgraded `crossbeam-epoch` to `0.9.20` to resolve pointer dereferencing vulnerability `RUSTSEC-2026-0204`.
+
 ## [0.0.12] - 2026-06-27
 
 ### Added
