@@ -24,8 +24,11 @@ Hash-pinning ensures that you run the **exact** code you've audited, every singl
 - **Multi-Forge Support**: Works with GitHub, GitLab, Bitbucket, and Forgejo/Gitea.
 - **Tag Preservation**: Automatically appends the original tag as a comment (e.g., `@<hash> # v2`).
 - **Container Pinning**: Automatically pins Docker images to their immutable digests (e.g., `image: alpine@sha256:...`).
+- **Preceding/Header Comments Support**: Parses block/header comments, extracting version tags and surgically updating version-only comments above dependencies (e.g. `# v1` -> `# v2`).
+- **Tekton & Kubernetes Support**: Parses and pins OCI bundles in Tekton files and container images in standard Kubernetes manifests.
+- **Auto-Mitigation (PR Creation)**: Automates running pinning, branching, committing, pushing, and creating Pull/Merge Requests on GitHub/GitLab.
 - **Flexible Upgrades**: Multiple strategies to keep your actions up to date (Major, Minor, Latest).
-- **CI Ready**: Includes a `verify` mode to ensure all actions remain pinned in your PRs.
+- **CI Ready**: Includes a `verify` mode to ensure all actions remain pinned in your PRs, supporting GitHub Actions annotations and JUnit XML test reports.
 - **Security Scanning**: A `scan` subcommand to query the OpenSSF OSV database for known vulnerabilities and supply-chain compromises.
 - **Visual Security Feedback**: Appends colorful indicators (`[✓ vetted]`, `[✗ compromised]`, or `[? not checked]`) during dry-runs and diff outputs.
 
@@ -76,9 +79,16 @@ pinner upgrade --upgrade-strategy major
 ```
 
 ### 3. Verify pinning
-Ensure that all actions in your workflows are pinned. Perfect for CI pipelines.
+Ensure that all actions in your workflows are pinned. Perfect for CI pipelines. Supports different output reporting formats.
 ```bash
+# Verify pinning
 pinner verify
+
+# Fail verify on compromised OSV hashes, strict vetting policy, and output workflow annotations
+pinner verify --check-osv --strict --format github
+
+# Generate standard JUnit XML reports of scanned dependencies
+pinner verify --format junit
 ```
 
 ### 4. Install Git Hook
@@ -105,7 +115,13 @@ Generate a Software Bill of Materials for your CI dependencies.
 pinner export-sbom
 ```
 
-### 8. Security Scan
+### 8. Automated Pull/Merge Request
+Automatically run pinning, create a new local git branch, commit changes, push to origin, and open a Pull Request (GitHub) or Merge Request (GitLab) using your API tokens.
+```bash
+pinner pr-create --branch pinner/pin-dependencies --message "security: pin dependencies to secure commit hashes"
+```
+
+### 9. Security Scan
 Audits your dependencies for vulnerabilities. It queries the OpenSSF OSV database for both current hashes and proposed upgrade candidates, and executes Sigstore/Cosign provenance and signature verification for OCI container images. It presents an interactive report and updates your vetted whitelist or compromised blacklist.
 ```bash
 # Scan workflows and interactively update your .pinner.toml config
@@ -115,7 +131,7 @@ pinner scan
 pinner scan --yes
 ```
 
-### 9. Shell Completions
+### 10. Shell Completions
 Generate tab-completion scripts for your shell. Automatically detects your current shell if no argument is provided.
 ```bash
 # Auto-detect current shell
@@ -181,6 +197,8 @@ Pinner supports multiple CI/CD and git hosting platforms:
 | GitLab | `include: project: 'org/repo'` | `GITLAB_TOKEN` |
 | Bitbucket | `pipe: atlassian/aws-s3-deploy:1.0.0` | `BITBUCKET_TOKEN` |
 | Forgejo/Gitea | `uses: forgejo/action@v1` | `FORGEJO_TOKEN` |
+| **Tekton Pipelines** | `bundle: gcr.io/tekton-catalog/git-clone:0.1` | (Public bundles only) |
+| **Kubernetes** | `image: nginx:1.21.0` | `PINNER_OCI_PASSWORD` |
 | **Azure Marketplace** | `task: NodeTool@0` | `GITHUB_TOKEN` (via monorepo) |
 | **AWS ECR** | `image: <acc>.dkr.ecr.<reg>.amazonaws.com/repo:v1` | `PINNER_OCI_PASSWORD` |
 | **CircleCI** | `image: cimg/node:16` | (Public images only) |

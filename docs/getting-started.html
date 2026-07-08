@@ -199,6 +199,16 @@
                             <td class="px-6 py-4"><code class="text-sky-300 text-xs">CIRCLECI_TOKEN</code></td>
                             <td class="px-6 py-4">Docker Image Pinning</td>
                         </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium">Tekton Pipelines</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">-</code></td>
+                            <td class="px-6 py-4">OCI Bundle Pinning (<code>bundle:</code> key)</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium">Kubernetes</td>
+                            <td class="px-6 py-4"><code class="text-sky-300 text-xs">PINNER_OCI_PASSWORD</code></td>
+                            <td class="px-6 py-4">Container Image Pinning (<code>image:</code> key)</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -322,6 +332,29 @@ jobs:
                 <div class="card p-5 rounded-xl border-l-4 border-purple-500">
                     <h3 class="text-sm font-bold text-white mb-2 uppercase tracking-widest opacity-60">Zsh (Explicit)</h3>
                     <code class="text-emerald-400 text-xs md:text-sm">pinner generate-completion zsh > "${fpath[1]}/_pinner"</code>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 8: Automated PR Creation -->
+        <section class="mb-16">
+            <h2 class="text-2xl font-bold text-white mb-8 flex items-center">
+                <span class="w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center mr-4 text-sm font-bold">8</span>
+                Automated Pull/Merge Requests
+            </h2>
+            
+            <p class="text-gray-400 mb-6 leading-relaxed">
+                Pinner can automatically run pinning, check for changes, commit to a new git branch, push to origin, and create a Pull Request (GitHub) or Merge Request (GitLab) in a single step using configured API tokens:
+            </p>
+
+            <div class="terminal rounded-xl overflow-hidden border border-gray-800 mb-6">
+                <div class="p-6 font-mono text-sm md:text-base leading-relaxed">
+                    <p class="mb-2 text-gray-500">$ GITHUB_TOKEN=ghp_xxx pinner pr-create --branch pinner/updates --message "security: pin dependencies"</p>
+                    <p class="mb-2 text-emerald-400">Searching for workflows in .github/workflows/...</p>
+                    <p class="mb-2 text-white">actions/checkout@v4 -> actions/checkout@8f4b7f84... # v4</p>
+                    <p class="mb-2 text-emerald-400">Pushing branch pinner/updates to origin...</p>
+                    <p class="mb-2 text-emerald-400">Sending Pull Request creation request to GitHub API...</p>
+                    <p class="text-emerald-400 font-bold mt-2">GitHub Pull Request successfully created! 🚀</p>
                 </div>
             </div>
         </section>
