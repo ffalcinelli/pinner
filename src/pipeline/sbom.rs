@@ -62,3 +62,47 @@ impl Pipeline {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::UpgradeStrategy;
+    use crate::resolver::provider::MockRemoteProvider;
+    use crate::resolver::registry::MockRegistryProvider;
+    use crate::resolver::OsvClient;
+    use crate::resolver::Resolver;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_export_sbom() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("action.yml");
+        std::fs::write(&file_path, "uses: actions/checkout@v3").unwrap();
+
+        let remote = Arc::new(MockRemoteProvider::new());
+        let registry = Arc::new(MockRegistryProvider::new());
+        let osv = Arc::new(OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(remote, registry, osv, UpgradeStrategy::Latest, 10);
+        let scanner = crate::scanner::Scanner::new(vec![]);
+        let patcher = crate::patcher::Patcher::new(
+            crate::patcher::Formatter::new(
+                crate::cli::OutputFormat::Text,
+                false,
+                vec![],
+                vec![],
+                true,
+            ),
+            Arc::new(crate::patcher::ui::TestUi { response: true }),
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let result = pipeline.export_sbom(&[file_path]).await;
+        assert!(result.is_ok());
+    }
+}

@@ -126,12 +126,17 @@ impl Pipeline {
 
         // 9. API Request to open PR
         let client = reqwest::Client::new();
-        if host.contains("github.com") {
+        let is_github = host.contains("github.com") || std::env::var("PINNER_GITHUB_URL").is_ok();
+        let is_gitlab = host.contains("gitlab.com") || std::env::var("PINNER_GITLAB_URL").is_ok();
+
+        if is_github {
             let token = std::env::var("GITHUB_TOKEN").map_err(|_| {
                 PinnerError::Api("GITHUB_TOKEN environment variable is not set".to_string())
             })?;
 
-            let pr_url = format!("https://api.github.com/repos/{}/{}/pulls", owner, repo);
+            let api_base = std::env::var("PINNER_GITHUB_URL")
+                .unwrap_or_else(|_| "https://api.github.com".to_string());
+            let pr_url = format!("{}/repos/{}/{}/pulls", api_base, owner, repo);
             let payload = serde_json::json!({
                 "title": message,
                 "head": branch,
@@ -160,16 +165,18 @@ impl Pipeline {
             }
 
             println!("GitHub Pull Request successfully created!");
-        } else if host.contains("gitlab.com") {
+        } else if is_gitlab {
             let token = std::env::var("GITLAB_TOKEN").map_err(|_| {
                 PinnerError::Api("GITLAB_TOKEN environment variable is not set".to_string())
             })?;
 
             let project_path = format!("{}/{}", owner, repo);
             let encoded_project_path = project_path.replace('/', "%2F");
+            let api_base = std::env::var("PINNER_GITLAB_URL")
+                .unwrap_or_else(|_| "https://gitlab.com/api/v4".to_string());
             let pr_url = format!(
-                "https://gitlab.com/api/v4/projects/{}/merge_requests",
-                encoded_project_path
+                "{}/projects/{}/merge_requests",
+                api_base, encoded_project_path
             );
             let payload = serde_json::json!({
                 "title": message,
@@ -239,5 +246,334 @@ mod tests {
                 "project".to_string()
             ))
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pr_create_no_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        std::process::Command::new("git")
+            .arg("init")
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        let f = dir.path().join("action.yml");
+        std::fs::write(
+            &f,
+            "uses: actions/checkout@1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        std::process::Command::new("git")
+            .arg("add")
+            .arg("action.yml")
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial commit"])
+            .output()
+            .unwrap();
+
+        let remote = std::sync::Arc::new(crate::resolver::provider::MockRemoteProvider::new());
+        let registry = std::sync::Arc::new(crate::resolver::registry::MockRegistryProvider::new());
+        let osv = std::sync::Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
+        let resolver = crate::resolver::Resolver::new(
+            remote,
+            registry,
+            osv,
+            crate::cli::UpgradeStrategy::Latest,
+            10,
+        );
+        let pipeline = Pipeline::new(
+            crate::scanner::Scanner::new(vec![]),
+            resolver,
+            crate::patcher::Patcher::new(
+                crate::patcher::Formatter::new(
+                    crate::cli::OutputFormat::Text,
+                    false,
+                    vec![],
+                    vec![],
+                    true,
+                ),
+                std::sync::Arc::new(crate::patcher::ui::TestUi { response: true }),
+                false,
+            ),
+        );
+
+        let res = pipeline
+            .pr_create(&[f], "pinner/test-branch", "commit msg")
+            .await;
+        assert!(res.is_ok());
+
+        std::env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pr_create_with_changes_github() {
+        let mut server = mockito::Server::new_async().await;
+        let pr_mock = server
+            .mock("POST", "/repos/owner/repo/pulls")
+            .with_status(201)
+            .with_body(r#"{"html_url":"http://github.com/owner/repo/pull/1"}"#)
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        std::process::Command::new("git")
+            .arg("init")
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        let f = dir.path().join("action.yml");
+        std::fs::write(&f, "uses: actions/checkout@v3").unwrap();
+        std::process::Command::new("git")
+            .arg("add")
+            .arg("action.yml")
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial commit"])
+            .output()
+            .unwrap();
+
+        let upstream = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(upstream.path())
+            .output()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", upstream.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        let mut remote = crate::resolver::provider::MockRemoteProvider::new();
+        remote
+            .expect_get_commit_sha()
+            .returning(|_, _, _| Ok(crate::core::DependencyRef::GitSha("newhash".to_string())));
+
+        let registry = std::sync::Arc::new(crate::resolver::registry::MockRegistryProvider::new());
+        let osv = std::sync::Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
+        let resolver = crate::resolver::Resolver::new(
+            std::sync::Arc::new(remote),
+            registry,
+            osv,
+            crate::cli::UpgradeStrategy::Latest,
+            10,
+        );
+        let pipeline = Pipeline::new(
+            crate::scanner::Scanner::new(vec![]),
+            resolver,
+            crate::patcher::Patcher::new(
+                crate::patcher::Formatter::new(
+                    crate::cli::OutputFormat::Text,
+                    false,
+                    vec![],
+                    vec![],
+                    true,
+                ),
+                std::sync::Arc::new(crate::patcher::ui::TestUi { response: true }),
+                false,
+            ),
+        );
+
+        std::env::set_var("GITHUB_TOKEN", "mock_token");
+        std::env::set_var("PINNER_GITHUB_URL", server.url());
+
+        // Set the remote URL to a fake GitHub URL to parse owner/repo
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "set-url",
+                "origin",
+                "git@github.com:owner/repo.git",
+            ])
+            .output()
+            .unwrap();
+
+        // Push should fail because it doesn't match dummy bare repo, but wait!
+        // If we set the push command to push to upstream dummy repo:
+        // Wait, parse_git_remote extracts owner/repo from remote URL.
+        // If we have origin URL as "git@github.com:owner/repo.git", we can run pr_create!
+        // But wait! If we do `git push origin <branch>`, git will try to push to `git@github.com:owner/repo.git`, which might fail if there's no internet/ssh access or credentials.
+        // Wait! How do we make git push succeed?
+        // In git, we can add a push URL to origin that overrides the fetch URL!
+        // `git remote set-url --push origin /path/to/upstream`
+        // Oh my god! This is incredibly brilliant! Git will parse the fetch URL `git@github.com:owner/repo.git` (so owner/repo = owner/repo), but it will actually push to the local `/path/to/upstream` dummy repository!
+        // This is absolute wizardry!
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                upstream.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        let res = pipeline
+            .pr_create(&[f], "pinner/test-branch-2", "commit msg 2")
+            .await;
+        assert!(res.is_ok());
+
+        pr_mock.assert_async().await;
+
+        std::env::set_current_dir(orig_dir).unwrap();
+        std::env::remove_var("GITHUB_TOKEN");
+        std::env::remove_var("PINNER_GITHUB_URL");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pr_create_with_changes_gitlab() {
+        let mut server = mockito::Server::new_async().await;
+        let pr_mock = server
+            .mock("POST", "/projects/owner%2Frepo/merge_requests")
+            .with_status(201)
+            .with_body(r#"{"web_url":"http://gitlab.com/owner/repo/-/merge_requests/1"}"#)
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        std::process::Command::new("git")
+            .arg("init")
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        let f = dir.path().join("action.yml");
+        std::fs::write(&f, "uses: actions/checkout@v3").unwrap();
+        std::process::Command::new("git")
+            .arg("add")
+            .arg("action.yml")
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial commit"])
+            .output()
+            .unwrap();
+
+        let upstream = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(upstream.path())
+            .output()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", upstream.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        let mut remote = crate::resolver::provider::MockRemoteProvider::new();
+        remote
+            .expect_get_commit_sha()
+            .returning(|_, _, _| Ok(crate::core::DependencyRef::GitSha("newhash".to_string())));
+
+        let registry = std::sync::Arc::new(crate::resolver::registry::MockRegistryProvider::new());
+        let osv = std::sync::Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
+        let resolver = crate::resolver::Resolver::new(
+            std::sync::Arc::new(remote),
+            registry,
+            osv,
+            crate::cli::UpgradeStrategy::Latest,
+            10,
+        );
+        let pipeline = Pipeline::new(
+            crate::scanner::Scanner::new(vec![]),
+            resolver,
+            crate::patcher::Patcher::new(
+                crate::patcher::Formatter::new(
+                    crate::cli::OutputFormat::Text,
+                    false,
+                    vec![],
+                    vec![],
+                    true,
+                ),
+                std::sync::Arc::new(crate::patcher::ui::TestUi { response: true }),
+                false,
+            ),
+        );
+
+        std::env::set_var("GITLAB_TOKEN", "mock_token");
+        std::env::set_var("PINNER_GITLAB_URL", server.url());
+
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "set-url",
+                "origin",
+                "https://gitlab.com/owner/repo.git",
+            ])
+            .output()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                upstream.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        let res = pipeline
+            .pr_create(&[f], "pinner/test-branch-gitlab", "commit msg gitlab")
+            .await;
+        assert!(res.is_ok());
+
+        pr_mock.assert_async().await;
+
+        std::env::set_current_dir(orig_dir).unwrap();
+        std::env::remove_var("GITLAB_TOKEN");
+        std::env::remove_var("PINNER_GITLAB_URL");
     }
 }

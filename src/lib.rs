@@ -270,6 +270,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_pipeline_scan() {
         let mut osv_server = mockito::Server::new_async().await;
         std::env::set_var("PINNER_OSV_URL", osv_server.url());
@@ -480,5 +481,178 @@ mod tests {
             .upgrade(std::slice::from_ref(&f), true)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pipeline_scan_empty() {
+        let dir = tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        std::fs::write(".pinner.toml", "yes = true\n").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let osv_client = Arc::new(resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let res = pipeline.scan(&[], true).await;
+        assert!(res.is_ok());
+
+        std::env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pipeline_scan_no_pinner_toml() {
+        let dir = tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let osv_client = Arc::new(resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let res = pipeline.scan(&[], true).await;
+        assert!(res.is_ok());
+        assert!(std::path::Path::new(".pinner.toml").exists());
+
+        std::env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pipeline_scan_oci_provenance() {
+        let dir = tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        std::fs::write(".pinner.toml", "yes = true\n").unwrap();
+        let f = dir.path().join("f.yml");
+        std::fs::write(&f, "jobs:\n  test:\n    steps:\n      - uses: docker://clean-img@sha256:1111111111111111111111111111111111111111111111111111111111111111\n      - uses: docker://compromised-img@sha256:2222222222222222222222222222222222222222222222222222222222222222\n      - uses: docker://fail-img@sha256:3333333333333333333333333333333333333333333333333333333333333333").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let osv_client = Arc::new(resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_verify_provenance()
+            .returning(|name, _digest| {
+                if name == "clean-img" {
+                    Ok(true)
+                } else if name == "compromised-img" {
+                    Ok(false)
+                } else {
+                    Err(crate::error::PinnerError::Api("Registry error".to_string()))
+                }
+            });
+
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(registry),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let res = pipeline.scan(&[f], true).await;
+        assert!(res.is_ok());
+
+        std::env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pipeline_scan_already_vetted() {
+        let dir = tempdir().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        std::fs::write(".pinner.toml", r#"
+yes = true
+vetted = [
+    { reference = "docker://clean-img@sha256:1111111111111111111111111111111111111111111111111111111111111111", tag = "v1" }
+]
+"#).unwrap();
+
+        let f = dir.path().join("f.yml");
+        std::fs::write(&f, "jobs:\n  test:\n    steps:\n      - uses: docker://clean-img@sha256:1111111111111111111111111111111111111111111111111111111111111111").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let osv_client = Arc::new(resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_verify_provenance()
+            .returning(|_, _| Ok(true));
+
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(registry),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let res = pipeline.scan(&[f], true).await;
+        assert!(res.is_ok());
+
+        std::env::set_current_dir(orig_dir).unwrap();
     }
 }

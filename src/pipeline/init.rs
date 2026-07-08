@@ -177,3 +177,85 @@ pinner verify --quiet
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::tempdir;
+
+    #[test]
+    #[serial_test::serial]
+    fn test_init_project_with_selection_0() {
+        let dir = tempdir().unwrap();
+        let orig_dir = env::current_dir().unwrap();
+        env::set_current_dir(dir.path()).unwrap();
+
+        // Create dummy CI paths to hit the detection branches
+        fs::create_dir_all(".github/workflows").unwrap();
+        fs::create_dir_all(".forgejo/workflows").unwrap();
+        fs::write(".gitlab-ci.yml", "").unwrap();
+        fs::write("bitbucket-pipelines.yml", "").unwrap();
+        fs::create_dir_all(".circleci").unwrap();
+        fs::write(".circleci/config.yml", "").unwrap();
+
+        let res = init_project_with_selection(0);
+        assert!(res.is_ok());
+
+        // Config path should exist
+        let config_path = std::path::PathBuf::from(".pinner.toml");
+        assert!(config_path.exists());
+
+        // Running it again should skip creation
+        let res_again = init_project_with_selection(0);
+        assert!(res_again.is_ok());
+
+        env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_init_project_with_selection_1() {
+        let dir = tempdir().unwrap();
+        let orig_dir = env::current_dir().unwrap();
+        env::set_current_dir(dir.path()).unwrap();
+
+        let res = init_project_with_selection(1);
+        assert!(res.is_ok());
+
+        let config_path = std::path::PathBuf::from(".pinner.toml");
+        assert!(config_path.exists());
+
+        env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_install_git_hook_no_git() {
+        let dir = tempdir().unwrap();
+        let orig_dir = env::current_dir().unwrap();
+        env::set_current_dir(dir.path()).unwrap();
+
+        let res = install_git_hook();
+        assert!(res.is_err());
+
+        env::set_current_dir(orig_dir).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_install_git_hook_success() {
+        let dir = tempdir().unwrap();
+        let orig_dir = env::current_dir().unwrap();
+        env::set_current_dir(dir.path()).unwrap();
+
+        fs::create_dir_all(".git/hooks").unwrap();
+        let res = install_git_hook();
+        assert!(res.is_ok());
+
+        let hook_path = std::path::PathBuf::from(".git/hooks/pre-commit");
+        assert!(hook_path.exists());
+
+        env::set_current_dir(orig_dir).unwrap();
+    }
+}

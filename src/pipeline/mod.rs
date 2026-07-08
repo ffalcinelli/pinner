@@ -442,4 +442,75 @@ mod tests {
             .unwrap();
         assert!(!res.is_success());
     }
+
+    #[tokio::test]
+    async fn test_pipeline_verify_all_formats_and_statuses() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v3\nuses: actions/setup-node@1111111111111111111111111111111111111111\nuses: docker://node:18").unwrap();
+
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+
+        // Test with OutputFormat::Github
+        {
+            let scanner = Scanner::new(vec![]);
+            let osv_client = Arc::new(crate::resolver::OsvClient::new(
+                None,
+                false,
+                Duration::from_secs(0),
+            ));
+            let resolver = Resolver::new(
+                Arc::new(MockRemoteProvider::new()),
+                Arc::new(MockRegistryProvider::new()),
+                osv_client,
+                UpgradeStrategy::Latest,
+                1,
+            );
+            let patcher_github = Patcher::new(
+                Formatter::new(
+                    crate::cli::OutputFormat::Github,
+                    false,
+                    vec![],
+                    vec![],
+                    true,
+                ),
+                ui.clone(),
+                false,
+            );
+            let pipeline_github = Pipeline::new(scanner, resolver, patcher_github);
+            let res_github = pipeline_github
+                .verify(std::slice::from_ref(&f), false, true)
+                .await
+                .unwrap();
+            assert!(!res_github.is_success());
+        }
+
+        // Test with OutputFormat::Junit
+        {
+            let scanner = Scanner::new(vec![]);
+            let osv_client = Arc::new(crate::resolver::OsvClient::new(
+                None,
+                false,
+                Duration::from_secs(0),
+            ));
+            let resolver = Resolver::new(
+                Arc::new(MockRemoteProvider::new()),
+                Arc::new(MockRegistryProvider::new()),
+                osv_client,
+                UpgradeStrategy::Latest,
+                1,
+            );
+            let patcher_junit = Patcher::new(
+                Formatter::new(crate::cli::OutputFormat::Junit, false, vec![], vec![], true),
+                ui,
+                false,
+            );
+            let pipeline_junit = Pipeline::new(scanner, resolver, patcher_junit);
+            let res_junit = pipeline_junit
+                .verify(std::slice::from_ref(&f), false, true)
+                .await
+                .unwrap();
+            assert!(!res_junit.is_success());
+        }
+    }
 }
