@@ -23,6 +23,8 @@ pub struct UpdateTask {
     pub current_tag: Option<String>,
     /// Any existing comment following the dependency on the same line.
     pub comment: Option<String>,
+    /// Any consecutive block/header comments immediately preceding the dependency.
+    pub preceding_comments: Option<String>,
     /// The YAML key used to define this dependency (e.g., `uses`, `image`, `pipe`).
     pub key: String,
     /// The CI provider detected for this task.
@@ -47,6 +49,16 @@ impl UpdateTask {
                 if let Some(captures) = VERSION_COMMENT_REGEX.captures(comment) {
                     if let Some(m) = captures.get(1) {
                         return Some(m.as_str().to_string());
+                    }
+                }
+            }
+            if let Some(preceding) = &self.preceding_comments {
+                for line in preceding.lines() {
+                    let trimmed = line.trim();
+                    if let Some(captures) = VERSION_COMMENT_REGEX.captures(trimmed) {
+                        if let Some(m) = captures.get(1) {
+                            return Some(m.as_str().to_string());
+                        }
                     }
                 }
             }

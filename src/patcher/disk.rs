@@ -202,6 +202,7 @@ mod tests {
             action: "actions/checkout".into(),
             current_tag: Some("v3".to_string()),
             comment: None,
+            preceding_comments: None,
             key: "uses".to_string(),
             provider: CiProvider::GitHub,
         };
