@@ -33,7 +33,6 @@ class PinnerNavbar extends HTMLElement {
                 <a href="index.html" class="flex items-center space-x-2 group">
                     <i class="fas fa-thumbtack text-sky-400 text-2xl group-hover:rotate-45 transition-transform"></i>
                     <span class="text-2xl font-bold tracking-tight text-white">Pinner</span>
-                    <span class="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-1.5 py-0.5 rounded font-mono select-none pinner-version-badge">v0.0.12</span>
                 </a>
             </div>
             <div class="flex items-center space-x-4 md:space-x-6 text-sm font-medium">
