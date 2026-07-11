@@ -1,6 +1,7 @@
 //! # Pinner CLI
 //!
 //! The CLI wrapper for the `pinner` library.
+use colored::Colorize;
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
@@ -27,7 +28,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
 
-        eprintln!("Error: {:?}", e);
+        eprintln!("{} {:?}", "error:".red().bold(), e);
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
