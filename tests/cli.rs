@@ -117,5 +117,7 @@ fn test_cli_unhandled_error_styling() {
         .failure()
         .stderr(predicate::str::contains("error:"))
         .stderr(predicate::str::contains("Failed to run pinner"))
-        .stderr(predicate::str::contains("Path not found: non_existent_directory_for_test"));
+        .stderr(predicate::str::contains(
+            "Path not found: non_existent_directory_for_test",
+        ));
 }
