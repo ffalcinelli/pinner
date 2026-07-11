@@ -100,3 +100,22 @@ fn test_cli_json_removed_binary() {
         "unexpected argument '--json' found",
     ));
 }
+
+#[test]
+fn test_cli_unhandled_error_styling() {
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    // Pass a non-existent directory to trigger a top-level unhandled PathNotFound error
+    cmd.arg("--workflows")
+        .arg("non_existent_directory_for_test")
+        .arg("verify");
+
+    // We expect it to fail and print our stylized error: "error: Failed to run pinner"
+    // Note that colored output might include ANSI escape codes, or it might be stripped
+    // by assert_cmd depending on the environment. We check for the presence of the
+    // lowercase "error:" prefix and the error message.
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("error:"))
+        .stderr(predicate::str::contains("Failed to run pinner"))
+        .stderr(predicate::str::contains("Path not found: non_existent_directory_for_test"));
+}
