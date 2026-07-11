@@ -973,6 +973,61 @@ mod tests {
     }
 
     #[test]
+    fn test_format_security_list_fn() {
+        use super::{format_security_list, SecurityEntry};
+
+        let empty: Vec<SecurityEntry> = vec![];
+        assert_eq!(format_security_list(&empty), "[]");
+
+        let single_ref = vec![SecurityEntry {
+            reference: "actions/checkout@sha".to_string(),
+            tag: None,
+            timestamp: None,
+        }];
+        assert_eq!(
+            format_security_list(&single_ref),
+            "[\n    { ref = \"actions/checkout@sha\" }\n]"
+        );
+
+        let single_tag = vec![SecurityEntry {
+            reference: "actions/checkout@sha".to_string(),
+            tag: Some("v4".to_string()),
+            timestamp: None,
+        }];
+        assert_eq!(
+            format_security_list(&single_tag),
+            "[\n    { ref = \"actions/checkout@sha\", tag = \"v4\" }\n]"
+        );
+
+        let single_full = vec![SecurityEntry {
+            reference: "actions/checkout@sha".to_string(),
+            tag: Some("v4".to_string()),
+            timestamp: Some("2024-01-01T00:00:00Z".to_string()),
+        }];
+        assert_eq!(
+            format_security_list(&single_full),
+            "[\n    { ref = \"actions/checkout@sha\", tag = \"v4\", timestamp = \"2024-01-01T00:00:00Z\" }\n]"
+        );
+
+        let multiple = vec![
+            SecurityEntry {
+                reference: "actions/checkout@sha1".to_string(),
+                tag: Some("v3".to_string()),
+                timestamp: None,
+            },
+            SecurityEntry {
+                reference: "actions/setup-node@sha2".to_string(),
+                tag: None,
+                timestamp: Some("2024-01-02T00:00:00Z".to_string()),
+            },
+        ];
+        assert_eq!(
+            format_security_list(&multiple),
+            "[\n    { ref = \"actions/checkout@sha1\", tag = \"v3\" },\n    { ref = \"actions/setup-node@sha2\", timestamp = \"2024-01-02T00:00:00Z\" }\n]"
+        );
+    }
+
+    #[test]
     fn test_merge_cache_settings() {
         let config = Config {
             no_cache: Some(true),
