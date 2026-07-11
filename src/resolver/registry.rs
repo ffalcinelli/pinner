@@ -372,6 +372,13 @@ mod tests {
     use super::*;
     use mockito::Server;
 
+    #[test]
+    fn test_b64_encode() {
+        assert_eq!(b64_encode(""), "");
+        assert_eq!(b64_encode("user:pass"), "dXNlcjpwYXNz");
+        assert_eq!(b64_encode("hello world"), "aGVsbG8gd29ybGQ=");
+    }
+
     #[tokio::test]
     async fn test_resolve_digest_docker_hub() {
         let mut server = Server::new_async().await;
