@@ -48,8 +48,12 @@ To get deep contextual understanding of specific codebase components, refer to t
 - `pin`: Automatically converts all action tags and container images to hashes.
 - `upgrade`: Upgrades actions to newer versions based on the selected strategy (latest, major, minor, or commit).
 - `verify`: Checks if all actions/images are pinned to hashes.
-- `install-hook`: Installs a git pre-commit hook that runs `verify`.
 - `set <action> <hash>`: Forcibly updates a specific action across all workflows to a provided SHA.
+- `install-hook`: Installs a git pre-commit hook that runs `verify`.
+- `init`: Automatically initialize pinner configuration (`.pinner.toml`) for this repository.
+- `export-sbom`: Export a Software Bill of Materials (SBOM) for all dependencies in the workflows.
+- `scan`: Scan workflows and query OSV to identify compromised dependencies, updating `.pinner.toml`.
+- `pr-create`: Automatically commit changes, push to a new branch, and create a Pull Request/Merge Request.
 - `generate-completion`: Generates shell completions for bash, zsh, fish, etc.
 
 ### Global Options

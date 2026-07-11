@@ -24,7 +24,7 @@ The scanner recursively walks target paths looking for workflow configurations. 
 ### Tree-Sitter AST Query
 
 The `USES_QUERY` static query captures:
-1.  Standard key-value pairs (`block_mapping_pair`) where the key matches any of the dependency triggers (`uses`, `image`, `pipe`, `include`, `ref`, `task`, `template`).
+1.  Standard key-value pairs (`block_mapping_pair`) where the key matches any of the dependency triggers (`uses`, `image`, `pipe`, `include`, `ref`, `task`, `template`, `bundle`).
 2.  CircleCI nested `orbs` declarations (nested map parser).
 3.  Line comments (`comment`), which are matched with preceding values to preserve comments.
 
@@ -36,7 +36,7 @@ The `USES_QUERY` static query captures:
     (plain_scalar (string_scalar) @key)
   ]
   value: (_) @value
-  (#match? @key "^(uses|pipe|image|include|ref|task|template)$"))
+  (#match? @key "^(uses|pipe|image|include|ref|task|template|bundle)$"))
 
 ; Capture CircleCI Orbs which have a nested structure: orbs -> name -> value.
 (block_mapping_pair
@@ -76,6 +76,8 @@ The system determines the CI provider via the file path (e.g., `.github/workflow
 | **Azure DevOps**| `azure-pipelines` | `task`, `template`, `image` | Azure Task/Template or OCI Image |
 | **Forgejo / Gitea**| `.forgejo/workflows`, `.gitea/workflows` | `uses`, `image` | Forgejo Action or OCI Image |
 | **AWS CodeBuild**| `buildspec` | `image` | OCI Image |
+| **Tekton** | `tekton` | `bundle`, `image` | Tekton Bundle or OCI Image |
+| **Kubernetes** | `kubernetes`, `k8s`, pod/deployment config file names | `image` | OCI Image |
 
 ---
 

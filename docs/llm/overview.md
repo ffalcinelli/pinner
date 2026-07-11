@@ -39,8 +39,8 @@ These models represent the pure domain of the project and are decoupled from sid
 
 *   **`DependencyName`** (`src/core/dependency.rs`): Represents the repository or image namespace (e.g., `actions/checkout` or `library/ubuntu`).
 *   **`DependencyRef`** (`src/core/dependency.rs`): Represents an immutable commit SHA-1 or a container registry image digest (sha256).
-*   **`CiProvider`** (`src/core/dependency.rs`): Enum for CI platforms (`GitHub`, `GitLab`, `Forgejo`, `Bitbucket`, `CircleCI`, `AzureDevOps`, etc.).
-*   **`UpdateTask`** (`src/core/update.rs`): Extracted location containing file path, byte offsets (`start`, `end`), line/column numbers, current tag, trailing comments, CI provider, and the matching YAML key (`uses`, `image`, etc.).
+*   **`CiProvider`** (`src/core/dependency.rs`): Enum for CI platforms (`GitHub`, `GitLab`, `Forgejo`, `Gitea`, `Bitbucket`, `CircleCI`, `AzureDevOps`, `AwsCodeBuild`, `Tekton`, `Kubernetes`, etc.).
+*   **`UpdateTask`** (`src/core/update.rs`): Extracted location containing file path, byte offsets (`start`, `end`), line/column numbers, current tag, trailing comments, preceding block/header comments (`preceding_comments`), CI provider, and the matching YAML key (`uses`, `image`, etc.).
 *   **`UpdateResult`** (`src/core/update.rs`): Struct containing the original task, the resolved immutable `DependencyRef` (SHA), and the new version tag (to be put in comments).
 
 ---
@@ -73,7 +73,8 @@ src/
 │   ├── bitbucket.rs   # Bitbucket API client.
 │   ├── azure.rs       # Azure DevOps/Pipelines template/task resolver.
 │   ├── forgejo.rs     # Forgejo/Gitea API client.
-│   └── registry.rs    # OCI container registry client for fetching digests.
+│   ├── registry.rs    # OCI container registry client for fetching digests.
+│   └── osv.rs         # OSV vulnerability client.
 └── patcher/           # Patching Layer: Modifies source files and formats output.
     ├── mod.rs
     ├── mutator.rs     # Surgical byte-offset replacements on file contents.
