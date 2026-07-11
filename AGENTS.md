@@ -108,3 +108,5 @@ When making changes, please adhere to these design rules:
    - Use `mockall` for trait mocking in unit tests.
    - Integration tests in `tests/` must use `mockito` for API interception and `tempfile::tempdir()` for filesystem isolation.
    - Annotate integration tests with `#[serial_test::serial]` to prevent async concurrency collisions.
+6. **Documentation & Markdown Update**: Whenever you modify the codebase (such as adding/modifying subcommands, altering pipeline behavior, or changing configuration parameters), you must always update the corresponding markdown documentation (e.g., `README.md`, `docs/`, `docs/llm/`) to keep all documentation accurate and synchronized.
+

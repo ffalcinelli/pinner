@@ -3,7 +3,7 @@
 Welcome, Jules! This file provides the project context, design architecture, development commands, and coding guidelines tailored for your tasks in the `pinner` repository.
 
 > [!NOTE]
-> For the universal machine-readable context file, see [AGENTS.md](file:///home/fabio/Workspace/pinner/AGENTS.md).
+> For the universal machine-readable context file, see [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -72,3 +72,5 @@ cargo fmt -- --check
 - **Maintain comment annotations**. Keep the original version tag as a trailing comment: e.g. `actions/checkout@<sha> # v3`.
 - **Use traits for dependency injection**. `RemoteProvider` and `RegistryProvider` are mocked with `mockall` for testing.
 - **Isolate tests**. Integration tests must use temporary directories (`tempfile::tempdir()`), intercept HTTP requests with Mockito (`mockito::Server::new_async()`), and run sequentially using the `#[serial_test::serial]` attribute.
+- **Update Markdown and Docs**: Always update any relevant markdown documentation (such as `README.md`) and the documents in `docs/` and `docs/llm/` directories whenever modifying codebase structure, subcommands, configuration parameters, or behavior to prevent documentation from going stale.
+

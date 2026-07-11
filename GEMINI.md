@@ -2,11 +2,12 @@
 
 ## Detailed LLM Context Documents
 To get deep contextual understanding of specific codebase components, refer to these dedicated documentation files:
-*   **[Architecture & Domain Pipeline](file:///home/fabio/Workspace/pinner/docs/llm/overview.md)**: High-level system goals, core pipeline stages, and file mappings.
-*   **[Scanner & Tree-Sitter Parser](file:///home/fabio/Workspace/pinner/docs/llm/scanner.md)**: File traversal details, YAML parsing queries, and trailing comment mapping logic.
-*   **[Resolver & Network Providers](file:///home/fabio/Workspace/pinner/docs/llm/resolver.md)**: Trait specifications, the `CachedProvider` wrapper, and OCI image digest fetching.
-*   **[Patcher & Surgical Mutation](file:///home/fabio/Workspace/pinner/docs/llm/patcher.md)**: Safe edit sequencing via reverse offset sorting, comment preservation, and security tag diff rendering.
-*   **[Developer & Extension Guide](file:///home/fabio/Workspace/pinner/docs/llm/development.md)**: Building, linting, unit & integration test strategies, and guidelines for adding new providers.
+*   **[Architecture & Domain Pipeline](docs/llm/overview.md)**: High-level system goals, core pipeline stages, and file mappings.
+*   **[Scanner & Tree-Sitter Parser](docs/llm/scanner.md)**: File traversal details, YAML parsing queries, and trailing comment mapping logic.
+*   **[Resolver & Network Providers](docs/llm/resolver.md)**: Trait specifications, the `CachedProvider` wrapper, and OCI image digest fetching.
+*   **[Patcher & Surgical Mutation](docs/llm/patcher.md)**: Safe edit sequencing via reverse offset sorting, comment preservation, and security tag diff rendering.
+*   **[Developer & Extension Guide](docs/llm/development.md)**: Building, linting, unit & integration test strategies, and guidelines for adding new providers.
+
 
 ---
 
@@ -68,3 +69,4 @@ To get deep contextual understanding of specific codebase components, refer to t
 - **Safety**: API requests include mandatory User-Agents and follow retry policies.
 - **Tag Preservation**: Replacements must append the original tag as a comment (e.g., `@hash # v2`).
 - **Error Handling**: Uses `anyhow::Result` for application flow and `PinnerError` for specific failure modes.
+- **Documentation**: Always update the corresponding markdown files (e.g., `README.md`) and the files under `docs/` and `docs/llm/` when codebase behaviors, commands, features, or structures are changed to ensure documentation stays synchronized.
