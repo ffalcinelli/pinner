@@ -99,6 +99,16 @@ impl<T: RemoteProvider> CachedProvider<T> {
             ttl,
         }
     }
+
+    /// Reads from the disk cache, returning the decoded value if it's within TTL.
+    async fn try_read_disk_cache(&self, disk_key: &str) -> Option<String> {
+        if let Some(path) = &self.disk_cache_path {
+            if let Ok(data) = cacache::read(path, disk_key).await {
+                return decode_cached_value(&data, self.ttl);
+            }
+        }
+        None
+    }
 }
 
 pub(crate) fn encode_cached_value(value: &str) -> String {
@@ -142,14 +152,10 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
 
             // Try disk cache
             let disk_key = format!("sha:{}:{}:{}", action, tag, key);
-            if let Some(path) = &self.disk_cache_path {
-                if let Ok(data) = cacache::read(path, &disk_key).await {
-                    if let Some(val) = decode_cached_value(&data, self.ttl) {
-                        let sha = DependencyRef::from(val);
-                        self.sha_cache.insert(mem_key, sha.clone()).await;
-                        return Ok(sha);
-                    }
-                }
+            if let Some(val) = self.try_read_disk_cache(&disk_key).await {
+                let sha = DependencyRef::from(val);
+                self.sha_cache.insert(mem_key, sha.clone()).await;
+                return Ok(sha);
             }
         }
 
@@ -187,13 +193,9 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
 
             // Try disk cache
             let disk_key = format!("release:{}:{}", action, key);
-            if let Some(path) = &self.disk_cache_path {
-                if let Ok(data) = cacache::read(path, &disk_key).await {
-                    if let Some(val) = decode_cached_value(&data, self.ttl) {
-                        self.release_cache.insert(action.clone(), val.clone()).await;
-                        return Ok(val);
-                    }
-                }
+            if let Some(val) = self.try_read_disk_cache(&disk_key).await {
+                self.release_cache.insert(action.clone(), val.clone()).await;
+                return Ok(val);
             }
         }
 
@@ -246,16 +248,12 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
 
             // Try disk cache
             let disk_key = format!("branch:{}:{}", action, key);
-            if let Some(path) = &self.disk_cache_path {
-                if let Ok(data) = cacache::read(path, &disk_key).await {
-                    if let Some(val) = decode_cached_value(&data, self.ttl) {
-                        let branch = BranchName(val);
-                        self.branch_cache
-                            .insert(action.clone(), branch.clone())
-                            .await;
-                        return Ok(branch);
-                    }
-                }
+            if let Some(val) = self.try_read_disk_cache(&disk_key).await {
+                let branch = BranchName(val);
+                self.branch_cache
+                    .insert(action.clone(), branch.clone())
+                    .await;
+                return Ok(branch);
             }
         }
 
