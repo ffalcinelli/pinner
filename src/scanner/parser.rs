@@ -379,11 +379,7 @@ fn create_task(
         (a, Some(t))
     } else {
         let is_docker = value.starts_with("docker://");
-        let path_to_check = if is_docker {
-            value.strip_prefix("docker://").unwrap()
-        } else {
-            value.as_str()
-        };
+        let path_to_check = value.strip_prefix("docker://").unwrap_or(value.as_str());
 
         if let Some(last_colon) = path_to_check.rfind(':') {
             let after_colon = &path_to_check[last_colon + 1..];
