@@ -122,7 +122,7 @@ impl Pipeline {
         run_git(&["commit", "-m", message])?;
 
         // 8. Push branch
-        run_git(&["push", "origin", branch, "--force"])?;
+        run_git(&["push", "origin", "--force", "--", branch])?;
 
         // 9. API Request to open PR
         let client = reqwest::Client::new();
