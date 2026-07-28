@@ -54,7 +54,7 @@ cargo-husky = { version = "1", default-features = false, features = ["precommit-
 tempfile = "3.10"
 mockito = "1.2"
 criterion = "0.8.2"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 assert_cmd = "2.0"
 predicates = "3.1"
 mockall = "0.15"
