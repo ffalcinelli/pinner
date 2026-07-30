@@ -65,3 +65,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 [[bench]]
 name = "pinner_bench"
 harness = false
+
+[[bench]]
+name = "formatter_bench"
+harness = false

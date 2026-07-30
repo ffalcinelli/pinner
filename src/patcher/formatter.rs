@@ -3,6 +3,7 @@ use crate::core::UpdateResult;
 use colored::Colorize;
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
+use std::fmt::Write;
 
 /// Represents the summary of updates in JSON format.
 #[derive(Serialize)]
@@ -130,7 +131,7 @@ impl Formatter {
                     }
                 }
             }
-            out.push_str(&format!("{}{}", sign, line_str));
+            write!(out, "{}{}", sign, line_str).unwrap();
         }
         out
     }
@@ -146,22 +147,22 @@ impl Formatter {
         let diff = TextDiff::from_words(old_trimmed, new_trimmed);
 
         // First line: removals
-        out.push_str(&format!("  {} ", "-".red()));
+        write!(out, "  {} ", "-".red()).unwrap();
         for change in diff.iter_all_changes() {
             match change.tag() {
-                ChangeTag::Delete => out.push_str(&format!("{}", change.value().red())),
-                ChangeTag::Equal => out.push_str(&format!("{}", change.value().dimmed())),
+                ChangeTag::Delete => write!(out, "{}", change.value().red()).unwrap(),
+                ChangeTag::Equal => write!(out, "{}", change.value().dimmed()).unwrap(),
                 ChangeTag::Insert => {}
             }
         }
         out.push('\n');
 
         // Second line: additions
-        out.push_str(&format!("  {} ", "+".green()));
+        write!(out, "  {} ", "+".green()).unwrap();
         for change in diff.iter_all_changes() {
             match change.tag() {
-                ChangeTag::Insert => out.push_str(&format!("{}", change.value().green().bold())),
-                ChangeTag::Equal => out.push_str(&format!("{}", change.value().yellow())),
+                ChangeTag::Insert => write!(out, "{}", change.value().green().bold()).unwrap(),
+                ChangeTag::Equal => write!(out, "{}", change.value().yellow()).unwrap(),
                 ChangeTag::Delete => {}
             }
         }
