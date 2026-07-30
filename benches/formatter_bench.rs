@@ -1,8 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use pinner::cli::OutputFormat;
 use pinner::core::{DependencyRef, UpdateResult, UpdateTask};
 use pinner::patcher::formatter::{Formatter, HashSecurityStatus};
 use std::path::PathBuf;
+use std::hint::black_box;
 
 fn bench_format_inline_diff(c: &mut Criterion) {
     let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
