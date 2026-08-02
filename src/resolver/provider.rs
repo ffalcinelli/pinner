@@ -716,6 +716,29 @@ mod tests {
     use reqwest::{Response, StatusCode};
 
     #[test]
+    fn test_unified_provider_config_default() {
+        let config = UnifiedProviderConfig::default();
+
+        assert_eq!(config.github_url, "https://api.github.com");
+        assert_eq!(config.github_token, None);
+
+        assert_eq!(config.bitbucket_url, "https://api.bitbucket.org/2.0");
+        assert_eq!(config.bitbucket_token, None);
+
+        assert_eq!(config.gitlab_url, "https://gitlab.com/api/v4");
+        assert_eq!(config.gitlab_token, None);
+
+        assert_eq!(config.forgejo_url, "https://codeberg.org/api/v1");
+        assert_eq!(config.forgejo_token, None);
+
+        assert_eq!(config.circleci_url, "https://circleci.com/api/v2");
+        assert_eq!(config.circleci_token, None);
+
+        assert_eq!(config.disk_cache_path, None);
+        assert!(!config.offline);
+    }
+
+    #[test]
     fn test_action_name_display_and_from() {
         let name = DependencyName::from("actions/checkout");
         assert_eq!(format!("{}", name), "actions/checkout");
