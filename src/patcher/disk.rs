@@ -400,4 +400,61 @@ mod tests {
         let res = patcher.apply_patches(vec![patch]).await;
         assert!(res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_apply_changes_success() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, true);
+
+        let path = PathBuf::from("dummy.yml");
+        let content = "uses: a/b@v1".to_string();
+        let mut file_contents = HashMap::new();
+        file_contents.insert(path.clone(), content.clone());
+
+        let result = UpdateResult {
+            task: UpdateTask {
+                path: path.clone(),
+                start: 6,
+                end: 12,
+                action: "a/b".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            action: "a/b".into(),
+            path: path.clone(),
+            old_tag: Some("v1".to_string()),
+            new_sha: DependencyRef::GitSha("sha1".to_string()),
+            new_tag: Some("v1".to_string()),
+        };
+
+        let res = patcher.apply_changes(vec![result], file_contents).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_file_not_found() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, true);
+
+        let path = PathBuf::from("notfound.yml");
+        let file_contents = HashMap::new();
+
+        let result = UpdateResult {
+            task: UpdateTask {
+                path: path.clone(),
+                ..Default::default()
+            },
+            action: "a".into(),
+            path: path.clone(),
+            old_tag: None,
+            new_sha: DependencyRef::GitSha("sha".to_string()),
+            new_tag: None,
+        };
+
+        let res = patcher.apply_changes(vec![result], file_contents).await;
+        assert!(res.is_err());
+    }
 }
