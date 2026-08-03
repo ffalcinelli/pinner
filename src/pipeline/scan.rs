@@ -333,8 +333,8 @@ impl Pipeline {
             if !new_clean_deps.is_empty() {
                 if yes {
                     clean_to_vet = new_clean_deps
-                        .iter()
-                        .map(|(action, sha, _, tag)| (action.clone(), sha.clone(), tag.clone()))
+                        .into_iter()
+                        .map(|(action, sha, _, tag)| (action, sha, tag))
                         .collect();
                 } else {
                     let items: Vec<String> = new_clean_deps
@@ -349,10 +349,13 @@ impl Pipeline {
                         .defaults(&vec![true; items.len()])
                         .interact()
                         .unwrap_or_default();
-                    for idx in chosen {
-                        let dep = &new_clean_deps[idx];
-                        clean_to_vet.push((dep.0.clone(), dep.1.clone(), dep.3.clone()));
-                    }
+
+                    clean_to_vet = new_clean_deps
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(idx, _)| chosen.contains(idx))
+                        .map(|(_, (action, sha, _, tag))| (action, sha, tag))
+                        .collect();
                 }
             }
         }
@@ -373,8 +376,8 @@ impl Pipeline {
             if !new_compromised_deps.is_empty() {
                 if yes {
                     compromised_to_blacklist = new_compromised_deps
-                        .iter()
-                        .map(|(action, sha, _, _, tag)| (action.clone(), sha.clone(), tag.clone()))
+                        .into_iter()
+                        .map(|(action, sha, _, _, tag)| (action, sha, tag))
                         .collect();
                 } else {
                     let items: Vec<String> = new_compromised_deps
@@ -387,14 +390,13 @@ impl Pipeline {
                         .defaults(&vec![true; items.len()])
                         .interact()
                         .unwrap_or_default();
-                    for idx in chosen {
-                        let dep = &new_compromised_deps[idx];
-                        compromised_to_blacklist.push((
-                            dep.0.clone(),
-                            dep.1.clone(),
-                            dep.4.clone(),
-                        ));
-                    }
+
+                    compromised_to_blacklist = new_compromised_deps
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(idx, _)| chosen.contains(idx))
+                        .map(|(_, (action, sha, _, _, tag))| (action, sha, tag))
+                        .collect();
                 }
             }
         }
