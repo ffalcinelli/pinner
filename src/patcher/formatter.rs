@@ -364,4 +364,23 @@ mod tests {
         formatter_json.print_results(std::slice::from_ref(&res));
         formatter_md.print_results(std::slice::from_ref(&res));
     }
+
+    #[test]
+    fn test_json_output_serialization() {
+        let res = UpdateResult {
+            task: UpdateTask::default(),
+            action: "actions/checkout".into(),
+            path: PathBuf::from("f.yml"),
+            old_tag: Some("v2".to_string()),
+            new_sha: DependencyRef::GitSha("hash3".to_string()),
+            new_tag: Some("v2".to_string()),
+        };
+        let output = JsonOutput {
+            updates: vec![res],
+        };
+        let serialized = serde_json::to_string(&output).unwrap();
+        assert!(serialized.contains("actions/checkout"));
+        assert!(serialized.contains("hash3"));
+        assert!(serialized.contains("f.yml"));
+    }
 }
