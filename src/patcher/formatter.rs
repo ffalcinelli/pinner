@@ -375,9 +375,7 @@ mod tests {
             new_sha: DependencyRef::GitSha("hash3".to_string()),
             new_tag: Some("v2".to_string()),
         };
-        let output = JsonOutput {
-            updates: vec![res],
-        };
+        let output = JsonOutput { updates: vec![res] };
         let serialized = serde_json::to_string(&output).unwrap();
         assert!(serialized.contains("actions/checkout"));
         assert!(serialized.contains("hash3"));
