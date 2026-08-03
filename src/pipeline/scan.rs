@@ -111,109 +111,139 @@ impl Pipeline {
 
         use futures::StreamExt;
 
-        let mut stream = futures::stream::iter(unique_targets.into_iter().map(|(action, sha_str, new_tag, upgrade_cand_str, _task)| {
-            let resolver = &self.resolver;
-            async move {
-                let action_str = action.to_string();
+        let mut stream = futures::stream::iter(unique_targets.into_iter().map(
+            |(action, sha_str, new_tag, upgrade_cand_str, _task)| {
+                let resolver = &self.resolver;
+                async move {
+                    let action_str = action.to_string();
 
-                // Extract tag version (if not a commit SHA)
-                let is_sha = |s: &str| s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit());
-                let tag_version = if let Some(ref t) = new_tag {
-                    if is_sha(t) {
+                    // Extract tag version (if not a commit SHA)
+                    let is_sha =
+                        |s: &str| s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit());
+                    let tag_version = if let Some(ref t) = new_tag {
+                        if is_sha(t) {
+                            None
+                        } else {
+                            Some(t.clone())
+                        }
+                    } else {
                         None
-                    } else {
-                        Some(t.clone())
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                // Only query Git SHAs in OSV
-                let is_git_sha = sha_str.len() == 40 && sha_str.chars().all(|c| c.is_ascii_hexdigit());
-                if !is_git_sha {
-                    // Check provenance for OCI container images or other non-git registries
-                    let mut reasons = Vec::new();
+                    // Only query Git SHAs in OSV
+                    let is_git_sha =
+                        sha_str.len() == 40 && sha_str.chars().all(|c| c.is_ascii_hexdigit());
+                    if !is_git_sha {
+                        // Check provenance for OCI container images or other non-git registries
+                        let mut reasons = Vec::new();
+                        let mut is_compromised = false;
+
+                        let image_name =
+                            action_str.strip_prefix("docker://").unwrap_or(&action_str);
+
+                        match resolver
+                            .registry
+                            .verify_provenance(image_name, &sha_str)
+                            .await
+                        {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                is_compromised = true;
+                                reasons.push((
+                                    "PROVENANCE_FAIL".to_string(),
+                                    "Provenance signature verification failed".to_string(),
+                                    true,
+                                ));
+                            }
+                            Err(e) => {
+                                return Err((image_name.to_string(), sha_str, e.to_string()));
+                            }
+                        }
+
+                        return Ok(if reasons.is_empty() {
+                            (
+                                Some((action_str, sha_str, upgrade_cand_str, tag_version)),
+                                None,
+                                None,
+                            )
+                        } else if is_compromised {
+                            (
+                                None,
+                                Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)),
+                                None,
+                            )
+                        } else {
+                            (
+                                None,
+                                None,
+                                Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)),
+                            )
+                        });
+                    }
+
+                    #[derive(serde::Deserialize)]
+                    struct OsvResponse {
+                        vulns: Option<Vec<OsvVulnerability>>,
+                    }
+
+                    #[derive(serde::Deserialize, Clone)]
+                    struct OsvVulnerability {
+                        id: String,
+                        summary: Option<String>,
+                        details: Option<String>,
+                    }
+
                     let mut is_compromised = false;
+                    let mut reasons = Vec::new();
 
-                    let image_name = action_str.strip_prefix("docker://").unwrap_or(&action_str);
+                    if let Ok(Some(body)) = resolver.check_vulnerabilities(&sha_str).await {
+                        if let Ok(osv_resp) = serde_json::from_str::<OsvResponse>(&body) {
+                            if let Some(vulns) = osv_resp.vulns {
+                                for vuln in vulns {
+                                    let id = vuln.id;
+                                    let summary = vuln.summary.clone().unwrap_or_default();
+                                    let details = vuln.details.clone().unwrap_or_default();
 
-                    match resolver
-                        .registry
-                        .verify_provenance(image_name, &sha_str)
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            is_compromised = true;
-                            reasons.push((
-                                "PROVENANCE_FAIL".to_string(),
-                                "Provenance signature verification failed".to_string(),
-                                true,
-                            ));
-                        }
-                        Err(e) => {
-                            return Err((image_name.to_string(), sha_str, e.to_string()));
-                        }
-                    }
+                                    let text = format!("{} {}", summary, details).to_lowercase();
+                                    let is_comp = text.contains("malicious")
+                                        || text.contains("compromised")
+                                        || text.contains("backdoor")
+                                        || text.contains("malware")
+                                        || text.contains("hijacked")
+                                        || text.contains("exfiltrat");
 
-                    return Ok(if reasons.is_empty() {
-                        (Some((action_str, sha_str, upgrade_cand_str, tag_version)), None, None)
-                    } else if is_compromised {
-                        (None, Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)), None)
-                    } else {
-                        (None, None, Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)))
-                    });
-                }
-
-                #[derive(serde::Deserialize)]
-                struct OsvResponse {
-                    vulns: Option<Vec<OsvVulnerability>>,
-                }
-
-                #[derive(serde::Deserialize, Clone)]
-                struct OsvVulnerability {
-                    id: String,
-                    summary: Option<String>,
-                    details: Option<String>,
-                }
-
-                let mut is_compromised = false;
-                let mut reasons = Vec::new();
-
-                if let Ok(Some(body)) = resolver.check_vulnerabilities(&sha_str).await {
-                    if let Ok(osv_resp) = serde_json::from_str::<OsvResponse>(&body) {
-                        if let Some(vulns) = osv_resp.vulns {
-                            for vuln in vulns {
-                                let id = vuln.id;
-                                let summary = vuln.summary.clone().unwrap_or_default();
-                                let details = vuln.details.clone().unwrap_or_default();
-
-                                let text = format!("{} {}", summary, details).to_lowercase();
-                                let is_comp = text.contains("malicious")
-                                    || text.contains("compromised")
-                                    || text.contains("backdoor")
-                                    || text.contains("malware")
-                                    || text.contains("hijacked")
-                                    || text.contains("exfiltrat");
-
-                                if is_comp {
-                                    is_compromised = true;
+                                    if is_comp {
+                                        is_compromised = true;
+                                    }
+                                    reasons.push((id, summary, is_comp));
                                 }
-                                reasons.push((id, summary, is_comp));
                             }
                         }
                     }
-                }
 
-                Ok(if reasons.is_empty() {
-                    (Some((action_str, sha_str, upgrade_cand_str, tag_version)), None, None)
-                } else if is_compromised {
-                    (None, Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)), None)
-                } else {
-                    (None, None, Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)))
-                })
-            }
-        })).buffer_unordered(10);
+                    Ok(if reasons.is_empty() {
+                        (
+                            Some((action_str, sha_str, upgrade_cand_str, tag_version)),
+                            None,
+                            None,
+                        )
+                    } else if is_compromised {
+                        (
+                            None,
+                            Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)),
+                            None,
+                        )
+                    } else {
+                        (
+                            None,
+                            None,
+                            Some((action_str, sha_str, reasons, upgrade_cand_str, tag_version)),
+                        )
+                    })
+                }
+            },
+        ))
+        .buffer_unordered(10);
 
         while let Some(res) = stream.next().await {
             match res {
