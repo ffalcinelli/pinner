@@ -1028,6 +1028,31 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_all() {
+        let mut base = Config {
+            workflows: Some(vec![PathBuf::from("base_wf")]),
+            yes: Some(false),
+            quiet: Some(true),
+            verbose: None,
+            ..Default::default()
+        };
+
+        let other = Config {
+            workflows: Some(vec![PathBuf::from("other_wf")]),
+            yes: Some(true),
+            verbose: Some(true),
+            ..Default::default()
+        };
+
+        base.merge_all(other);
+
+        assert_eq!(base.workflows, Some(vec![PathBuf::from("other_wf")]));
+        assert_eq!(base.yes, Some(true));
+        assert_eq!(base.quiet, Some(true));
+        assert_eq!(base.verbose, Some(true));
+    }
+
+    #[test]
     fn test_merge_cache_settings() {
         let config = Config {
             no_cache: Some(true),
