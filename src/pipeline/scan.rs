@@ -497,3 +497,49 @@ impl Pipeline {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // use super::*;
+    use crate::cli::UpgradeStrategy;
+    use crate::patcher::{Formatter, Patcher};
+    use crate::pipeline::Pipeline;
+    use crate::resolver::provider::MockRemoteProvider;
+    use crate::resolver::registry::MockRegistryProvider;
+    use crate::resolver::{OsvClient, Resolver};
+    use crate::scanner::Scanner;
+    use std::fs;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_pipeline_scan_no_deps() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let osv_client = Arc::new(OsvClient::new(None, false, Duration::from_secs(0)));
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+
+        // Use dry_run=true as per memory instructions
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, false, vec![], vec![], true),
+            ui,
+            true,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let res = pipeline.scan(std::slice::from_ref(&f), true).await;
+
+        assert!(res.is_ok());
+    }
+}
