@@ -37,7 +37,7 @@ struct BranchGuard {
 impl Drop for BranchGuard {
     fn drop(&mut self) {
         let _ = std::process::Command::new("git")
-            .args(["checkout", &self.original_branch])
+            .args(["switch", "--", &self.original_branch])
             .output();
     }
 }
@@ -113,11 +113,11 @@ impl Pipeline {
             .unwrap_or_else(|| "main".to_string());
 
         // 6. Checkout to the new branch
-        run_git(&["checkout", "-B", branch])?;
+        run_git(&["switch", "-C", branch])?;
 
         // 7. Stage and commit
         for file in &modified_files {
-            run_git(&["add", file])?;
+            run_git(&["add", "--", file])?;
         }
         run_git(&["commit", "-m", message])?;
 
