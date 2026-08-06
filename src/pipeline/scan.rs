@@ -321,7 +321,9 @@ impl Pipeline {
 
         let local_config = if std::path::Path::new(".pinner.toml").exists() {
             let content = std::fs::read_to_string(".pinner.toml")?;
-            toml::from_str::<crate::config::Config>(&content).unwrap_or_default()
+            toml::from_str::<crate::config::Config>(&content).map_err(|e| {
+                crate::error::PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e))
+            })?
         } else {
             crate::config::Config::default()
         };
@@ -437,7 +439,12 @@ impl Pipeline {
         if !clean_to_vet.is_empty() || !compromised_to_blacklist.is_empty() {
             let mut config = if std::path::Path::new(".pinner.toml").exists() {
                 let content = std::fs::read_to_string(".pinner.toml")?;
-                toml::from_str::<crate::config::Config>(&content).unwrap_or_default()
+                toml::from_str::<crate::config::Config>(&content).map_err(|e| {
+                    crate::error::PinnerError::Config(format!(
+                        "Failed to parse .pinner.toml: {}",
+                        e
+                    ))
+                })?
             } else {
                 crate::config::Config::default()
             };
