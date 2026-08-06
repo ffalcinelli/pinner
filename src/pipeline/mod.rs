@@ -519,7 +519,9 @@ mod tests {
     }
 
     impl crate::patcher::ui::UserInterface for MockPromptUi {
-        fn confirm_patch(&self, _path: &std::path::Path) -> bool { true }
+        fn confirm_patch(&self, _path: &std::path::Path) -> bool {
+            true
+        }
         fn report_success(&self, _path: &std::path::Path) {}
         fn report_skipped(&self, _path: &std::path::Path) {}
         fn prompt_upgrade(
@@ -560,7 +562,9 @@ mod tests {
         );
 
         let called = std::sync::Arc::new(std::sync::Mutex::new(false));
-        let ui = Arc::new(MockPromptUi { called: called.clone() });
+        let ui = Arc::new(MockPromptUi {
+            called: called.clone(),
+        });
 
         let patcher = Patcher::new(
             Formatter::new(crate::cli::OutputFormat::Text, false, vec![], vec![], true),
@@ -569,11 +573,20 @@ mod tests {
         );
         let pipeline = Pipeline::new(scanner, resolver, patcher);
 
-        pipeline.upgrade(std::slice::from_ref(&f), false).await.unwrap();
+        pipeline
+            .upgrade(std::slice::from_ref(&f), false)
+            .await
+            .unwrap();
 
-        assert!(!*called.lock().unwrap(), "prompt_upgrade should not be called in non-interactive mode");
+        assert!(
+            !*called.lock().unwrap(),
+            "prompt_upgrade should not be called in non-interactive mode"
+        );
         let content = fs::read_to_string(&f).unwrap();
-        assert!(content.contains("v4sha"), "File should be patched with the new sha");
+        assert!(
+            content.contains("v4sha"),
+            "File should be patched with the new sha"
+        );
     }
 
     #[tokio::test]
@@ -605,7 +618,9 @@ mod tests {
         );
 
         let called = std::sync::Arc::new(std::sync::Mutex::new(false));
-        let ui = Arc::new(MockPromptUi { called: called.clone() });
+        let ui = Arc::new(MockPromptUi {
+            called: called.clone(),
+        });
 
         let patcher = Patcher::new(
             Formatter::new(crate::cli::OutputFormat::Text, false, vec![], vec![], true),
@@ -614,10 +629,19 @@ mod tests {
         );
         let pipeline = Pipeline::new(scanner, resolver, patcher);
 
-        pipeline.upgrade(std::slice::from_ref(&f), true).await.unwrap();
+        pipeline
+            .upgrade(std::slice::from_ref(&f), true)
+            .await
+            .unwrap();
 
-        assert!(*called.lock().unwrap(), "prompt_upgrade should be called in interactive mode");
+        assert!(
+            *called.lock().unwrap(),
+            "prompt_upgrade should be called in interactive mode"
+        );
         let content = fs::read_to_string(&f).unwrap();
-        assert!(content.contains("v4sha"), "File should be patched with the new sha");
+        assert!(
+            content.contains("v4sha"),
+            "File should be patched with the new sha"
+        );
     }
 }
