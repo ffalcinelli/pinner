@@ -483,7 +483,18 @@ impl ProviderRegistry {
         };
 
         // GitHub is the primary provider and also handles Azure tasks (which are hosted on GitHub).
-        registry.register(
+        registry.register_github(&config)?;
+        registry.register_azure(&config)?;
+        registry.register_bitbucket(&config)?;
+        registry.register_gitlab(&config)?;
+        registry.register_forgejo(&config)?;
+        registry.register_circleci(&config)?;
+
+        Ok(registry)
+    }
+
+    fn register_github(&mut self, config: &UnifiedProviderConfig) -> Result<(), PinnerError> {
+        self.register(
             Arc::new(ReqwestGithubProvider::new(
                 config.github_url.clone(),
                 config.github_token.clone(),
@@ -494,8 +505,11 @@ impl ProviderRegistry {
                 variant: "GitHub".to_string(),
             },
         );
+        Ok(())
+    }
 
-        registry.register(
+    fn register_azure(&mut self, config: &UnifiedProviderConfig) -> Result<(), PinnerError> {
+        self.register(
             Arc::new(ReqwestAzureProvider::new(ReqwestGithubProvider::new(
                 config.github_url.clone(),
                 config.github_token.clone(),
@@ -506,11 +520,14 @@ impl ProviderRegistry {
                 variant: "Azure".to_string(),
             },
         );
+        Ok(())
+    }
 
-        registry.register(
+    fn register_bitbucket(&mut self, config: &UnifiedProviderConfig) -> Result<(), PinnerError> {
+        self.register(
             Arc::new(ReqwestBitbucketProvider::new(
-                config.bitbucket_url,
-                config.bitbucket_token,
+                config.bitbucket_url.clone(),
+                config.bitbucket_token.clone(),
             )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["bitbucket.org".to_string()],
@@ -518,11 +535,14 @@ impl ProviderRegistry {
                 variant: "Bitbucket".to_string(),
             },
         );
+        Ok(())
+    }
 
-        registry.register(
+    fn register_gitlab(&mut self, config: &UnifiedProviderConfig) -> Result<(), PinnerError> {
+        self.register(
             Arc::new(ReqwestGitLabProvider::new(
-                config.gitlab_url,
-                config.gitlab_token,
+                config.gitlab_url.clone(),
+                config.gitlab_token.clone(),
             )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["gitlab.com".to_string()],
@@ -534,11 +554,14 @@ impl ProviderRegistry {
                 variant: "GitLab".to_string(),
             },
         );
+        Ok(())
+    }
 
-        registry.register(
+    fn register_forgejo(&mut self, config: &UnifiedProviderConfig) -> Result<(), PinnerError> {
+        self.register(
             Arc::new(ReqwestForgejoProvider::new(
-                config.forgejo_url,
-                config.forgejo_token,
+                config.forgejo_url.clone(),
+                config.forgejo_token.clone(),
             )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec!["codeberg.org".to_string(), "forgejo".to_string()],
@@ -546,11 +569,14 @@ impl ProviderRegistry {
                 variant: "Forgejo".to_string(),
             },
         );
+        Ok(())
+    }
 
-        registry.register(
+    fn register_circleci(&mut self, config: &UnifiedProviderConfig) -> Result<(), PinnerError> {
+        self.register(
             Arc::new(ReqwestCircleCiProvider::new(
-                config.circleci_url,
-                config.circleci_token,
+                config.circleci_url.clone(),
+                config.circleci_token.clone(),
             )?) as Arc<dyn RemoteProvider>,
             ProviderTypeInfo {
                 domains: vec![],
@@ -558,8 +584,7 @@ impl ProviderRegistry {
                 variant: "CircleCi".to_string(),
             },
         );
-
-        Ok(registry)
+        Ok(())
     }
 
     /// Adds a new provider to the registry.
