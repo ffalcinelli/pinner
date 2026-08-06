@@ -513,4 +513,111 @@ mod tests {
             assert!(!res_junit.is_success());
         }
     }
+
+    struct MockPromptUi {
+        called: std::sync::Arc<std::sync::Mutex<bool>>,
+    }
+
+    impl crate::patcher::ui::UserInterface for MockPromptUi {
+        fn confirm_patch(&self, _path: &std::path::Path) -> bool { true }
+        fn report_success(&self, _path: &std::path::Path) {}
+        fn report_skipped(&self, _path: &std::path::Path) {}
+        fn prompt_upgrade(
+            &self,
+            results: Vec<crate::core::UpdateResult>,
+        ) -> Result<Vec<crate::core::UpdateResult>, crate::error::PinnerError> {
+            *self.called.lock().unwrap() = true;
+            Ok(results)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_upgrade_non_interactive() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v3").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("v4".to_string()));
+        remote
+            .expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(crate::core::DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let osv_client = Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(
+            Arc::new(remote),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+
+        let called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let ui = Arc::new(MockPromptUi { called: called.clone() });
+
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, false, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        pipeline.upgrade(std::slice::from_ref(&f), false).await.unwrap();
+
+        assert!(!*called.lock().unwrap(), "prompt_upgrade should not be called in non-interactive mode");
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("v4sha"), "File should be patched with the new sha");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_upgrade_interactive() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v3").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_latest_release()
+            .returning(|_, _| Ok("v4".to_string()));
+        remote
+            .expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(crate::core::DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let osv_client = Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(
+            Arc::new(remote),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+
+        let called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let ui = Arc::new(MockPromptUi { called: called.clone() });
+
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, false, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        pipeline.upgrade(std::slice::from_ref(&f), true).await.unwrap();
+
+        assert!(*called.lock().unwrap(), "prompt_upgrade should be called in interactive mode");
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("v4sha"), "File should be patched with the new sha");
+    }
 }
