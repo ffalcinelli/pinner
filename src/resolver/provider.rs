@@ -1551,6 +1551,48 @@ mod tests {
         assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
     }
 
+    #[tokio::test]
+    async fn test_rate_limit_middleware_retry_after() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/")
+            .with_status(429)
+            .with_header("retry-after", "0")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let reqwest_client = reqwest::Client::new();
+        let client = reqwest_middleware::ClientBuilder::new(reqwest_client)
+            .with(RateLimitMiddleware)
+            .build();
+
+        let resp = client.get(server.url()).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 429);
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_middleware_x_ratelimit_reset() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/")
+            .with_status(403)
+            .with_header("x-ratelimit-reset", "0")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let reqwest_client = reqwest::Client::new();
+        let client = reqwest_middleware::ClientBuilder::new(reqwest_client)
+            .with(RateLimitMiddleware)
+            .build();
+
+        let resp = client.get(server.url()).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 403);
+        m.assert_async().await;
+    }
+
     #[test]
     fn test_encode_decode_cached_value() {
         let val = "my_tag_value";
