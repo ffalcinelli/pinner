@@ -13,13 +13,113 @@ pub fn init_project() -> Result<(), PinnerError> {
     init_project_internal(None)
 }
 
-fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError> {
-    let mut config_lines = Vec::new();
-    config_lines.push("# Pinner configuration file".to_string());
-    config_lines
-        .push("# For full documentation, see: https://github.com/ffalcinelli/pinner".to_string());
-    config_lines.push("".to_string());
+fn print_ci_detection(detected: &[&str]) {
+    if !detected.is_empty() {
+        println!(
+            "{} Detected CI systems: {}",
+            "✔".green().bold(),
+            detected.join(", ").cyan()
+        );
+    } else {
+        println!(
+            "{} No CI systems detected, using defaults.",
+            "⚠".yellow().bold()
+        );
+    }
+}
 
+fn generate_base_config() -> Vec<String> {
+    vec![
+        "# Pinner configuration file".to_string(),
+        "# For full documentation, see: https://github.com/ffalcinelli/pinner".to_string(),
+        "".to_string(),
+        "# Automatically confirm all replacements".to_string(),
+        "yes = false".to_string(),
+        "".to_string(),
+        "# Upgrade strategy: latest, major, minor, commit".to_string(),
+        "upgrade_strategy = \"latest\"".to_string(),
+        "".to_string(),
+        "# Actions or images to ignore".to_string(),
+        "ignore = []".to_string(),
+        "".to_string(),
+        "# Number of concurrent API requests".to_string(),
+        "concurrency = 10".to_string(),
+        "".to_string(),
+    ]
+}
+
+fn get_selection(selection_opt: Option<usize>) -> usize {
+    match selection_opt {
+        Some(s) => s,
+        None => {
+            let options = vec![
+                "None (start empty)",
+                "Default/GitHub (pre-populate with popular GitHub Actions)",
+            ];
+            dialoguer::Select::new()
+                .with_prompt("Select a service to populate the vetted whitelist")
+                .items(&options)
+                .default(1)
+                .interact()
+                .unwrap_or(0)
+        }
+    }
+}
+
+fn generate_vetted_config(selection: usize) -> Vec<String> {
+    let mut vetted_lines = Vec::new();
+    if selection == 1 {
+        vetted_lines.push("vetted = [".to_string());
+        vetted_lines.push(
+            "    \"actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332\", # v4.1.7"
+                .to_string(),
+        );
+        vetted_lines.push(
+            "    \"actions/setup-node@601291da96165b6a1d4b1fb337131252d6e2735d\", # v4.0.3"
+                .to_string(),
+        );
+        vetted_lines.push(
+            "    \"actions/setup-python@82c7e60c44059a00283f090ceb68f6854d17dcef\", # v5.1.0"
+                .to_string(),
+        );
+        vetted_lines.push(
+            "    \"actions/setup-go@cd9a547d6d5b9454b6754024774b752817bf0a26\", # v5.0.2"
+                .to_string(),
+        );
+        vetted_lines.push(
+            "    \"actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9\", # v4.0.2".to_string(),
+        );
+        vetted_lines.push(
+            "    \"actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808\", # v4.3.3"
+                .to_string(),
+        );
+        vetted_lines.push(
+            "    \"actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3d2e\"  # v4.1.7"
+                .to_string(),
+        );
+        vetted_lines.push("]".to_string());
+    } else {
+        vetted_lines.push("vetted = [".to_string());
+        vetted_lines.push("    # \"actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332\", # Example vetted action".to_string());
+        vetted_lines.push("]".to_string());
+    }
+    vetted_lines
+}
+
+fn generate_security_config() -> Vec<String> {
+    vec![
+        "".to_string(),
+        "# Compromised dependency hashes or references (Blacklist)".to_string(),
+        "compromised = [".to_string(),
+        "    # \"actions/checkout@badhash1234567890badhash1234567890bad\", # Example compromised action".to_string(),
+        "]".to_string(),
+        "".to_string(),
+        "# Disable visual security feedback".to_string(),
+        "no_security_feedback = false".to_string(),
+    ]
+}
+
+fn detect_ci_systems() -> Vec<&'static str> {
     let mut detected = Vec::new();
     if std::path::Path::new(".github/workflows").exists() {
         detected.push("GitHub Actions");
@@ -38,32 +138,14 @@ fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError
     if std::path::Path::new(".circleci/config.yml").exists() {
         detected.push("CircleCI");
     }
+    detected
+}
 
-    if !detected.is_empty() {
-        println!(
-            "{} Detected CI systems: {}",
-            "✔".green().bold(),
-            detected.join(", ").cyan()
-        );
-    } else {
-        println!(
-            "{} No CI systems detected, using defaults.",
-            "⚠".yellow().bold()
-        );
-    }
+fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError> {
+    let mut config_lines = generate_base_config();
 
-    config_lines.push("# Automatically confirm all replacements".to_string());
-    config_lines.push("yes = false".to_string());
-    config_lines.push("".to_string());
-    config_lines.push("# Upgrade strategy: latest, major, minor, commit".to_string());
-    config_lines.push("upgrade_strategy = \"latest\"".to_string());
-    config_lines.push("".to_string());
-    config_lines.push("# Actions or images to ignore".to_string());
-    config_lines.push("ignore = []".to_string());
-    config_lines.push("".to_string());
-    config_lines.push("# Number of concurrent API requests".to_string());
-    config_lines.push("concurrency = 10".to_string());
-    config_lines.push("".to_string());
+    let detected = detect_ci_systems();
+    print_ci_detection(&detected);
 
     let config_path = std::path::PathBuf::from(".pinner.toml");
     if config_path.exists() {
@@ -72,65 +154,14 @@ fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError
             "ℹ".blue().bold()
         );
     } else {
-        let selection = match selection_opt {
-            Some(s) => s,
-            None => {
-                let options = vec![
-                    "None (start empty)",
-                    "Default/GitHub (pre-populate with popular GitHub Actions)",
-                ];
-                dialoguer::Select::new()
-                    .with_prompt("Select a service to populate the vetted whitelist")
-                    .items(&options)
-                    .default(1)
-                    .interact()
-                    .unwrap_or(0)
-            }
-        };
+        let selection = get_selection(selection_opt);
 
-        let mut vetted_lines = Vec::new();
-        if selection == 1 {
-            vetted_lines.push("vetted = [".to_string());
-            vetted_lines.push(
-                "    \"actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332\", # v4.1.7"
-                    .to_string(),
-            );
-            vetted_lines.push(
-                "    \"actions/setup-node@601291da96165b6a1d4b1fb337131252d6e2735d\", # v4.0.3"
-                    .to_string(),
-            );
-            vetted_lines.push(
-                "    \"actions/setup-python@82c7e60c44059a00283f090ceb68f6854d17dcef\", # v5.1.0"
-                    .to_string(),
-            );
-            vetted_lines.push(
-                "    \"actions/setup-go@cd9a547d6d5b9454b6754024774b752817bf0a26\", # v5.0.2"
-                    .to_string(),
-            );
-            vetted_lines.push(
-                "    \"actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9\", # v4.0.2"
-                    .to_string(),
-            );
-            vetted_lines.push("    \"actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808\", # v4.3.3".to_string());
-            vetted_lines.push("    \"actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3d2e\"  # v4.1.7".to_string());
-            vetted_lines.push("]".to_string());
-        } else {
-            vetted_lines.push("vetted = [".to_string());
-            vetted_lines.push("    # \"actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332\", # Example vetted action".to_string());
-            vetted_lines.push("]".to_string());
-        }
+        let vetted_lines = generate_vetted_config(selection);
 
         config_lines
             .push("# Vetted (trusted) dependency hashes or references (Whitelist)".to_string());
         config_lines.extend(vetted_lines);
-        config_lines.push("".to_string());
-        config_lines.push("# Compromised dependency hashes or references (Blacklist)".to_string());
-        config_lines.push("compromised = [".to_string());
-        config_lines.push("    # \"actions/checkout@badhash1234567890badhash1234567890bad\", # Example compromised action".to_string());
-        config_lines.push("]".to_string());
-        config_lines.push("".to_string());
-        config_lines.push("# Disable visual security feedback".to_string());
-        config_lines.push("no_security_feedback = false".to_string());
+        config_lines.extend(generate_security_config());
 
         fs::write(&config_path, config_lines.join("\n"))?;
         println!("{} Created .pinner.toml", "✔".green().bold());
