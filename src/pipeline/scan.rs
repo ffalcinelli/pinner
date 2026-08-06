@@ -538,9 +538,7 @@ mod tests {
         );
         let pipeline = Pipeline::new(scanner, resolver, patcher);
 
-        let res = pipeline
-            .scan(std::slice::from_ref(&f), true)
-            .await;
+        let res = pipeline.scan(std::slice::from_ref(&f), true).await;
 
         assert!(res.is_ok());
     }
