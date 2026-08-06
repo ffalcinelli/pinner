@@ -644,4 +644,47 @@ mod tests {
             "File should be patched with the new sha"
         );
     }
+
+    #[tokio::test]
+    async fn test_pipeline_pin() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v3").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let mut remote = MockRemoteProvider::new();
+        remote
+            .expect_get_commit_sha()
+            .returning(|_, tag, _| Ok(crate::core::DependencyRef::GitSha(format!("{}sha", tag))));
+
+        let osv_client = Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(
+            Arc::new(remote),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, false, vec![], vec![], true),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        pipeline.pin(std::slice::from_ref(&f)).await.unwrap();
+
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(
+            content.contains("v3sha"),
+            "File should be pinned with the new sha"
+        );
+    }
 }
