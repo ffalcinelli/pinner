@@ -262,15 +262,26 @@ impl Config {
     ///
     /// This method ensures that explicitly provided CLI flags always override
     /// settings from configuration files or environment variables.
-    pub fn merge_with_cli(self, mut cli: Cli) -> Cli {
-        // Workflow paths: CLI > Config
+    pub fn merge_with_cli(mut self, mut cli: Cli) -> Cli {
+        self.merge_workflows(&mut cli);
+        self.merge_boolean_flags(&mut cli);
+        self.merge_command_specific(&mut cli);
+        self.merge_api_tokens(&mut cli);
+        self.merge_api_urls(&mut cli);
+        self.merge_misc(&mut cli);
+
+        cli
+    }
+
+    fn merge_workflows(&mut self, cli: &mut Cli) {
         if cli.workflows.is_empty() {
-            if let Some(workflows) = self.workflows {
+            if let Some(workflows) = self.workflows.take() {
                 cli.workflows = workflows;
             }
         }
+    }
 
-        // Boolean flags: CLI (if true) > Config
+    fn merge_boolean_flags(&mut self, cli: &mut Cli) {
         if !cli.yes {
             if let Some(yes) = self.yes {
                 cli.yes = yes;
@@ -306,11 +317,9 @@ impl Config {
                 cli.no_cache = no_cache;
             }
         }
+    }
 
-        if cli.cache_ttl.is_none() {
-            cli.cache_ttl = self.cache_ttl;
-        }
-
+    fn merge_command_specific(&mut self, cli: &mut Cli) {
         if let Commands::Verify { check_osv, strict } = &mut cli.command {
             if !*check_osv {
                 if let Some(val) = self.check_osv {
@@ -330,93 +339,96 @@ impl Config {
         | Commands::Scan { upgrade_strategy } = &mut cli.command
         {
             if *upgrade_strategy == UpgradeStrategy::Latest {
-                if let Some(strategy) = self.upgrade_strategy {
+                if let Some(strategy) = self.upgrade_strategy.take() {
                     *upgrade_strategy = strategy;
                 }
             }
         }
+    }
 
-        // API Tokens: CLI > Config
+    fn merge_api_tokens(&mut self, cli: &mut Cli) {
         if cli.github_token.is_none() {
-            cli.github_token = self.github_token;
+            cli.github_token = self.github_token.take();
         }
 
         if cli.bitbucket_token.is_none() {
-            cli.bitbucket_token = self.bitbucket_token;
+            cli.bitbucket_token = self.bitbucket_token.take();
         }
 
         if cli.gitlab_token.is_none() {
-            cli.gitlab_token = self.gitlab_token;
+            cli.gitlab_token = self.gitlab_token.take();
         }
 
         if cli.forgejo_token.is_none() {
-            cli.forgejo_token = self.forgejo_token;
+            cli.forgejo_token = self.forgejo_token.take();
         }
 
         if cli.circleci_token.is_none() {
-            cli.circleci_token = self.circleci_token;
+            cli.circleci_token = self.circleci_token.take();
         }
+    }
 
-        // API Base URLs: CLI (if non-default) > Config
+    fn merge_api_urls(&mut self, cli: &mut Cli) {
         // We only override if the CLI still has the default public API values.
         if cli.github_url == "https://api.github.com" {
-            if let Some(url) = self.github_url {
+            if let Some(url) = self.github_url.take() {
                 cli.github_url = url;
             }
         }
 
         if cli.bitbucket_url == "https://api.bitbucket.org/2.0" {
-            if let Some(url) = self.bitbucket_url {
+            if let Some(url) = self.bitbucket_url.take() {
                 cli.bitbucket_url = url;
             }
         }
 
         if cli.gitlab_url == "https://gitlab.com" {
-            if let Some(url) = self.gitlab_url {
+            if let Some(url) = self.gitlab_url.take() {
                 cli.gitlab_url = url;
             }
         }
 
         if cli.forgejo_url == "https://codeberg.org" {
-            if let Some(url) = self.forgejo_url {
+            if let Some(url) = self.forgejo_url.take() {
                 cli.forgejo_url = url;
             }
         }
 
         if cli.circleci_url == "https://circleci.com/graphql-unstable" {
-            if let Some(url) = self.circleci_url {
+            if let Some(url) = self.circleci_url.take() {
                 cli.circleci_url = url;
             }
         }
+    }
 
-        // Output format: CLI > Config
+    fn merge_misc(&mut self, cli: &mut Cli) {
+        if cli.cache_ttl.is_none() {
+            cli.cache_ttl = self.cache_ttl;
+        }
+
         if cli.format == OutputFormat::Text {
-            if let Some(format) = self.format {
+            if let Some(format) = self.format.take() {
                 cli.format = format;
             }
         }
 
-        // Concurrency & Ignore: CLI > Config
         if cli.concurrency.is_none() {
             cli.concurrency = self.concurrency;
         }
 
         if cli.ignore.is_empty() {
-            if let Some(ignore) = self.ignore {
+            if let Some(ignore) = self.ignore.take() {
                 cli.ignore = ignore;
             }
         }
 
-        // OCI Auth: CLI > Config
         if cli.oci_username.is_none() {
-            cli.oci_username = self.oci_username;
+            cli.oci_username = self.oci_username.take();
         }
 
         if cli.oci_password.is_none() {
-            cli.oci_password = self.oci_password;
+            cli.oci_password = self.oci_password.take();
         }
-
-        cli
     }
 
     /// Serializes the configuration to a pretty TOML string, formatting the `vetted`
