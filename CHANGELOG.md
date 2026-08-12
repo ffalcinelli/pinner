@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.14] - 2026-08-12
+
+### Added
+- 🎨 **Top-Level Error Formatting**: Applied styled color palettes to top-level unhandled CLI errors for clearer diagnostic feedback.
+
+### Performance
+- ⚡ **Concurrent Vulnerability Scanning**: Parallelized network requests during OSV vulnerability scans (`scan` subcommand) for faster workflow auditing.
+- ⚡ **Allocation Optimizations**: Optimized string and buffer allocations during diff formatting rendering and dependency filtering.
+
+### Changed
+- 🧪 **Expanded Test Suite**: Added comprehensive unit and integration tests covering core pipeline operations (`pin`, `upgrade`, `scan`), patcher mutations (`apply_changes`), rate-limiting middleware (`RateLimitMiddleware`), configuration merging (`merge_all`), serialization (`JsonOutput`), and utility functions.
+- 🧹 **Internal Refactoring**: Modularized `ProviderRegistry::new`, `init_project_internal`, `merge_with_cli`, and `CachedProvider` disk cache operations into smaller helper functions.
+- 🛠️ **Dependency Bumps**: Upgraded `tokio`, `tree-sitter`, `clap`, `thiserror`, `serde`, `serde_json`, `regex`, `serial_test`, `anyhow`, and updated CI action dependencies.
+
+### Fixed
+- 🛡️ **Git Command Security**: Resolved command injection risks in git operations and `git push` by introducing `--` argument separators and sanitizing shell calls.
+- 🐛 **Configuration File Parsing**: Fixed unhandled parsing errors when loading `.pinner.toml`.
+- 🐛 **Docker Image Parsing**: Fixed a potential panic in Docker/OCI image path parsing.
+
 ## [0.0.13] - 2026-07-08
 
 ### Added
