@@ -22,6 +22,29 @@ pub use pipeline::Pipeline;
 pub use resolver::{CachedProvider, RegistryProvider, RemoteProvider, Resolver};
 pub use scanner::Scanner;
 
+#[doc(hidden)]
+pub struct TestCwdGuard {
+    orig: std::path::PathBuf,
+}
+
+impl TestCwdGuard {
+    pub fn new<P: AsRef<std::path::Path>>(new_dir: P) -> Self {
+        let orig = std::env::current_dir().unwrap_or_else(|_| {
+            std::env::var("CARGO_MANIFEST_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::env::temp_dir())
+        });
+        let _ = std::env::set_current_dir(new_dir);
+        Self { orig }
+    }
+}
+
+impl Drop for TestCwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.orig);
+    }
+}
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -362,8 +385,7 @@ mod tests {
         let pipeline = Pipeline::new(scanner, resolver, patcher);
 
         // Run scan with yes=true
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
 
         pipeline.scan(std::slice::from_ref(&f), true).await.unwrap();
 
@@ -375,7 +397,6 @@ mod tests {
         assert!(toml_content.contains("timestamp ="));
         assert!(!toml_content.contains("vuln@3333333333333333333333333333333333333333")); // standard vulnerable NOT auto-added
 
-        std::env::set_current_dir(original_dir).unwrap();
         std::env::remove_var("PINNER_OSV_URL");
     }
 
@@ -487,8 +508,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_pipeline_scan_empty() {
         let dir = tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
 
         std::fs::write(".pinner.toml", "yes = true\n").unwrap();
 
@@ -515,16 +535,13 @@ mod tests {
 
         let res = pipeline.scan(&[], true).await;
         assert!(res.is_ok());
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[tokio::test]
     #[serial_test::serial]
     async fn test_pipeline_scan_no_pinner_toml() {
         let dir = tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
 
         let scanner = Scanner::new(vec![]);
         let osv_client = Arc::new(resolver::OsvClient::new(
@@ -550,16 +567,13 @@ mod tests {
         let res = pipeline.scan(&[], true).await;
         assert!(res.is_ok());
         assert!(std::path::Path::new(".pinner.toml").exists());
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[tokio::test]
     #[serial_test::serial]
     async fn test_pipeline_scan_oci_provenance() {
         let dir = tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
 
         std::fs::write(".pinner.toml", "yes = true\n").unwrap();
         let f = dir.path().join("f.yml");
@@ -602,16 +616,13 @@ mod tests {
 
         let res = pipeline.scan(&[f], true).await;
         assert!(res.is_ok());
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 
     #[tokio::test]
     #[serial_test::serial]
     async fn test_pipeline_scan_already_vetted() {
         let dir = tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
 
         std::fs::write(".pinner.toml", r#"
 yes = true
@@ -652,7 +663,5 @@ vetted = [
 
         let res = pipeline.scan(&[f], true).await;
         assert!(res.is_ok());
-
-        std::env::set_current_dir(orig_dir).unwrap();
     }
 }

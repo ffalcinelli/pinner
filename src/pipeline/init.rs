@@ -212,15 +212,13 @@ pinner verify --quiet
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
     use tempfile::tempdir;
 
     #[test]
     #[serial_test::serial]
     fn test_init_project_with_selection_0() {
         let dir = tempdir().unwrap();
-        let orig_dir = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         // Create dummy CI paths to hit the detection branches
         fs::create_dir_all(".github/workflows").unwrap();
@@ -240,45 +238,36 @@ mod tests {
         // Running it again should skip creation
         let res_again = init_project_with_selection(0);
         assert!(res_again.is_ok());
-
-        env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_init_project_with_selection_1() {
         let dir = tempdir().unwrap();
-        let orig_dir = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         let res = init_project_with_selection(1);
         assert!(res.is_ok());
 
         let config_path = std::path::PathBuf::from(".pinner.toml");
         assert!(config_path.exists());
-
-        env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_install_git_hook_no_git() {
         let dir = tempdir().unwrap();
-        let orig_dir = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         let res = install_git_hook();
         assert!(res.is_err());
-
-        env::set_current_dir(orig_dir).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_install_git_hook_success() {
         let dir = tempdir().unwrap();
-        let orig_dir = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         fs::create_dir_all(".git/hooks").unwrap();
         let res = install_git_hook();
@@ -286,7 +275,5 @@ mod tests {
 
         let hook_path = std::path::PathBuf::from(".git/hooks/pre-commit");
         assert!(hook_path.exists());
-
-        env::set_current_dir(orig_dir).unwrap();
     }
 }

@@ -251,9 +251,16 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_pr_create_no_changes() {
+        let mut server = mockito::Server::new_async().await;
+        let _pr_mock = server
+            .mock("POST", "/repos/owner/repo/pulls")
+            .with_status(201)
+            .with_body(r#"{"html_url":"http://github.com/owner/repo/pull/1"}"#)
+            .create_async()
+            .await;
+
         let dir = tempfile::tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         std::process::Command::new("git")
             .arg("init")
@@ -281,6 +288,29 @@ mod tests {
             .unwrap();
         std::process::Command::new("git")
             .args(["commit", "-m", "initial commit"])
+            .output()
+            .unwrap();
+
+        let upstream = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(upstream.path())
+            .output()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "git@github.com:owner/repo.git"])
+            .output()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "set-url",
+                "--push",
+                "origin",
+                upstream.path().to_str().unwrap(),
+            ])
             .output()
             .unwrap();
 
@@ -314,12 +344,16 @@ mod tests {
             ),
         );
 
+        std::env::set_var("GITHUB_TOKEN", "mock_token");
+        std::env::set_var("PINNER_GITHUB_URL", server.url());
+
         let res = pipeline
             .pr_create(&[f], "pinner/test-branch", "commit msg")
             .await;
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "pr_create failed with error: {:?}", res);
 
-        std::env::set_current_dir(orig_dir).unwrap();
+        std::env::remove_var("GITHUB_TOKEN");
+        std::env::remove_var("PINNER_GITHUB_URL");
     }
 
     #[tokio::test]
@@ -334,8 +368,7 @@ mod tests {
             .await;
 
         let dir = tempfile::tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         std::process::Command::new("git")
             .arg("init")
@@ -450,7 +483,6 @@ mod tests {
 
         pr_mock.assert_async().await;
 
-        std::env::set_current_dir(orig_dir).unwrap();
         std::env::remove_var("GITHUB_TOKEN");
         std::env::remove_var("PINNER_GITHUB_URL");
     }
@@ -467,8 +499,7 @@ mod tests {
             .await;
 
         let dir = tempfile::tempdir().unwrap();
-        let orig_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
 
         std::process::Command::new("git")
             .arg("init")
@@ -572,7 +603,6 @@ mod tests {
 
         pr_mock.assert_async().await;
 
-        std::env::set_current_dir(orig_dir).unwrap();
         std::env::remove_var("GITLAB_TOKEN");
         std::env::remove_var("PINNER_GITLAB_URL");
     }

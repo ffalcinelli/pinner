@@ -201,8 +201,7 @@ mod tests {
     #[serial_test::serial]
     fn test_get_workflows_discovery() {
         let dir = tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = pinner::TestCwdGuard::new(dir.path());
 
         // Initially should return default .github/workflows if nothing exists
         assert_eq!(get_workflows(&[]), vec![PathBuf::from(".github/workflows")]);
@@ -224,8 +223,6 @@ mod tests {
         assert!(res.contains(&PathBuf::from("bitbucket-pipelines.yml")));
         // Should NOT contain .yaml if .yml exists
         assert!(!res.contains(&PathBuf::from("bitbucket-pipelines.yaml")));
-
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[tokio::test]

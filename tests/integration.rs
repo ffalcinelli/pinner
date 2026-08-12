@@ -323,8 +323,7 @@ async fn test_set_command() {
 #[serial_test::serial]
 async fn test_install_hook_command() {
     let dir = tempdir().unwrap();
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(dir.path()).unwrap();
+    let _guard = pinner::TestCwdGuard::new(dir.path());
 
     // Create a mock .git directory
     fs::create_dir(".git").unwrap();
@@ -336,8 +335,6 @@ async fn test_install_hook_command() {
     run(cli, provider, registry, vec![]).await.unwrap();
 
     assert!(dir.path().join(".git/hooks/pre-commit").exists());
-
-    std::env::set_current_dir(original_dir).unwrap();
 }
 
 #[tokio::test]
@@ -356,8 +353,7 @@ async fn test_generate_completion_command() {
 #[serial_test::serial]
 async fn test_verify_compromised_hashes() {
     let dir = tempdir().unwrap();
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(dir.path()).unwrap();
+    let _guard = pinner::TestCwdGuard::new(dir.path());
 
     // Create a workflow with a compromised hash
     let workflows = dir.path().join(".github/workflows");
@@ -390,16 +386,13 @@ compromised = [
 
     let res = run(cli, provider, registry, vec![workflows]).await;
     assert!(res.is_err());
-
-    std::env::set_current_dir(original_dir).unwrap();
 }
 
 #[tokio::test]
 #[serial_test::serial]
 async fn test_verify_strict_mode() {
     let dir = tempdir().unwrap();
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(dir.path()).unwrap();
+    let _guard = pinner::TestCwdGuard::new(dir.path());
 
     // Create a workflow with a pinned hash
     let workflows = dir.path().join(".github/workflows");
@@ -443,8 +436,6 @@ vetted = [
 
     let res = run(cli, provider, registry, vec![workflows]).await;
     assert!(res.is_ok());
-
-    std::env::set_current_dir(original_dir).unwrap();
 }
 
 #[tokio::test]
