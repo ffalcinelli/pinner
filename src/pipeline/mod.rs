@@ -302,14 +302,17 @@ impl Pipeline {
                 let total_tests = junit_cases.len();
                 let total_failures = unpinned.len() + compromised.len() + non_vetted.len();
 
-                xml.push_str(&format!(
-                    "<testsuites name=\"Pinner Verification\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">\n",
+                use std::fmt::Write;
+                let _ = writeln!(
+                    xml,
+                    "<testsuites name=\"Pinner Verification\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">",
                     total_tests, total_failures
-                ));
-                xml.push_str(&format!(
-                    "  <testsuite name=\"pinner.verify\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">\n",
+                );
+                let _ = writeln!(
+                    xml,
+                    "  <testsuite name=\"pinner.verify\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">",
                     total_tests, total_failures
-                ));
+                );
                 for case in junit_cases {
                     xml.push_str(&case);
                     xml.push('\n');
