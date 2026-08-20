@@ -482,7 +482,8 @@ fn format_security_list(list: &[SecurityEntry]) -> String {
         if let Some(ref ts) = entry.timestamp {
             parts.push(format!("timestamp = \"{}\"", ts));
         }
-        s.push_str(&format!("    {{ {} }}", parts.join(", ")));
+        use std::fmt::Write;
+        let _ = write!(s, "    {{ {} }}", parts.join(", "));
         if i < list.len() - 1 {
             s.push_str(",\n");
         } else {
