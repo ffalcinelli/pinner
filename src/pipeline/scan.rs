@@ -260,8 +260,11 @@ impl Pipeline {
                 }
                 Err((image_name, sha_str, e)) => {
                     eprintln!(
-                        "Warning: Could not verify OCI provenance for {}@{} due to error: {}",
-                        image_name, sha_str, e
+                        "{} Could not verify OCI provenance for {}@{} due to error: {}",
+                        "warning:".yellow().bold(),
+                        image_name,
+                        sha_str,
+                        e
                     );
                 }
             }

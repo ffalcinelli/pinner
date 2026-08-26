@@ -163,7 +163,8 @@ impl Pipeline {
                             Err(e) => {
                                 if !self.patcher.formatter.quiet {
                                     eprintln!(
-                                        "Warning: Could not verify OCI provenance for {}@{} due to error: {}",
+                                        "{} Could not verify OCI provenance for {}@{} due to error: {}",
+                                        "warning:".yellow().bold(),
                                         image_name, tag, e
                                     );
                                 }
@@ -293,6 +294,10 @@ impl Pipeline {
                     eprintln!(
                         "\n{} Verification failed! Some dependencies are not pinned, are compromised, or are not vetted.",
                         "✗".red().bold()
+                    );
+                    eprintln!(
+                        "{} Run `pinner pin` to automatically secure your dependencies, or `pinner verify --help` for options.",
+                        "hint:".blue()
                     );
                 }
             } else if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
