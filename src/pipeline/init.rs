@@ -163,23 +163,7 @@ fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError
         config_lines.extend(vetted_lines);
         config_lines.extend(generate_security_config());
 
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&config_path)?
-                .write_all(config_lines.join("\n").as_bytes())?;
-        }
-        #[cfg(not(unix))]
-        {
-            fs::write(&config_path, config_lines.join("\n"))?;
-        }
-
+        fs::write(&config_path, config_lines.join("\n"))?;
         println!("{} Created .pinner.toml", "✔".green().bold());
     }
 
