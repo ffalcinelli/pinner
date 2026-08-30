@@ -491,8 +491,8 @@ impl Pipeline {
             let toml_str = config.to_formatted_string()?;
             #[cfg(unix)]
             {
-                use std::os::unix::fs::OpenOptionsExt;
                 use std::io::Write;
+                use std::os::unix::fs::OpenOptionsExt;
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)

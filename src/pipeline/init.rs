@@ -165,8 +165,8 @@ fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
