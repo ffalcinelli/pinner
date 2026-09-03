@@ -451,7 +451,7 @@ impl Config {
                 toml_str.push('\n');
             }
             toml_str.push_str("vetted = ");
-            toml_str.push_str(&format_security_list(vetted));
+            format_security_list(&mut toml_str, vetted);
             toml_str.push('\n');
         }
 
@@ -460,7 +460,7 @@ impl Config {
                 toml_str.push('\n');
             }
             toml_str.push_str("compromised = ");
-            toml_str.push_str(&format_security_list(compromised));
+            format_security_list(&mut toml_str, compromised);
             toml_str.push('\n');
         }
 
@@ -468,21 +468,23 @@ impl Config {
     }
 }
 
-fn format_security_list(list: &[SecurityEntry]) -> String {
+fn format_security_list(s: &mut String, list: &[SecurityEntry]) {
     if list.is_empty() {
-        return "[]".to_string();
+        s.push_str("[]");
+        return;
     }
-    let mut s = "[\n".to_string();
+    use std::fmt::Write;
+    s.push_str("[\n");
     for (i, entry) in list.iter().enumerate() {
-        let mut parts = Vec::new();
-        parts.push(format!("ref = \"{}\"", entry.reference));
+        let _ = write!(s, "    {{ ref = \"{}\"", entry.reference);
         if let Some(ref tag) = entry.tag {
-            parts.push(format!("tag = \"{}\"", tag));
+            let _ = write!(s, ", tag = \"{}\"", tag);
         }
         if let Some(ref ts) = entry.timestamp {
-            parts.push(format!("timestamp = \"{}\"", ts));
+            let _ = write!(s, ", timestamp = \"{}\"", ts);
         }
-        s.push_str(&format!("    {{ {} }}", parts.join(", ")));
+        s.push_str(" }");
+
         if i < list.len() - 1 {
             s.push_str(",\n");
         } else {
@@ -490,7 +492,6 @@ fn format_security_list(list: &[SecurityEntry]) -> String {
         }
     }
     s.push(']');
-    s
 }
 
 /// Represents an entry in the vetted or compromised lists, which can include a version and timestamp.
@@ -988,26 +989,29 @@ mod tests {
     fn test_format_security_list_fn() {
         use super::{format_security_list, SecurityEntry};
 
+        let mut buf = String::new();
         let empty: Vec<SecurityEntry> = vec![];
-        assert_eq!(format_security_list(&empty), "[]");
+        format_security_list(&mut buf, &empty);
+        assert_eq!(buf, "[]");
 
         let single_ref = vec![SecurityEntry {
             reference: "actions/checkout@sha".to_string(),
             tag: None,
             timestamp: None,
         }];
-        assert_eq!(
-            format_security_list(&single_ref),
-            "[\n    { ref = \"actions/checkout@sha\" }\n]"
-        );
+        buf.clear();
+        format_security_list(&mut buf, &single_ref);
+        assert_eq!(buf, "[\n    { ref = \"actions/checkout@sha\" }\n]");
 
         let single_tag = vec![SecurityEntry {
             reference: "actions/checkout@sha".to_string(),
             tag: Some("v4".to_string()),
             timestamp: None,
         }];
+        buf.clear();
+        format_security_list(&mut buf, &single_tag);
         assert_eq!(
-            format_security_list(&single_tag),
+            buf,
             "[\n    { ref = \"actions/checkout@sha\", tag = \"v4\" }\n]"
         );
 
@@ -1016,8 +1020,10 @@ mod tests {
             tag: Some("v4".to_string()),
             timestamp: Some("2024-01-01T00:00:00Z".to_string()),
         }];
+        buf.clear();
+        format_security_list(&mut buf, &single_full);
         assert_eq!(
-            format_security_list(&single_full),
+            buf,
             "[\n    { ref = \"actions/checkout@sha\", tag = \"v4\", timestamp = \"2024-01-01T00:00:00Z\" }\n]"
         );
 
@@ -1033,8 +1039,10 @@ mod tests {
                 timestamp: Some("2024-01-02T00:00:00Z".to_string()),
             },
         ];
+        buf.clear();
+        format_security_list(&mut buf, &multiple);
         assert_eq!(
-            format_security_list(&multiple),
+            buf,
             "[\n    { ref = \"actions/checkout@sha1\", tag = \"v3\" },\n    { ref = \"actions/setup-node@sha2\", timestamp = \"2024-01-02T00:00:00Z\" }\n]"
         );
     }
