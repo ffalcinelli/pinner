@@ -163,7 +163,8 @@ impl Pipeline {
                             Err(e) => {
                                 if !self.patcher.formatter.quiet {
                                     eprintln!(
-                                        "Warning: Could not verify OCI provenance for {}@{} due to error: {}",
+                                        "{} Could not verify OCI provenance for {}@{} due to error: {}",
+                                        "warning:".yellow().bold(),
                                         image_name, tag, e
                                     );
                                 }
@@ -294,6 +295,10 @@ impl Pipeline {
                         "\n{} Verification failed! Some dependencies are not pinned, are compromised, or are not vetted.",
                         "✗".red().bold()
                     );
+                    eprintln!(
+                        "{} Run `pinner pin` to automatically secure your dependencies, or `pinner verify --help` for options.",
+                        "hint:".blue()
+                    );
                 }
             } else if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
                 let mut xml = String::new();
@@ -302,14 +307,17 @@ impl Pipeline {
                 let total_tests = junit_cases.len();
                 let total_failures = unpinned.len() + compromised.len() + non_vetted.len();
 
-                xml.push_str(&format!(
-                    "<testsuites name=\"Pinner Verification\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">\n",
+                use std::fmt::Write;
+                let _ = writeln!(
+                    xml,
+                    "<testsuites name=\"Pinner Verification\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">",
                     total_tests, total_failures
-                ));
-                xml.push_str(&format!(
-                    "  <testsuite name=\"pinner.verify\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">\n",
+                );
+                let _ = writeln!(
+                    xml,
+                    "  <testsuite name=\"pinner.verify\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">",
                     total_tests, total_failures
-                ));
+                );
                 for case in junit_cases {
                     xml.push_str(&case);
                     xml.push('\n');

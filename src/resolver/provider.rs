@@ -412,21 +412,23 @@ impl BaseHttpClient {
                 );
 
                 // Try to parse the reset timestamp from various headers used by different providers.
+                use std::fmt::Write;
                 if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
                     if let Ok(reset_str) = reset.to_str() {
                         if let Ok(ts) = reset_str.parse::<i64>() {
                             use chrono::{TimeZone, Utc};
                             if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
-                                msg.push_str(&format!(
+                                let _ = write!(
+                                    msg,
                                     " Rate limit resets at {}.",
                                     dt.format("%Y-%m-%d %H:%M:%S UTC")
-                                ));
+                                );
                             }
                         }
                     }
                 } else if let Some(retry) = resp.headers().get("retry-after") {
                     if let Ok(retry_str) = retry.to_str() {
-                        msg.push_str(&format!(" Retry after {} seconds.", retry_str));
+                        let _ = write!(msg, " Retry after {} seconds.", retry_str);
                     }
                 }
 
