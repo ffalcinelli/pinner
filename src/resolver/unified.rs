@@ -1,3 +1,5 @@
+use colored::Colorize;
+
 use crate::cli::UpgradeStrategy;
 use crate::core::{DependencyRef, UpdateResult, UpdateTask};
 use crate::error::PinnerError;
@@ -123,7 +125,11 @@ impl Resolver {
                     Err(e) if e.is_fatal() => Some(Err(e)),
                     Err(e) => {
                         // Non-fatal errors are reported as warnings and skipped.
-                        eprintln!("Warning: Skipping action due to error: {}", e);
+                        eprintln!(
+                            "{} Skipping action due to error: {}",
+                            "warning:".yellow().bold(),
+                            e
+                        );
                         None
                     }
                 }
