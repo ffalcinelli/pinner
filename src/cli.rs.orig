@@ -44,11 +44,7 @@ pub enum OutputFormat {
 
 /// The main command-line interface for Pinner.
 #[derive(Parser, Clone)]
-#[command(
-    version,
-    about = "Secure CI/CD workflows by pinning dependencies to immutable hashes.",
-    long_about = "Secure CI/CD workflows by pinning mutable tags to immutable SHA-1 hashes. A high-performance Rust CLI that preserves YAML formatting and comments. Supports GitHub, GitLab, Bitbucket, Forgejo, and Docker image pinning."
-)]
+#[command(version, about, long_about = None)]
 pub struct Cli {
     /// Subcommand to execute.
     #[command(subcommand)]
@@ -58,7 +54,7 @@ pub struct Cli {
         short,
         long,
         global = true,
-        help = "Workflow files or directories to process."
+        help = "Workflow files or directories to process"
     )]
     pub workflows: Vec<PathBuf>,
     /// Automatically confirm all replacements without prompting.
@@ -186,7 +182,6 @@ pub enum Commands {
     /// Pin all actions to their current commit SHAs.
     Pin,
     /// Upgrade all actions to their latest releases.
-    #[command(alias = "up")]
     Upgrade {
         /// Interactively select which actions to upgrade.
         #[arg(short, long)]
@@ -196,7 +191,6 @@ pub enum Commands {
         upgrade_strategy: UpgradeStrategy,
     },
     /// Verify that all actions are pinned to commit SHAs.
-    #[command(alias = "check")]
     Verify {
         /// Also check the OSV database for known vulnerabilities and compromised hashes during verification.
         #[arg(long, env = "PINNER_CHECK_OSV", conflicts_with = "offline")]
@@ -207,9 +201,9 @@ pub enum Commands {
     },
     /// Set a specific action to a specific commit SHA.
     Set {
-        /// Action name (e.g., actions/checkout).
+        /// Action name (e.g., actions/checkout)
         action: String,
-        /// Commit SHA-1 hash.
+        /// Commit SHA-1 hash
         hash: String,
     },
     /// Install a pre-commit hook that runs pinner verify.
@@ -217,7 +211,6 @@ pub enum Commands {
     /// Automatically initialize pinner configuration for this repository.
     Init,
     /// Export a Software Bill of Materials (SBOM) for all dependencies in the workflows.
-    #[command(alias = "sbom")]
     ExportSbom,
     /// Scan workflows and query OSV to identify compromised dependencies, updating .pinner.toml.
     Scan {
@@ -226,7 +219,6 @@ pub enum Commands {
         upgrade_strategy: UpgradeStrategy,
     },
     /// Automatically commit changes, push to a new branch, and create a Pull Request/Merge Request.
-    #[command(alias = "pr")]
     PrCreate {
         /// Git commit message.
         #[arg(
