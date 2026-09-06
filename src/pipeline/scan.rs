@@ -73,37 +73,33 @@ impl Pipeline {
                 None => "None".to_string(),
             };
 
-            // We push the current dependency
-            scan_targets.push((
-                res.action.clone(),
-                res.new_sha.to_string(),
-                res.new_tag.clone(),
-                upgrade_cand_str.clone(),
-                res.task.clone(),
-            ));
-
             // If there's an upgrade candidate and it's different from the current SHA, we push it to scan too!
             if let Some((ref cand_ref, ref cand_tag)) = upgrade_cand {
                 let cand_sha = cand_ref.to_string();
                 if cand_sha != res.new_sha.to_string() {
-                    let mut cand_task = res.task.clone();
-                    cand_task.current_tag = cand_tag.clone();
                     scan_targets.push((
                         res.action.clone(),
                         cand_sha,
                         cand_tag.clone(),
                         "None".to_string(), // Upgrade candidate doesn't have its own upgrade candidate
-                        cand_task,
                     ));
                 }
             }
+
+            // We push the current dependency
+            scan_targets.push((
+                res.action.clone(),
+                res.new_sha.to_string(),
+                res.new_tag.clone(),
+                upgrade_cand_str, // Moved without cloning
+            ));
         }
 
         // De-duplicate scan targets by (action, sha) to avoid redundant requests
         let mut unique_targets = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for target in scan_targets {
-            let key = (target.0.to_string(), target.1.clone());
+            let key = (target.0.clone(), target.1.clone());
             if seen.insert(key) {
                 unique_targets.push(target);
             }
@@ -112,7 +108,7 @@ impl Pipeline {
         use futures::StreamExt;
 
         let mut stream = futures::stream::iter(unique_targets.into_iter().map(
-            |(action, sha_str, new_tag, upgrade_cand_str, _task)| {
+            |(action, sha_str, new_tag, upgrade_cand_str)| {
                 let resolver = &self.resolver;
                 async move {
                     let action_str = action.to_string();
