@@ -52,10 +52,12 @@ impl Patcher {
     /// Crucially, it sorts updates by their start offset in reverse order.
     /// This ensures that applying an update (which might change the string length)
     /// does not invalidate the byte offsets of subsequent updates in the same file.
+    // PERF: By taking ownership of `file_contents`, we can `remove` strings instead of cloning them,
+    // avoiding massive heap allocations for large file contents.
     pub fn calculate_patches(
         &self,
         results: Vec<UpdateResult>,
-        file_contents: &HashMap<PathBuf, String>,
+        mut file_contents: HashMap<PathBuf, String>,
     ) -> Result<Vec<FilePatch>, PinnerError> {
         // Group results by file path.
         let mut file_results: HashMap<PathBuf, Vec<UpdateResult>> = HashMap::new();
@@ -69,7 +71,7 @@ impl Patcher {
         let mut patches = Vec::new();
 
         for (path, mut updates) in file_results {
-            let content = file_contents.get(&path).ok_or_else(|| {
+            let content = file_contents.remove(&path).ok_or_else(|| {
                 PinnerError::Io(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("Content for file {} not found", path.display()),
@@ -93,7 +95,7 @@ impl Patcher {
             if !changes.is_empty() {
                 patches.push(FilePatch {
                     path,
-                    original_content: content.clone(),
+                    original_content: content,
                     new_content,
                     changes,
                     results: applied_results,
@@ -170,7 +172,7 @@ impl Patcher {
         results: Vec<UpdateResult>,
         file_contents: HashMap<PathBuf, String>,
     ) -> Result<(), PinnerError> {
-        let patches = self.calculate_patches(results, &file_contents)?;
+        let patches = self.calculate_patches(results, file_contents)?;
         self.apply_patches(patches).await
     }
 }
@@ -217,7 +219,7 @@ mod tests {
         };
 
         let patches = patcher
-            .calculate_patches(vec![result], &file_contents)
+            .calculate_patches(vec![result], file_contents)
             .unwrap();
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].path, path);
@@ -273,7 +275,7 @@ mod tests {
         };
 
         let patches = patcher
-            .calculate_patches(vec![res1, res2], &file_contents)
+            .calculate_patches(vec![res1, res2], file_contents)
             .unwrap();
         assert_eq!(patches.len(), 1);
         assert!(patches[0].new_content.contains("a/b@sha1 # v1"));
@@ -301,7 +303,7 @@ mod tests {
             new_tag: None,
         };
 
-        let err = patcher.calculate_patches(vec![res], &file_contents);
+        let err = patcher.calculate_patches(vec![res], file_contents);
         assert!(err.is_err());
     }
 
