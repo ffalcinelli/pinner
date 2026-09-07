@@ -163,7 +163,17 @@ fn init_project_internal(selection_opt: Option<usize>) -> Result<(), PinnerError
         config_lines.extend(vetted_lines);
         config_lines.extend(generate_security_config());
 
-        fs::write(&config_path, config_lines.join("\n"))?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&config_path)?;
+        use std::io::Write;
+        file.write_all(config_lines.join("\n").as_bytes())?;
+
         println!("{} Created .pinner.toml", "✔".green().bold());
     }
 

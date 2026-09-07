@@ -485,7 +485,18 @@ impl Pipeline {
             config.compromised = Some(compromised_list);
 
             let toml_str = config.to_formatted_string()?;
-            std::fs::write(".pinner.toml", toml_str)?;
+
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(".pinner.toml")?;
+            use std::io::Write;
+            file.write_all(toml_str.as_bytes())?;
+
             println!("\n{} Updated .pinner.toml", "✔".green().bold());
         }
 
