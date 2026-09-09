@@ -79,7 +79,7 @@ pinner upgrade --upgrade-strategy major
 ```
 
 ### 3. Verify pinning
-Ensure that all actions in your workflows are pinned. Perfect for CI pipelines. Supports different output reporting formats.
+Ensure that all actions and container images in your workflows are pinned to immutable hashes. Perfect for CI pipelines. Supports OSV vulnerability auditing, strict policy vetting, and different output reporting formats.
 ```bash
 # Verify pinning
 pinner verify
@@ -214,18 +214,44 @@ Pinner explicitly supports pinning **CircleCI Docker Images** (e.g., `cimg/*`) t
 
 ## CI/CD Integration 🤖
 
-Add this to your workflow to ensure all actions stay pinned using the native GitHub Action:
+### GitHub Native Action Pinning vs. Pinner Verify
+
+GitHub provides a repository/organization setting under **Actions permissions**:
+`Require actions to be pinned to a full-length commit SHA`.
+
+While this built-in setting provides a baseline syntax guard for GitHub Actions, **Pinner provides critical security and auditing capabilities that GitHub's setting does not cover**:
+
+| Security Capability | GitHub Built-in Setting | Pinner `verify` |
+| :--- | :---: | :---: |
+| **Action SHA Syntax Enforcement** (`uses:`) | ✅ Yes | ✅ Yes |
+| **Container & Docker Image Pinning** (`image:`, `services:`) | ❌ No | ✅ Yes (`docker://`, `image:`) |
+| **OpenSSF OSV Vulnerability & Malware Detection** | ❌ No | ✅ Yes (`--check-osv`) |
+| **Strict Vetting Whitelist Policy** (`.pinner.toml`) | ❌ No | ✅ Yes (`--strict`) |
+| **Shift-Left Local Pre-Commit Hook** (`install-hook`) | ❌ No (CI failure only) | ✅ Yes (blocks before commit) |
+| **PR Annotations & Diagnostic Test Reports** | ❌ No (workflow fails to start) | ✅ Yes (`--format github` / `junit`) |
+| **Cross-Platform Support** (GitLab, Bitbucket, Tekton, etc.) | ❌ GitHub only | ✅ Unified across all platforms |
+| **Self-Service Execution** (No Org/Repo Admin Required) | ❌ Admin required | ✅ As code in repository |
+
+#### How to use them together:
+- **Defense in Depth**: Keep GitHub's native setting enabled as an outer guardrail. Use Pinner in CI (`check-osv: 'true'`) to inspect container image digests and continuously audit your pinned SHAs against the OpenSSF OSV vulnerability database.
+- **Shift Left**: Use `pinner install-hook` locally. When developers work on workflows, Pinner catches unpinned dependencies on their machine *before* they push, avoiding annoying GitHub workflow rejection errors on PRs.
+
+### GitHub Actions Workflow
+
+Add this to your workflow to verify dependency pinning, audit vulnerabilities, and generate PR annotations:
 
 ```yaml
 jobs:
   verify-pinning:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
-      - name: Verify Pinning
-        uses: ffalcinelli/pinner/action@main
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4.2.2
+      - name: Verify Pinning & Audit OSV
+        uses: ffalcinelli/pinner/action@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin to commit SHA
         with:
           command: 'verify'
+          check-osv: 'true'
+          strict: 'false'
 ```
 
 > [!TIP]
@@ -239,11 +265,11 @@ jobs:
   verify-pinning:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4.2.2
       - name: Install Pinner
         run: curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
-      - name: Verify Pinning
-        run: pinner verify
+      - name: Verify Pinning & Audit OSV
+        run: pinner verify --check-osv --format github
 ```
 
 ## Name Origin ⚗️

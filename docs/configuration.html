@@ -155,13 +155,13 @@
 
                 <div class="border-l-2 border-emerald-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">verify</h3>
-                    <p class="text-gray-400 mb-2">Checks if all actions and images are pinned. Returns a non-zero exit code if unpinned dependencies are found. Perfect for CI/CD environments.</p>
+                    <p class="text-gray-400 mb-2">Checks if all actions and container images are pinned to immutable hashes (SHAs or digests). Returns a non-zero exit code if unpinned dependencies are found. Ideal for CI/CD environments and pre-commit hooks.</p>
                     <div class="text-xs text-gray-400">
                         Options:
                         <ul class="list-disc pl-5 mt-1 space-y-1">
-                            <li><code>--check-osv</code>: Query OpenSSF OSV to fail validation if any dependency hash has known vulnerabilities (requires online connection).</li>
+                            <li><code>--check-osv</code>: Query OpenSSF OSV to fail validation if any dependency hash has known vulnerabilities or supply chain compromises (requires online connection).</li>
                             <li><code>--strict</code>: Fail validation if any dependency is not explicitly added to the <code>vetted</code> whitelist in <code>.pinner.toml</code>.</li>
-                            <li><code>--format &lt;TYPE&gt;</code>: Format verify output. Select <code>github</code> for GHA workflow error annotations, or <code>junit</code> for integration test reports.</li>
+                            <li><code>--format &lt;TYPE&gt;</code>: Format verify output. Select <code>github</code> for GHA workflow error annotations, or <code>junit</code> for integration test reports. (Default in GitHub Action is <code>github</code>).</li>
                         </ul>
                     </div>
                 </div>
