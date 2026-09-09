@@ -267,11 +267,27 @@ jobs:
     steps:
       - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4
       - name: Verify Pinning & Audit OSV
-        uses: ffalcinelli/pinner/action@main
+        uses: ffalcinelli/pinner/action@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin to commit SHA
         with:
           command: 'verify'
-          check-osv: true
-          strict: true</code></pre>
+          check-osv: 'true'
+          strict: 'false'</code></pre>
+            </div>
+
+            <!-- GitHub Native Comparison Note -->
+            <div class="p-5 mb-6 bg-slate-800/60 border border-slate-700/60 rounded-xl">
+                <h4 class="text-sm font-bold text-white mb-2 flex items-center">
+                    <i class="fas fa-shield-halved text-emerald-400 mr-2"></i> GitHub Native Pinning vs. Pinner Verify
+                </h4>
+                <p class="text-xs text-gray-400 leading-relaxed mb-2">
+                    GitHub supports a setting under <em>Actions permissions</em>: <strong>"Require actions to be pinned to a full-length commit SHA"</strong>. While this provides basic syntax enforcement for <code>uses:</code> entries, Pinner provides essential security layers that GitHub's setting misses:
+                </p>
+                <ul class="text-xs text-gray-400 space-y-1 list-disc pl-5">
+                    <li><strong class="text-gray-300">Container Images:</strong> GitHub only checks actions; Pinner validates OCI container image digests (<code>image:</code>, <code>services:</code>).</li>
+                    <li><strong class="text-gray-300">OSV Vulnerability Auditing:</strong> GitHub allows any valid 40-character SHA. With <code>check-osv: 'true'</code>, Pinner checks for known supply-chain vulnerabilities and compromised commits.</li>
+                    <li><strong class="text-gray-300">Strict Whitelisting:</strong> With <code>strict: 'true'</code>, Pinner ensures SHAs are explicitly approved in your repository's <code>.pinner.toml</code>.</li>
+                    <li><strong class="text-gray-300">Shift-Left:</strong> Pinner's pre-commit hook (<code>pinner install-hook</code>) prevents unpinned code from being committed locally before pushing to CI.</li>
+                </ul>
             </div>
 
             <!-- Pinnerception Warning -->

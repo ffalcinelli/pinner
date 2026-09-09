@@ -195,7 +195,7 @@ pub enum Commands {
         #[arg(long, env = "PINNER_UPGRADE_STRATEGY", default_value = "latest")]
         upgrade_strategy: UpgradeStrategy,
     },
-    /// Verify that all actions are pinned to commit SHAs.
+    /// Verify that all actions and container images are pinned to immutable hashes (SHAs or digests).
     #[command(alias = "check")]
     Verify {
         /// Also check the OSV database for known vulnerabilities and compromised hashes during verification.

@@ -122,7 +122,7 @@ impl Pipeline {
                     } else if self.patcher.formatter.format == crate::cli::OutputFormat::Github {
                         let display_tag = task.current_tag.as_deref().unwrap_or("latest");
                         println!(
-                            "::error file={},line={},col={}::Dependency {} is not pinned to a SHA (found tag: {})",
+                            "::error file={},line={},col={}::Dependency {} is not pinned to an immutable hash (found tag: {})",
                             file_path, task.line, task.column, action_name, display_tag
                         );
                     }
@@ -131,7 +131,7 @@ impl Pipeline {
                 if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
                     let display_tag = task.current_tag.as_deref().unwrap_or("latest");
                     junit_cases.push(format!(
-                        "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\">\n      <failure message=\"Dependency is not pinned\">Dependency {} is not pinned to a SHA (found tag: {}) in {}:{}:{}</failure>\n    </testcase>",
+                        "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\">\n      <failure message=\"Dependency is not pinned\">Dependency {} is not pinned to an immutable hash (found tag: {}) in {}:{}:{}</failure>\n    </testcase>",
                         action_name, file_path, action_name, display_tag, file_path, task.line, task.column
                     ));
                 }

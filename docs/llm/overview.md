@@ -93,3 +93,15 @@ When a command like `pinner pin` or `pinner upgrade` runs:
 2.  **Scanning**: `walker.rs` concurrently searches the targeted workflow paths. For each matching file, `parser.rs` executes a Tree-Sitter query on the YAML AST to find all dependency key-value pairs (e.g. `uses: actions/checkout@v3`), yielding a list of `UpdateTask`s.
 3.  **Resolution**: The `Resolver` (`resolver/unified.rs`) groups `UpdateTask`s by their action name/tag to avoid redundant HTTP requests. Tasks are resolved concurrently (governed by the `concurrency` setting) via `UnifiedProvider`, which chooses the correct platform provider (e.g., `ReqwestGithubProvider` for GitHub Actions, or `RegistryProvider` for container images). Responses are cached in-memory and on disk to speed up subsequent executions.
 4.  **Patching**: The `apply_update` function in `patcher/mutator.rs` updates the content string at the exact offsets of the task. If a dry run is specified, `patcher/formatter.rs` prints a diff. Otherwise, `patcher/disk.rs` writes the modifications back to disk.
+
+---
+
+## Verification & Platform Integration (GitHub Native vs. Pinner)
+
+GitHub provides a built-in repository/organization setting: "Require actions to be pinned to a full-length commit SHA". While this provides basic syntactic enforcement for `uses:` clauses in GitHub Actions, Pinner's `verify` command and GitHub Action (`action/action.yml`) provide critical security layers beyond GitHub's native setting:
+- **Container / Docker Image Digests**: Validates OCI container digests (`image:`, `services:`), which GitHub's native setting does not inspect.
+- **OSV Vulnerability Detection (`--check-osv`)**: Queries OpenSSF OSV to detect compromised or vulnerable SHAs, whereas GitHub only validates that the SHA is 40 hex characters.
+- **Strict Vetting Whitelist (`--strict`)**: Enforces repository-approved hashes against `.pinner.toml`.
+- **Shift-Left Local Pre-commit (`pinner install-hook`)**: Prevents unpinned commits before code is pushed to CI.
+- **Cross-Platform Uniformity**: Provides the same security guarantee across GitLab, Bitbucket, Azure DevOps, Tekton, CircleCI, etc.
+
