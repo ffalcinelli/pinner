@@ -42,9 +42,17 @@ inputs:
     description: 'CircleCI token for authentication.'
     required: false
   format:
-    description: 'Output results in the specified format: text, json, markdown.'
+    description: 'Output results in the specified format: text, json, markdown, github, junit.'
     required: false
-    default: 'text'
+    default: 'github'
+  check-osv:
+    description: 'Check the OSV database for known vulnerabilities and compromised hashes during verification.'
+    required: false
+    default: 'false'
+  strict:
+    description: 'Fail verification if any dependency is not explicitly vetted in the configuration.'
+    required: false
+    default: 'false'
   upgrade-strategy:
     description: 'Strategy to use when upgrading actions: latest, major, minor, commit.'
     required: false
@@ -117,6 +125,14 @@ runs:
         if [ "$CMD" = "upgrade" ] || [ "$CMD" = "scan" ]; then
           if [ -n "${{ inputs.upgrade-strategy }}" ]; then
             CMD_ARGS="$CMD_ARGS --upgrade-strategy ${{ inputs.upgrade-strategy }}"
+          fi
+        fi
+        if [ "$CMD" = "verify" ]; then
+          if [ "${{ inputs.check-osv }}" = "true" ]; then
+            CMD_ARGS="$CMD_ARGS --check-osv"
+          fi
+          if [ "${{ inputs.strict }}" = "true" ]; then
+            CMD_ARGS="$CMD_ARGS --strict"
           fi
         fi
         

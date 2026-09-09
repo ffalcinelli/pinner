@@ -90,5 +90,6 @@ The high-level resolution engine is implemented in `Resolver` (`src/resolver/uni
 
 In addition to resolving references, `pinner` integrates with security auditing databases:
 - **OSV Vulnerability Check**: The `OsvClient` (`src/resolver/osv.rs`) queries the OpenSSF OSV (Open Source Vulnerability) database to check if a resolved commit SHA contains known vulnerabilities or has been flagged as compromised.
-- **Vulnerability Checks during Verification & Scanning**: Used by the `verify` command (with `--check-osv`) and the `scan` command to flag and blacklist compromised hashes.
+- **Vulnerability Checks during Verification & Scanning**: Used by the `verify` command (with `--check-osv`, also available via GitHub Action `check-osv: true`) and the `scan` command to flag and blacklist compromised hashes.
+
 

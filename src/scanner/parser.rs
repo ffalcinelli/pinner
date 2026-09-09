@@ -202,7 +202,7 @@ pub fn find_tasks(
 
     while let Some(m) = matches.next() {
         let mut current_key = String::new();
-        for cap in m.captures {
+        for cap in m.captures() {
             if cap.index == key_idx {
                 current_key = cap.node.utf8_text(content).unwrap_or("").to_string();
             } else if cap.index == value_idx {
