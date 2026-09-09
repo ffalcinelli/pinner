@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.15] - 2026-09-09
+
+### Added
+- ⌨️ **CLI Command Aliases**: Added ergonomic shorthand aliases for frequently used subcommands: `up` (`upgrade`), `check` (`verify`), `sbom` (`export-sbom`), and `pr` (`pr-create`).
+- 💡 **Actionable Verification Hints**: Added styled, actionable hints when `verify` fails, guiding users toward running `pinner pin` or checking options with `pinner verify --help`.
+
+### Performance
+- ⚡ **Patcher Allocation & Clone Elimination**: Avoided expensive string cloning and heap allocations during patch calculation by transferring ownership of file contents and using `HashMap::remove`.
+- ⚡ **Pipeline Scan Optimization**: Eliminated redundant struct clones in intermediate scan target collections and streamlined deduplication using `DependencyName`.
+- ⚡ **Zero-Allocation Formatting**: Replaced intermediate heap allocations (`push_str(&format!(...))`) with direct in-place buffer writing (`write!` and `writeln!`) across pipeline reporting, config generation, rate-limit parsing, and `format_security_list`.
+
+### Changed
+- 🎨 **CLI Help Text & UX Polish**: Added comprehensive `about` and `long_about` descriptions to the root CLI command, standardized argument help text punctuation, and styled warning prefixes across the pipeline.
+- 🛠️ **Dependency Bumps**: Upgraded `base64` to `0.23.1`, `similar` to `3.2.0`, `tree-sitter` to `0.26.13`, `moka` to `0.12.16`, `ignore` to `0.4.33`, `globset` to `0.4.20`, `toml` to `1.1.5`, and `futures` to `0.3.34`. Upgraded CI toolchain and `taiki-e/install-action` to `2.87.6`.
+
+### Fixed
+- 🛡️ **Secure Configuration File Permissions**: Prevented TOCTOU vulnerabilities and exposure of sensitive credentials (e.g., API tokens or OCI passwords) by enforcing strict `0o600` permissions on Unix platforms directly upon `.pinner.toml` creation in `init` and `scan`.
+- 🛡️ **Vulnerability Resolution**: Updated dependencies to address vulnerability advisories in `h2` and resolved yanked `chacha20` crate.
+
 ## [0.0.14] - 2026-08-12
 
 ### Added
