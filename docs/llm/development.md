@@ -41,6 +41,27 @@ cargo fmt -- --check
 
 ---
 
+## Release Automation (`scripts/release.sh`)
+
+Releases are automated using `scripts/release.sh`, which performs end-to-end verification, version bumping, changelog checks, tests, tagging, and atomic publishing:
+
+```bash
+# Automated interactive release prompt
+./scripts/release.sh
+
+# Or specify bump type directly
+./scripts/release.sh patch # or minor / major / 0.1.0
+```
+
+### Safety & Desync Safeguards:
+1. **Detached HEAD & Branch Check**: Ensures the release runs on a valid branch (typically `main`).
+2. **Pre-flight Remote Alignment**: Fetches remote tracking branches and validates that local `HEAD` is not behind or diverged from `origin/main`. Rejects the release before any modifications occur if unaligned.
+3. **Collision Check**: Verifies that the target version tag does not already exist locally or on remote `origin`.
+4. **Mid-Flight Race Guard**: After tests pass and before committing, re-verifies that `origin/main` has not received new commits while compilation/tests were running.
+5. **Atomic Push (`--atomic`)**: Pushes only the specific release tag along with the branch (`git push --atomic origin <branch> refs/tags/v<version>`). If the branch push is rejected on the remote, Git's atomic transaction guarantees that the tag is also rejected, preventing orphaned tags and spurious CI releases.
+
+---
+
 ## Testing Architecture
 
 `pinner` has a strict test suite achieving high logical coverage:

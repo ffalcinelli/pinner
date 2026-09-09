@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.16] - 2026-09-09
+
+### Changed
+- 🛠️ **Dependency Bumps**: Upgraded `tree-sitter` to `0.27.0`.
+- 📖 **Documentation**: Added comparison guide between `pinner verify` GitHub Action and GitHub's built-in immutable action settings.
+
+### Fixed
+- 🚀 **Release Automation Safety**: Enforced pre-flight remote tracking verification, race-condition guards during test execution, and atomic pushes (`--atomic`) in `scripts/release.sh` to prevent branch desynchronization and orphan release tags.
+
 ## [0.0.15] - 2026-09-09
 
 ### Added
