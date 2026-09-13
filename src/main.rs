@@ -28,7 +28,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
 
-        eprintln!("{} {:?}", "error:".red().bold(), e);
+        eprintln!("{} {:#}", "error:".red().bold(), e);
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
