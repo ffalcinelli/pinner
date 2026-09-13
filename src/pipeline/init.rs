@@ -200,15 +200,18 @@ pub fn install_git_hook() -> Result<(), PinnerError> {
 pinner verify --quiet
 "#;
 
-    fs::write(&hook_path, hook_content)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&hook_path)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&hook_path, perms)?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o755);
     }
+
+    let mut file = options.open(&hook_path)?;
+    use std::io::Write;
+    file.write_all(hook_content.as_bytes())?;
 
     println!(
         "{} Git pre-commit hook installed successfully at {}",
