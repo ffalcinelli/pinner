@@ -28,7 +28,14 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
 
-        eprintln!("{} {:#}", "error:".red().bold(), e);
+        if e.root_cause()
+            .downcast_ref::<pinner::error::PinnerError>()
+            .is_some_and(|pe| pe.is_path_not_found())
+        {
+            eprintln!("{} {}", "error:".red().bold(), e.root_cause());
+        } else {
+            eprintln!("{} {:#}", "error:".red().bold(), e);
+        }
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
