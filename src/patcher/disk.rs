@@ -26,8 +26,8 @@ pub struct Patcher {
 pub struct FilePatch {
     /// Path to the file.
     pub path: PathBuf,
-    /// Content of the file before any changes.
-    pub original_content: String,
+    /// Content of the file before any changes (only present during dry runs to save memory).
+    pub original_content: Option<String>,
     /// Content of the file after all changes are applied.
     pub new_content: String,
     /// A list of individual string replacements (old, new).
@@ -71,14 +71,20 @@ impl Patcher {
         let mut patches = Vec::new();
 
         for (path, mut updates) in file_results {
-            let content = file_contents.remove(&path).ok_or_else(|| {
+            let mut content = file_contents.remove(&path).ok_or_else(|| {
                 PinnerError::Io(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("Content for file {} not found", path.display()),
                 ))
             })?;
 
-            let mut new_content = content.clone();
+            // Only retain original content in dry run mode for diffing output.
+            let original_content = if self.dry_run {
+                Some(content.clone())
+            } else {
+                None
+            };
+
             let mut changes = Vec::new();
             let mut applied_results = Vec::new();
 
@@ -86,7 +92,7 @@ impl Patcher {
             updates.sort_by_key(|a| std::cmp::Reverse(a.task.start));
 
             for res in updates {
-                if let Some((old, new)) = apply_update(&mut new_content, &res)? {
+                if let Some((old, new)) = apply_update(&mut content, &res)? {
                     changes.push((old, new));
                     applied_results.push(res);
                 }
@@ -95,8 +101,8 @@ impl Patcher {
             if !changes.is_empty() {
                 patches.push(FilePatch {
                     path,
-                    original_content: content,
-                    new_content,
+                    original_content,
+                    new_content: content,
                     changes,
                     results: applied_results,
                 });
@@ -127,7 +133,10 @@ impl Patcher {
                     print!(
                         "{}",
                         self.formatter.format_diff(
-                            &patch.original_content,
+                            patch
+                                .original_content
+                                .as_deref()
+                                .expect("original_content missing during diff format"),
                             &patch.new_content,
                             &patch.results
                         )
@@ -315,7 +324,7 @@ mod tests {
 
         let patch = FilePatch {
             path: PathBuf::from("dummy.yml"),
-            original_content: "uses: a/b@v1".to_string(),
+            original_content: Some("uses: a/b@v1".to_string()),
             new_content: "uses: a/b@sha1 # v1".to_string(),
             changes: vec![(
                 "uses: a/b@v1".to_string(),
@@ -347,7 +356,7 @@ mod tests {
 
         let patch = FilePatch {
             path: PathBuf::from("dummy.yml"),
-            original_content: "uses: a/b@v1".to_string(),
+            original_content: Some("uses: a/b@v1".to_string()),
             new_content: "uses: a/b@sha1 # v1".to_string(),
             changes: vec![(
                 "uses: a/b@v1".to_string(),
@@ -379,7 +388,7 @@ mod tests {
 
         let patch = FilePatch {
             path: PathBuf::from("dummy.yml"),
-            original_content: "uses: a/b@v1".to_string(),
+            original_content: Some("uses: a/b@v1".to_string()),
             new_content: "uses: a/b@sha1 # v1".to_string(),
             changes: vec![(
                 "uses: a/b@v1".to_string(),
