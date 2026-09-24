@@ -74,23 +74,27 @@ impl Formatter {
 
     /// Helper to check security status of a hash.
     pub fn check_hash_security(&self, action: &str, hash: &str) -> HashSecurityStatus {
+        let clean_action = action.trim_start_matches("docker://");
+        let hash_bare = hash.strip_prefix("sha256:").unwrap_or(hash);
         let full_ref_with_at = format!("{}@{}", action, hash);
-        let full_ref_with_docker = if action.starts_with("docker://") {
-            format!("{}@{}", action.trim_start_matches("docker://"), hash)
-        } else {
-            format!("docker://{}@{}", action, hash)
-        };
+        let full_ref_bare_action = format!("{}@{}", clean_action, hash);
+        let full_ref_with_docker = format!("docker://{}@{}", clean_action, hash);
+        let full_ref_hash_bare = format!("{}@{}", action, hash_bare);
+        let full_ref_bare_all = format!("{}@{}", clean_action, hash_bare);
 
         let is_match = |list: &[String]| {
             list.iter().any(|item| {
-                item == hash
-                    || item == action
-                    || item == &full_ref_with_at
-                    || item == &full_ref_with_docker
-                    || (action.starts_with("docker://")
-                        && item == &format!("{}@{}", action.trim_start_matches("docker://"), hash))
-                    || (!action.starts_with("docker://")
-                        && item == &format!("docker://{}@{}", action, hash))
+                let item_trimmed = item.trim();
+                let item_bare = item_trimmed.strip_prefix("sha256:").unwrap_or(item_trimmed);
+                item_trimmed == hash
+                    || item_bare == hash_bare
+                    || item_trimmed == action
+                    || item_trimmed == clean_action
+                    || item_trimmed == full_ref_with_at
+                    || item_trimmed == full_ref_bare_action
+                    || item_trimmed == full_ref_with_docker
+                    || item_trimmed == full_ref_hash_bare
+                    || item_trimmed == full_ref_bare_all
             })
         };
 

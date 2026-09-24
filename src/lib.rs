@@ -188,7 +188,9 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
                 ));
             }
         }
-        Commands::Set { action, hash } => pipeline.set(&paths, &action, &hash).await?,
+        Commands::Set { action, hash, tag } => {
+            pipeline.set(&paths, &action, &hash, tag.as_deref()).await?
+        }
         Commands::InstallHook => install_git_hook()?,
         Commands::Init => init_project()?,
         Commands::ExportSbom => pipeline.export_sbom(&paths).await?,
@@ -285,11 +287,29 @@ mod tests {
         let pipeline = Pipeline::new(scanner, resolver, patcher);
 
         pipeline
-            .set(std::slice::from_ref(&f), "actions/checkout", "newhash")
+            .set(
+                std::slice::from_ref(&f),
+                "actions/checkout",
+                "newhash",
+                None,
+            )
             .await
             .unwrap();
-        let content = fs::read_to_string(f).unwrap();
-        assert!(content.contains("actions/checkout@newhash"));
+        let content = fs::read_to_string(&f).unwrap();
+        assert!(content.contains("actions/checkout@newhash # v3"));
+
+        // Test with explicit tag override
+        pipeline
+            .set(
+                std::slice::from_ref(&f),
+                "actions/checkout",
+                "anotherhash",
+                Some("v4.0.0"),
+            )
+            .await
+            .unwrap();
+        let content2 = fs::read_to_string(&f).unwrap();
+        assert!(content2.contains("actions/checkout@anotherhash # v4.0.0"));
     }
 
     #[tokio::test]

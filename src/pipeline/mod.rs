@@ -85,6 +85,7 @@ impl Pipeline {
         }
 
         let mut junit_cases = Vec::new();
+        let mut markdown_rows = Vec::new();
 
         for task in tasks {
             let is_pinned = if let Some(tag) = &task.current_tag {
@@ -99,6 +100,7 @@ impl Pipeline {
             let file_path = task.path.display().to_string();
 
             if !is_pinned {
+                let display_tag = task.current_tag.as_deref().unwrap_or("latest");
                 unpinned.push(crate::core::UnpinnedDependency {
                     path: task.path.clone(),
                     action: task.action.clone(),
@@ -107,9 +109,13 @@ impl Pipeline {
                     column: task.column,
                 });
 
+                markdown_rows.push(format!(
+                    "| ❌ | `{}` | `{}` | `{}:{}:{}` | Unpinned mutable dependency |",
+                    action_name, display_tag, file_path, task.line, task.column
+                ));
+
                 if !self.patcher.formatter.quiet {
                     if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
-                        let display_tag = task.current_tag.as_deref().unwrap_or("latest");
                         eprintln!(
                             "  {} {}@{} in {}:{}:{} [✗ unpinned]",
                             "✗".red().bold(),
@@ -120,7 +126,6 @@ impl Pipeline {
                             task.column.to_string().magenta(),
                         );
                     } else if self.patcher.formatter.format == crate::cli::OutputFormat::Github {
-                        let display_tag = task.current_tag.as_deref().unwrap_or("latest");
                         println!(
                             "::error file={},line={},col={}::Dependency {} is not pinned to an immutable hash (found tag: {})",
                             file_path, task.line, task.column, action_name, display_tag
@@ -129,7 +134,6 @@ impl Pipeline {
                 }
 
                 if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                    let display_tag = task.current_tag.as_deref().unwrap_or("latest");
                     junit_cases.push(format!(
                         "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\">\n      <failure message=\"Dependency is not pinned\">Dependency {} is not pinned to an immutable hash (found tag: {}) in {}:{}:{}</failure>\n    </testcase>",
                         action_name, file_path, action_name, display_tag, file_path, task.line, task.column
@@ -197,6 +201,11 @@ impl Pipeline {
                             column: task.column,
                         });
 
+                        markdown_rows.push(format!(
+                            "| 🚨 | `{}` | `{}` | `{}:{}:{}` | Compromised (Supply Chain Attack) |",
+                            action_name, tag, file_path, task.line, task.column
+                        ));
+
                         if !self.patcher.formatter.quiet {
                             if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
                                 eprintln!(
@@ -235,6 +244,11 @@ impl Pipeline {
                                 column: task.column,
                             });
 
+                            markdown_rows.push(format!(
+                                "| ⚠️ | `{}` | `{}` | `{}:{}:{}` | Not vetted (strict mode) |",
+                                action_name, tag, file_path, task.line, task.column
+                            ));
+
                             if !self.patcher.formatter.quiet {
                                 if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
                                     eprintln!(
@@ -262,14 +276,24 @@ impl Pipeline {
                                     action_name, file_path, action_name, tag, file_path, task.line, task.column
                                 ));
                             }
-                        } else if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                            junit_cases.push(format!(
-                                "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\"/>",
-                                action_name, file_path
+                        } else {
+                            markdown_rows.push(format!(
+                                "| ℹ️ | `{}` | `{}` | `{}:{}:{}` | Pinned (not vetted) |",
+                                action_name, tag, file_path, task.line, task.column
                             ));
+                            if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
+                                junit_cases.push(format!(
+                                    "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\"/>",
+                                    action_name, file_path
+                                ));
+                            }
                         }
                     }
                     crate::patcher::formatter::HashSecurityStatus::Vetted => {
+                        markdown_rows.push(format!(
+                            "| ✔ | `{}` | `{}` | `{}:{}:{}` | Pinned & Vetted |",
+                            action_name, tag, file_path, task.line, task.column
+                        ));
                         if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
                             junit_cases.push(format!(
                                 "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\"/>",
@@ -298,6 +322,23 @@ impl Pipeline {
                     eprintln!(
                         "{} Run `pinner pin` to automatically secure your dependencies, or `pinner verify --help` for options.",
                         "hint:".blue()
+                    );
+                }
+            } else if self.patcher.formatter.format == crate::cli::OutputFormat::Markdown {
+                println!("## Pinner Verification Report\n");
+                println!("| Status | Dependency | Reference | Location | Details |");
+                println!("| :---: | :--- | :--- | :--- | :--- |");
+                for row in &markdown_rows {
+                    println!("{}", row);
+                }
+                if is_success {
+                    println!("\n> **Result**: ✔ All dependencies are pinned to immutable hashes and secure.");
+                } else {
+                    println!(
+                        "\n> **Result**: ❌ Verification failed ({} unpinned, {} compromised, {} non-vetted). Run `pinner pin` to automatically secure your dependencies.",
+                        unpinned.len(),
+                        compromised.len(),
+                        non_vetted.len()
                     );
                 }
             } else if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
@@ -336,25 +377,29 @@ impl Pipeline {
         })
     }
 
-    /// Forcibly sets a specific action to a provided hash across all files.
+    /// Forcibly sets a specific action to a provided hash across all files, optionally overriding the tag comment.
     pub async fn set(
         &self,
         paths: &[PathBuf],
         action: &str,
         hash: &str,
+        tag_override: Option<&str>,
     ) -> Result<(), PinnerError> {
         let (tasks, file_contents) = self.scanner.collect_tasks(paths).await?;
         let mut results = Vec::new();
 
         for task in tasks {
             if task.action.0 == action {
+                let new_tag = tag_override
+                    .map(String::from)
+                    .or_else(|| task.logical_tag());
                 results.push(crate::core::UpdateResult {
                     action: task.action.clone(),
                     path: task.path.clone(),
                     old_tag: task.current_tag.clone(),
                     task: task.clone(),
                     new_sha: crate::core::DependencyRef::from(hash.to_string()),
-                    new_tag: None,
+                    new_tag,
                 });
             }
         }
@@ -401,6 +446,47 @@ mod tests {
                 crate::cli::OutputFormat::Github,
                 false,
                 vec![],
+                vec![],
+                true,
+            ),
+            ui,
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let res = pipeline
+            .verify(std::slice::from_ref(&f), false, false)
+            .await
+            .unwrap();
+        assert!(!res.is_success());
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_verify_markdown_format() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, "uses: actions/checkout@v3\nuses: actions/setup-node@1111111111111111111111111111111111111111").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let osv_client = Arc::new(crate::resolver::OsvClient::new(
+            None,
+            false,
+            Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            osv_client,
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+
+        let patcher = Patcher::new(
+            Formatter::new(
+                crate::cli::OutputFormat::Markdown,
+                false,
+                vec!["actions/setup-node@1111111111111111111111111111111111111111".to_string()],
                 vec![],
                 true,
             ),

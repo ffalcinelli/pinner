@@ -21,14 +21,14 @@ Hash-pinning ensures that you run the **exact** code you've audited, every singl
 
 - **Domain-Driven Pipeline**: Built on a strict Scanner -> Resolver -> Patcher architecture, ensuring high testability, concurrency, and safe mutations.
 - **Surgical Replacement**: Uses `tree-sitter` for precise YAML parsing, preserving comments, indentation, and formatting perfectly.
-- **Multi-Forge Support**: Works with GitHub, GitLab, Bitbucket, and Forgejo/Gitea.
+- **Multi-Forge & Composite Action Support**: Works with GitHub Actions (workflows and local composite actions in `.github/actions/` or `action.yml`/`action.yaml`), GitLab, Bitbucket, CircleCI, Azure DevOps, AWS CodeBuild, Tekton, Kubernetes, and Forgejo/Gitea.
 - **Tag Preservation**: Automatically appends the original tag as a comment (e.g., `@<hash> # v2`).
-- **Container Pinning**: Automatically pins Docker images to their immutable digests (e.g., `image: alpine@sha256:...`).
+- **Container Pinning**: Automatically pins Docker images to their immutable digests across `image:` declarations and GitHub Actions `container:` definitions (e.g., `image: alpine@sha256:...`, `container: node@sha256:...`).
 - **Preceding/Header Comments Support**: Parses block/header comments, extracting version tags and surgically updating version-only comments above dependencies (e.g. `# v1` -> `# v2`).
 - **Tekton & Kubernetes Support**: Parses and pins OCI bundles in Tekton files and container images in standard Kubernetes manifests.
 - **Auto-Mitigation (PR Creation)**: Automates running pinning, branching, committing, pushing, and creating Pull/Merge Requests on GitHub/GitLab.
 - **Flexible Upgrades**: Multiple strategies to keep your actions up to date (Major, Minor, Latest).
-- **CI Ready**: Includes a `verify` mode to ensure all actions remain pinned in your PRs, supporting GitHub Actions annotations and JUnit XML test reports.
+- **CI Ready**: Includes a `verify` mode to ensure all actions remain pinned in your PRs, supporting GitHub Actions annotations, Markdown summaries, and JUnit XML test reports.
 - **Security Scanning**: A `scan` subcommand to query the OpenSSF OSV database for known vulnerabilities and supply-chain compromises.
 - **Visual Security Feedback**: Appends colorful indicators (`[✓ vetted]`, `[✗ compromised]`, or `[? not checked]`) during dry-runs and diff outputs.
 
@@ -87,6 +87,9 @@ pinner verify
 # Fail verify on compromised OSV hashes, strict vetting policy, and output workflow annotations
 pinner verify --check-osv --strict --format github
 
+# Generate Markdown verification table (ideal for GitHub Actions step summaries or PR comments)
+pinner verify --format markdown
+
 # Generate standard JUnit XML reports of scanned dependencies
 pinner verify --format junit
 ```
@@ -98,9 +101,13 @@ pinner install-hook
 ```
 
 ### 5. Manual Set
-Forcibly update a specific action to a provided hash across all workflows.
+Forcibly update a specific action to a provided hash across all workflows (preserves existing tag comments by default).
 ```bash
+# Set hash while preserving the existing tag comment
 pinner set actions/checkout 8f4b7f84864484a7bf31766abe9204da3cbe65b3
+
+# Or explicitly override the tag comment with --tag (-t)
+pinner set actions/checkout 8f4b7f84864484a7bf31766abe9204da3cbe65b3 --tag v4.2.2
 ```
 
 ### 6. Initialize Configuration
@@ -224,11 +231,11 @@ While this built-in setting provides a baseline syntax guard for GitHub Actions,
 | Security Capability | GitHub Built-in Setting | Pinner `verify` |
 | :--- | :---: | :---: |
 | **Action SHA Syntax Enforcement** (`uses:`) | ✅ Yes | ✅ Yes |
-| **Container & Docker Image Pinning** (`image:`, `services:`) | ❌ No | ✅ Yes (`docker://`, `image:`) |
+| **Container & Docker Image Pinning** (`image:`, `container:`, `services:`) | ❌ No | ✅ Yes (`docker://`, `image:`, `container:`) |
 | **OpenSSF OSV Vulnerability & Malware Detection** | ❌ No | ✅ Yes (`--check-osv`) |
 | **Strict Vetting Whitelist Policy** (`.pinner.toml`) | ❌ No | ✅ Yes (`--strict`) |
 | **Shift-Left Local Pre-Commit Hook** (`install-hook`) | ❌ No (CI failure only) | ✅ Yes (blocks before commit) |
-| **PR Annotations & Diagnostic Test Reports** | ❌ No (workflow fails to start) | ✅ Yes (`--format github` / `junit`) |
+| **PR Annotations, Summaries & Test Reports** | ❌ No (workflow fails to start) | ✅ Yes (`--format github` / `markdown` / `junit`) |
 | **Cross-Platform Support** (GitLab, Bitbucket, Tekton, etc.) | ❌ GitHub only | ✅ Unified across all platforms |
 | **Self-Service Execution** (No Org/Repo Admin Required) | ❌ Admin required | ✅ As code in repository |
 

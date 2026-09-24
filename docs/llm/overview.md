@@ -99,9 +99,10 @@ When a command like `pinner pin` or `pinner upgrade` runs:
 ## Verification & Platform Integration (GitHub Native vs. Pinner)
 
 GitHub provides a built-in repository/organization setting: "Require actions to be pinned to a full-length commit SHA". While this provides basic syntactic enforcement for `uses:` clauses in GitHub Actions, Pinner's `verify` command and GitHub Action (`action/action.yml`) provide critical security layers beyond GitHub's native setting:
-- **Container / Docker Image Digests**: Validates OCI container digests (`image:`, `services:`), which GitHub's native setting does not inspect.
+- **Container / Docker Image Digests**: Validates OCI container digests (`image:`, `container:`, `services:`), which GitHub's native setting does not inspect.
 - **OSV Vulnerability Detection (`--check-osv`)**: Queries OpenSSF OSV to detect compromised or vulnerable SHAs, whereas GitHub only validates that the SHA is 40 hex characters.
 - **Strict Vetting Whitelist (`--strict`)**: Enforces repository-approved hashes against `.pinner.toml`.
 - **Shift-Left Local Pre-commit (`pinner install-hook`)**: Prevents unpinned commits before code is pushed to CI.
-- **Cross-Platform Uniformity**: Provides the same security guarantee across GitLab, Bitbucket, Azure DevOps, Tekton, CircleCI, etc.
+- **Rich Diagnostic Reports (`--format`)**: Generates GitHub workflow annotations, Markdown summary tables, and JUnit XML test reports.
+- **Cross-Platform Uniformity**: Provides the same security guarantee across GitHub (including local composite actions), GitLab, Bitbucket, Azure DevOps, Tekton, CircleCI, etc.
 

@@ -211,6 +211,9 @@ pub enum Commands {
         action: String,
         /// Commit SHA-1 hash.
         hash: String,
+        /// Optional symbolic tag comment to display (e.g., v4.1.0). If omitted, existing tag comment is preserved.
+        #[arg(short, long)]
+        tag: Option<String>,
     },
     /// Install a pre-commit hook that runs pinner verify.
     InstallHook,
@@ -305,6 +308,25 @@ mod tests {
             Commands::Set {
                 action: "actions/checkout".into(),
                 hash: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".into(),
+                tag: None,
+            }
+        );
+
+        let cli_with_tag = Cli::try_parse_from([
+            "pinner",
+            "set",
+            "actions/checkout",
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            "--tag",
+            "v4.0.0",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli_with_tag.command,
+            Commands::Set {
+                action: "actions/checkout".into(),
+                hash: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".into(),
+                tag: Some("v4.0.0".into()),
             }
         );
     }

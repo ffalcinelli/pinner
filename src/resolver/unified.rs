@@ -155,7 +155,7 @@ impl Resolver {
         }
 
         if let Some(ver) = &task.current_tag {
-            if task.action.is_docker() || task.key == "image" {
+            if task.action.is_docker() || task.key == "image" || task.key == "container" {
                 if !ver.starts_with("sha256:") {
                     let image = task.action.trim_docker_prefix();
                     let digest = registry.resolve_digest(image, ver).await?;
@@ -184,7 +184,7 @@ impl Resolver {
             return Ok(None);
         }
 
-        if task.action.is_docker() || task.key == "image" {
+        if task.action.is_docker() || task.key == "image" || task.key == "container" {
             let image = task.action.trim_docker_prefix();
             let tag = task.current_tag.as_deref().unwrap_or("latest");
             let digest = registry.resolve_digest(image, tag).await?;
@@ -259,7 +259,7 @@ impl Resolver {
             return Ok(Some((DependencyRef::Version(tag.clone()), Some(tag))));
         }
 
-        if task.action.is_docker() || task.key == "image" {
+        if task.action.is_docker() || task.key == "image" || task.key == "container" {
             let image = task.action.trim_docker_prefix();
             let tag = task.current_tag.as_deref().unwrap_or("latest");
             let digest = registry.resolve_digest(image, tag).await?;
