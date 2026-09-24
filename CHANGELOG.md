@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.17] - 2026-09-24
+
+### Added
+- 🏷️ **Tag Override for Set Command**: Added `--tag` (`-t`) option to `pinner set` to specify a custom tag comment (e.g., `--tag v4.0.0`) while setting commit SHA-1 hashes, preserving existing comments if omitted.
+- ☸️ **Kubernetes & Composite Actions Support**: Added automatic scanning and pinning for Kubernetes manifests and composite GitHub Actions (`action.yml`, `action.yaml`).
+
+### Performance
+- ⚡ **Dry-Run Memory Optimization**: Avoided unnecessary file content cloning during dry-run executions when files are unmodified.
+
+### Changed
+- 🤖 **Consolidated AI Context**: Merged `GEMINI.md` and `JULES.md` into a single canonical `AGENTS.md` context document.
+- 🎨 **Top-Level Error Diagnostics**: Formatted top-level CLI error outputs using alternate display formatting and stripped redundant wrapping from `PathNotFound` errors for cleaner diagnostics.
+- 🛠️ **Dependency Bumps**: Upgraded `reqwest` to `0.13.5`, `dirs` to `7.0.0`, `toml` to `1.1.6`, `clap_complete` to `4.6.11`, and updated CI actions.
+
+### Fixed
+- 🛡️ **Hook Installation Security**: Resolved TOCTOU race vulnerability during git pre-commit hook file creation in `install-hook`.
+
 ## [0.0.16] - 2026-09-09
 
 ### Changed
