@@ -111,6 +111,9 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
 
     let default_paths = [
         ".github/workflows",
+        ".github/actions",
+        "action.yml",
+        "action.yaml",
         "bitbucket-pipelines.yml",
         "bitbucket-pipelines.yaml",
         ".gitlab-ci.yml",
@@ -134,6 +137,10 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
 
     if defaults.contains(&PathBuf::from("bitbucket-pipelines.yml")) {
         defaults.retain(|p| p != Path::new("bitbucket-pipelines.yaml"));
+    }
+
+    if defaults.contains(&PathBuf::from("action.yml")) {
+        defaults.retain(|p| p != Path::new("action.yaml"));
     }
 
     if defaults.is_empty() {
@@ -230,6 +237,18 @@ mod tests {
         assert!(res.contains(&PathBuf::from("bitbucket-pipelines.yml")));
         // Should NOT contain .yaml if .yml exists
         assert!(!res.contains(&PathBuf::from("bitbucket-pipelines.yaml")));
+
+        // Create action.yml and action.yaml
+        fs::write("action.yml", "").unwrap();
+        fs::write("action.yaml", "").unwrap();
+        let res = get_workflows(&[]);
+        assert!(res.contains(&PathBuf::from("action.yml")));
+        assert!(!res.contains(&PathBuf::from("action.yaml")));
+
+        // Create .github/actions
+        fs::create_dir_all(".github/actions").unwrap();
+        let res = get_workflows(&[]);
+        assert!(res.contains(&PathBuf::from(".github/actions")));
     }
 
     #[tokio::test]

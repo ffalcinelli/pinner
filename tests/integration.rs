@@ -316,7 +316,7 @@ async fn test_set_command() {
         .unwrap();
 
     let content = fs::read_to_string(&wf).unwrap();
-    assert!(content.contains("actions/checkout@fixedhash"));
+    assert!(content.contains("actions/checkout@fixedhash # v3"));
 }
 
 #[tokio::test]

@@ -69,3 +69,7 @@ harness = false
 [[bench]]
 name = "formatter_bench"
 harness = false
+
+[[bench]]
+name = "osv_bench"
+harness = false

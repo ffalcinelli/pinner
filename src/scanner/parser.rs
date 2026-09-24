@@ -14,6 +14,7 @@ impl CiProvider {
         let path_str = path.to_string_lossy().to_lowercase();
         let mappings = [
             (".github/workflows", CiProvider::GitHub),
+            (".github/actions", CiProvider::GitHub),
             (".forgejo/workflows", CiProvider::Forgejo),
             (".gitea/workflows", CiProvider::Gitea),
             (".gitlab-ci", CiProvider::GitLab),
@@ -32,12 +33,15 @@ impl CiProvider {
             }
         }
 
-        // Check common Kubernetes manifest file names
+        // Check composite actions and common Kubernetes manifest file names
         if let Some(file_name) = path
             .file_name()
             .and_then(|n| n.to_str())
             .map(|n| n.to_lowercase())
         {
+            if file_name == "action.yml" || file_name == "action.yaml" {
+                return CiProvider::GitHub;
+            }
             if file_name == "pod.yaml"
                 || file_name == "pod.yml"
                 || file_name == "deployment.yaml"
@@ -66,7 +70,7 @@ impl CiProvider {
     pub fn supports_key(&self, key: &str) -> bool {
         match self {
             CiProvider::GitHub | CiProvider::Forgejo | CiProvider::Gitea => {
-                matches!(key, "uses" | "image")
+                matches!(key, "uses" | "image" | "container")
             }
             CiProvider::GitLab => matches!(key, "include" | "image" | "ref"),
             CiProvider::Bitbucket => matches!(key, "pipe" | "image"),
@@ -97,7 +101,7 @@ static USES_QUERY: LazyLock<Result<Query, String>> = LazyLock::new(|| {
             (plain_scalar (string_scalar) @key)
           ]
           value: (_) @value
-          (#match? @key "^(uses|pipe|image|include|ref|task|template|bundle)$"))
+          (#match? @key "^(uses|pipe|image|include|ref|task|template|bundle|container)$"))
 
         ; Capture CircleCI Orbs which have a nested structure: orbs -> name -> value.
         (block_mapping_pair
@@ -233,6 +237,11 @@ pub fn find_tasks(
                 }
 
                 let v_node = cap.node;
+                if current_key == "container"
+                    && (v_node.kind() == "block_node" || v_node.kind() == "block_mapping")
+                {
+                    continue;
+                }
                 let mut val = unquote(v_node.utf8_text(content).unwrap_or(""));
 
                 // GitLab special case: combine 'project' and 'ref' into a single virtual dependency.
@@ -369,6 +378,11 @@ fn create_task(
     key: String,
 ) -> Option<UpdateTask> {
     if key == "include" || key == "project" {
+        return None;
+    }
+    if key == "container"
+        && (value.contains('\n') || value.contains("image:") || value.trim().is_empty())
+    {
         return None;
     }
     if value.starts_with("./") {
@@ -894,5 +908,83 @@ spec:
             results[0].preceding_comments.as_deref(),
             Some("# This is a block comment\n# that explains checkout.")
         );
+    }
+
+    #[test]
+    fn test_find_tasks_github_composite_action() {
+        assert_eq!(
+            CiProvider::from_path(Path::new("action.yml")),
+            CiProvider::GitHub
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new("action.yaml")),
+            CiProvider::GitHub
+        );
+        assert_eq!(
+            CiProvider::from_path(Path::new(".github/actions/my-action/action.yml")),
+            CiProvider::GitHub
+        );
+
+        let yaml = r#"
+name: My Composite Action
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new("action.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].action.0, "actions/checkout");
+        assert_eq!(results[0].current_tag.as_deref(), Some("v4"));
+        assert_eq!(results[0].provider, CiProvider::GitHub);
+    }
+
+    #[test]
+    fn test_find_tasks_container_scalar() {
+        let yaml = r#"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: node:18-alpine
+    steps:
+      - uses: actions/checkout@v3
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].action.0, "node");
+        assert_eq!(results[0].current_tag.as_deref(), Some("18-alpine"));
+        assert_eq!(results[0].key, "container");
+
+        assert_eq!(results[1].action.0, "actions/checkout");
+        assert_eq!(results[1].current_tag.as_deref(), Some("v3"));
+    }
+
+    #[test]
+    fn test_find_tasks_container_mapping() {
+        let yaml = r#"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:18-alpine
+    steps:
+      - uses: actions/checkout@v3
+"#;
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].action.0, "node");
+        assert_eq!(results[0].current_tag.as_deref(), Some("18-alpine"));
+        assert_eq!(results[0].key, "image");
+
+        assert_eq!(results[1].action.0, "actions/checkout");
+        assert_eq!(results[1].current_tag.as_deref(), Some("v3"));
     }
 }

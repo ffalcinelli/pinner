@@ -32,13 +32,25 @@ impl Pipeline {
                 .current_tag
                 .clone()
                 .unwrap_or_else(|| "latest".to_string());
-            let (component_type, purl) = if name.contains('/') && !name.contains('.') {
+            let is_container = task.action.is_docker()
+                || task.key == "image"
+                || task.key == "bundle"
+                || task.key == "container";
+
+            let (component_type, purl) = if is_container {
+                (
+                    "container",
+                    format!("pkg:oci/{}@{}", task.action.trim_docker_prefix(), version),
+                )
+            } else if task.key == "pipe" {
+                ("library", format!("pkg:bitbucket/{}@{}", name, version))
+            } else if task.key == "orbs" {
+                ("library", format!("pkg:circleci/{}@{}", name, version))
+            } else {
                 (
                     "library",
                     format!("pkg:github/{}@{}", name, version.replace('@', "")),
                 )
-            } else {
-                ("container", format!("pkg:oci/{}@{}", name, version))
             };
 
             components.push(Component {
@@ -79,6 +91,38 @@ mod tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("action.yml");
         std::fs::write(&file_path, "uses: actions/checkout@v3").unwrap();
+
+        let remote = Arc::new(MockRemoteProvider::new());
+        let registry = Arc::new(MockRegistryProvider::new());
+        let osv = Arc::new(OsvClient::new(
+            None,
+            false,
+            std::time::Duration::from_secs(0),
+        ));
+        let resolver = Resolver::new(remote, registry, osv, UpgradeStrategy::Latest, 10);
+        let scanner = crate::scanner::Scanner::new(vec![]);
+        let patcher = crate::patcher::Patcher::new(
+            crate::patcher::Formatter::new(
+                crate::cli::OutputFormat::Text,
+                false,
+                vec![],
+                vec![],
+                true,
+            ),
+            Arc::new(crate::patcher::ui::TestUi { response: true }),
+            false,
+        );
+        let pipeline = Pipeline::new(scanner, resolver, patcher);
+
+        let result = pipeline.export_sbom(&[file_path]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_export_sbom_container_with_slash() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("ci.yml");
+        std::fs::write(&file_path, "jobs:\n  test:\n    steps:\n      - uses: docker://cimg/node:18.0\n      - uses: bitbucket/pipe:1.0").unwrap();
 
         let remote = Arc::new(MockRemoteProvider::new());
         let registry = Arc::new(MockRegistryProvider::new());

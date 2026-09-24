@@ -40,16 +40,18 @@ Line 25: uses: actions/setup-node@v2 (Offset: 500)
 
 ## Diff Formatting & Security Tags (`formatter.rs`)
 
-`pinner` formats updates for the console, JSON output, or Markdown summaries.
+`pinner` formats updates and verification results for the console, JSON output, GitHub Actions workflow annotations, standard JUnit XML, or Markdown tables (ideal for GitHub step summaries).
 
 ### 1. Diffs using the `similar` crate
 Generates standard unified Git diffs (`+` and `-` lines).
 
-### 2. Inline Security Status
-When generating diffs, `pinner` cross-references the resolved hash/digest against groups defined in the config:
+### 2. Inline Security Status & Hash Normalization
+When generating diffs or verifying dependencies, `pinner` cross-references the resolved hash/digest against groups defined in `.pinner.toml`:
 *   **Vetted**: Explicitly approved hashes.
 *   **Compromised**: Hashes identified as containing malicious code or known exploits.
 *   **Not Checked**: Hashes that are not classified.
+
+Hash matching automatically normalizes prefixes (such as `sha256:` digest prefixes and `docker://` protocol schemes) and checks against bare hashes, action names, and canonical references (`action@hash`).
 
 If security feedback is enabled, these statuses are appended inline in the printed terminal diff:
 *   `[✓ vetted]` (in bold green)

@@ -94,7 +94,7 @@ fn generate_vetted_config(selection: usize) -> Vec<String> {
                 .to_string(),
         );
         vetted_lines.push(
-            "    \"actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3d2e\"  # v4.1.7"
+            "    \"actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3d2e\", # v4.1.7"
                 .to_string(),
         );
         vetted_lines.push("]".to_string());

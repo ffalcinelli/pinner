@@ -120,3 +120,44 @@ fn test_cli_unhandled_error_styling() {
             "Path not found: non_existent_directory_for_test",
         ));
 }
+
+#[test]
+fn test_cli_set_with_tag() {
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3").unwrap();
+
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.arg("--workflows")
+        .arg(wf.to_str().unwrap())
+        .arg("--yes")
+        .arg("set")
+        .arg("actions/checkout")
+        .arg("abc123hash")
+        .arg("--tag")
+        .arg("v4.5.6");
+    cmd.assert().success();
+
+    let content = fs::read_to_string(&wf).unwrap();
+    assert!(content.contains("actions/checkout@abc123hash # v4.5.6"));
+}
+
+#[test]
+fn test_cli_verify_format_markdown() {
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3").unwrap();
+
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.arg("--workflows")
+        .arg(wf.to_str().unwrap())
+        .arg("--format")
+        .arg("markdown")
+        .arg("verify");
+    cmd.assert()
+        .failure()
+        .stdout(predicate::str::contains("## Pinner Verification Report"))
+        .stdout(predicate::str::contains(
+            "| ❌ | `actions/checkout` | `v3` |",
+        ));
+}
