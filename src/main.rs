@@ -28,11 +28,20 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
 
-        if e.root_cause()
-            .downcast_ref::<pinner::error::PinnerError>()
-            .is_some_and(|pe| pe.is_path_not_found())
-        {
+        if let Some(pinner::error::PinnerError::PathNotFound(path)) = e.root_cause().downcast_ref::<pinner::error::PinnerError>() {
             eprintln!("{} {}", "error:".red().bold(), e.root_cause());
+            let defaults = [".github/workflows", ".gitlab-ci.yml", "bitbucket-pipelines.yml", ".circleci/config.yml"];
+            if defaults.iter().any(|d| path.contains(d)) {
+                eprintln!(
+                    "{} No workflows found. Are you in the root of a repository? You can specify a custom path with `-w <path>`.",
+                    "hint:".blue()
+                );
+            } else {
+                eprintln!(
+                    "{} Ensure the specified path exists and is accessible.",
+                    "hint:".blue()
+                );
+            }
         } else {
             eprintln!("{} {:#}", "error:".red().bold(), e);
         }
