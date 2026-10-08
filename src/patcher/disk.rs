@@ -214,6 +214,7 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "uses".to_string(),
             provider: CiProvider::GitHub,
         };

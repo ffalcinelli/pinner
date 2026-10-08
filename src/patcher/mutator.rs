@@ -71,6 +71,18 @@ pub fn apply_update(
 
     let new_val = if res.task.key == "ref" {
         format!("{}{}{}", res.new_sha, new_comment, extra_suffix)
+    } else if let Some(inline_tag) = &res.task.image_tag {
+        // Keep the `name:tag@digest` layout. The tag is already visible inline,
+        // so no version comment is added.
+        let tag = res
+            .new_tag
+            .as_deref()
+            .filter(|t| !is_hash_ref(t))
+            .unwrap_or(inline_tag);
+        format!(
+            "{}:{}@{}{}",
+            res.task.action, tag, res.new_sha, extra_suffix
+        )
     } else {
         let separator = if res.task.key == "pipe" { ":" } else { "@" };
         format!(
@@ -152,6 +164,7 @@ mod tests {
                 current_tag: Some("v3".to_string()),
                 comment: None,
                 preceding_comments: None,
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -181,6 +194,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: None,
                 preceding_comments: Some("# v1".to_string()),
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 2,
                 column: 7,
@@ -209,6 +223,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: Some("# keep me".to_string()),
                 preceding_comments: None,
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -237,6 +252,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: Some("# v1".to_string()),
                 preceding_comments: None,
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -265,6 +281,7 @@ mod tests {
                 current_tag: Some("sha256:oldhash".to_string()),
                 comment: Some("# stable".to_string()),
                 preceding_comments: None,
+                image_tag: None,
                 key: "image".to_string(),
                 line: 1,
                 column: 1,
@@ -294,6 +311,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: None,
                 preceding_comments: None,
+                image_tag: None,
                 key: "ref".to_string(),
                 line: 1,
                 column: 1,
@@ -466,5 +484,36 @@ mod tests {
         let res = result_for(&content, "o/r@v1", Some("# keep"), "v2");
         apply_update(&mut content, &res).unwrap();
         assert_eq!(content, "uses: o/r@hash # v2 # keep\r\n");
+    }
+
+    #[test]
+    fn test_apply_update_keeps_inline_image_tag() {
+        let old = format!("sha256:{}", "1".repeat(64));
+        let new = format!("sha256:{}", "2".repeat(64));
+        let mut content = format!("image: alpine:3.20@{} # keep", old);
+        let value = format!("alpine:3.20@{}", old);
+        let start = content.find(&value).unwrap();
+        let res = UpdateResult {
+            action: "alpine".into(),
+            path: "f.yml".into(),
+            old_tag: Some(old.clone()),
+            task: UpdateTask {
+                path: "f.yml".into(),
+                start,
+                end: start + value.len(),
+                line: 1,
+                action: "alpine".into(),
+                current_tag: Some(old.clone()),
+                comment: Some("# keep".to_string()),
+                image_tag: Some("3.20".to_string()),
+                key: "image".to_string(),
+                ..Default::default()
+            },
+            new_sha: DependencyRef::from(new.clone()),
+            new_tag: Some("3.20".to_string()),
+        };
+
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, format!("image: alpine:3.20@{} # keep", new));
     }
 }

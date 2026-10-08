@@ -25,6 +25,9 @@ pub struct UpdateTask {
     pub comment: Option<String>,
     /// Any consecutive block/header comments immediately preceding the dependency.
     pub preceding_comments: Option<String>,
+    /// Tag written inline next to a digest in an image reference, e.g. `3.20` in
+    /// `alpine:3.20@sha256:…`. The patcher keeps this `name:tag@digest` layout.
+    pub image_tag: Option<String>,
     /// The YAML key used to define this dependency (e.g., `uses`, `image`, `pipe`).
     pub key: String,
     /// The CI provider detected for this task.
@@ -58,6 +61,9 @@ impl UpdateTask {
                         return Some(m.as_str().to_string());
                     }
                 }
+            }
+            if let Some(image_tag) = &self.image_tag {
+                return Some(image_tag.clone());
             }
             if let Some(preceding) = &self.preceding_comments {
                 for line in preceding.lines() {
@@ -288,5 +294,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(task.logical_tag(), Some("20".to_string()));
+
+        // Inline image tag next to a digest
+        let task = UpdateTask {
+            current_tag: Some(format!("sha256:{}", "a".repeat(64))),
+            image_tag: Some("3.20".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("3.20".to_string()));
     }
 }

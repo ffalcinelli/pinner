@@ -1,5 +1,5 @@
 use crate::core::UpdateTask;
-use crate::core::{CiProvider, DependencyName};
+use crate::core::{is_hash_ref, CiProvider, DependencyName};
 use crate::error::PinnerError;
 use globset::Glob;
 use std::path::Path;
@@ -388,6 +388,11 @@ fn create_task(
     if value.starts_with("./") {
         return None;
     }
+    // Templated values (`${{ matrix.image }}`, `$CI_REGISTRY_IMAGE`, `{{ .Values.image }}`)
+    // are resolved by the CI system at run time and cannot be pinned statically.
+    if value.contains(['$', '{', '}']) {
+        return None;
+    }
 
     let (action_part, tag) = if let Some((a, t)) = value.split_once('@') {
         (a, Some(t))
@@ -410,6 +415,15 @@ fn create_task(
         } else {
             (value.as_str(), None)
         }
+    };
+
+    // `name:tag@digest` image references: split the inline tag off the name so the
+    // image resolves correctly, and keep it so updates can preserve the layout.
+    let is_image_ref =
+        matches!(key.as_str(), "image" | "container") || action_part.starts_with("docker://");
+    let (action_part, image_tag) = match tag {
+        Some(t) if is_image_ref && is_hash_ref(t) => split_image_tag(action_part),
+        _ => (action_part, None),
     };
 
     let action = DependencyName::from(action_part);
@@ -446,9 +460,23 @@ fn create_task(
         current_tag: tag.map(|s| s.to_string()),
         comment,
         preceding_comments: None,
+        image_tag,
         key,
         provider: ctx.provider,
     })
+}
+
+/// Splits `name:tag` into `("name", Some("tag"))`. A colon that belongs to a registry
+/// port (`localhost:5000/app`) is not a tag separator.
+fn split_image_tag(name: &str) -> (&str, Option<String>) {
+    let last_segment = name.rfind('/').map_or(0, |i| i + 1);
+    match name[last_segment..].rfind(':') {
+        Some(i) => {
+            let colon = last_segment + i;
+            (&name[..colon], Some(name[colon + 1..].to_string()))
+        }
+        None => (name, None),
+    }
 }
 
 #[cfg(test)]
@@ -476,6 +504,51 @@ mod tests {
         assert_eq!(results[0].action.0, "actions/checkout");
         assert_eq!(results[0].current_tag.as_deref(), Some("v3"));
         assert_eq!(results[0].key, "uses");
+    }
+
+    #[test]
+    fn test_find_tasks_image_tag_and_digest() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let yaml = format!(
+            "jobs:\n  a:\n    container: alpine:3.20@{d}\n    steps:\n      - uses: docker://localhost:5000/app:1.2@{d}\n",
+            d = digest
+        );
+        let (tree, content) = parse_yaml(&yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].action.0, "alpine");
+        assert_eq!(results[0].image_tag.as_deref(), Some("3.20"));
+        assert_eq!(results[0].current_tag.as_deref(), Some(digest.as_str()));
+        assert_eq!(results[1].action.0, "docker://localhost:5000/app");
+        assert_eq!(results[1].image_tag.as_deref(), Some("1.2"));
+    }
+
+    #[test]
+    fn test_find_tasks_skips_templated_values() {
+        let yaml = "jobs:\n  a:\n    container: ${{ matrix.image }}\n    steps:\n      - uses: ${{ inputs.action }}\nimage: $CI_REGISTRY_IMAGE:latest\n";
+        let (tree, content) = parse_yaml(yaml);
+        let path = Path::new(".github/workflows/ci.yml");
+        let results = find_tasks(path, tree.root_node(), &content, &[]).unwrap();
+        assert!(results.is_empty(), "{:?}", results);
+    }
+
+    #[test]
+    fn test_split_image_tag() {
+        assert_eq!(
+            split_image_tag("alpine:3.20"),
+            ("alpine", Some("3.20".into()))
+        );
+        assert_eq!(split_image_tag("alpine"), ("alpine", None));
+        assert_eq!(
+            split_image_tag("localhost:5000/app"),
+            ("localhost:5000/app", None)
+        );
+        assert_eq!(
+            split_image_tag("docker://ghcr.io/o/r:v1"),
+            ("docker://ghcr.io/o/r", Some("v1".into()))
+        );
     }
 
     #[test]
