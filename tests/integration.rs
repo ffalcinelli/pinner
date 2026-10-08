@@ -8,6 +8,7 @@ use tempfile::tempdir;
 #[tokio::test]
 #[serial_test::serial]
 async fn test_full_pin_cycle() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let mut github_server = Server::new_async().await;
     let _m1 = github_server
         .mock("GET", "/repos/actions/checkout/commits/v3")
@@ -50,6 +51,7 @@ async fn test_full_pin_cycle() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_verify_command() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let dir = tempdir().unwrap();
     let workflows = dir.path().join(".github/workflows");
     fs::create_dir_all(&workflows).unwrap();
@@ -102,6 +104,7 @@ async fn test_verify_command() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_verify_false_positive() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let dir = tempdir().unwrap();
     let workflows = dir.path().join(".github/workflows");
     fs::create_dir_all(&workflows).unwrap();
@@ -151,6 +154,7 @@ jobs:
 #[tokio::test]
 #[serial_test::serial]
 async fn test_github_url_env() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let mut server = Server::new_async().await;
     let _m = server
         .mock("GET", "/repos/o/r/commits/v1")
@@ -191,6 +195,7 @@ async fn test_github_url_env() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_upgrade_command() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let mut github_server = Server::new_async().await;
     let _m1 = github_server
         .mock("GET", "/repos/actions/checkout/releases/latest")
@@ -239,6 +244,7 @@ async fn test_upgrade_command() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_upgrade_command_does_not_upgrade_to_branch() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let mut github_server = Server::new_async().await;
     let _m1 = github_server
         .mock("GET", "/repos/snyk/actions/releases/latest")
@@ -292,6 +298,7 @@ async fn test_upgrade_command_does_not_upgrade_to_branch() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_set_command() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let dir = tempdir().unwrap();
     let wf = dir.path().join("ci.yml");
     fs::write(&wf, "uses: actions/checkout@v3").unwrap();
@@ -322,6 +329,7 @@ async fn test_set_command() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_install_hook_command() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let dir = tempdir().unwrap();
     let _guard = pinner::TestCwdGuard::new(dir.path());
 
@@ -340,6 +348,7 @@ async fn test_install_hook_command() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_generate_completion_command() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let cli = Cli::try_parse_from(["pinner", "generate-completion", "bash"]).unwrap();
     let provider = UnifiedProvider::new(UnifiedProviderConfig::default()).unwrap();
     let registry = OciRegistryProvider::new(None, None);
@@ -352,6 +361,7 @@ async fn test_generate_completion_command() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_verify_compromised_hashes() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let dir = tempdir().unwrap();
     let _guard = pinner::TestCwdGuard::new(dir.path());
 
@@ -391,6 +401,7 @@ compromised = [
 #[tokio::test]
 #[serial_test::serial]
 async fn test_verify_strict_mode() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     let dir = tempdir().unwrap();
     let _guard = pinner::TestCwdGuard::new(dir.path());
 
@@ -440,6 +451,7 @@ vetted = [
 
 #[tokio::test]
 async fn test_offline_and_check_osv_conflict() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     use pinner::Cli;
     // Test that offline mode and check_osv verify conflict and return an error
     let cli = Cli {
@@ -483,6 +495,7 @@ async fn test_offline_and_check_osv_conflict() {
 
 #[tokio::test]
 async fn test_offline_and_scan_conflict() {
+    std::env::set_var("PINNER_NO_GLOBAL_CONFIG", "1");
     use pinner::Cli;
     // Test that offline mode and scan command conflict and return an error
     let cli = Cli {

@@ -1,4 +1,4 @@
-use crate::core::dependency::{CiProvider, DependencyName, DependencyRef};
+use crate::core::dependency::{is_hash_ref, CiProvider, DependencyName, DependencyRef};
 use regex::Regex;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -25,14 +25,26 @@ pub struct UpdateTask {
     pub comment: Option<String>,
     /// Any consecutive block/header comments immediately preceding the dependency.
     pub preceding_comments: Option<String>,
+    /// Tag written inline next to a digest in an image reference, e.g. `3.20` in
+    /// `alpine:3.20@sha256:…`. The patcher keeps this `name:tag@digest` layout.
+    pub image_tag: Option<String>,
     /// The YAML key used to define this dependency (e.g., `uses`, `image`, `pipe`).
     pub key: String,
     /// The CI provider detected for this task.
     pub provider: CiProvider,
 }
 
-static VERSION_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
+/// Matches "version-only" comments such as `# v1`, `# main` or `# 1.2.3`.
+///
+/// The version token must be the whole comment or be followed by another `#`
+/// (the `# v1 # note` layout pinner itself writes), so free-form comments like
+/// `# mainly for X` or `# 3 retries` are never mistaken for versions.
+///
+/// Capture group 1 holds the version token. It is shared by the scanner (to recover
+/// the logical tag of a pinned dependency) and the patcher (to replace a stale
+/// version comment while keeping any extra annotation that follows it).
+pub(crate) static VERSION_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_+]*|main|\d[a-zA-Z0-9.\-_+]*)\s*(?:#|$)")
         .expect("Failed to compile VERSION_COMMENT_REGEX")
 });
 
@@ -42,15 +54,16 @@ impl UpdateTask {
     /// extract the tag from a trailing version comment (e.g., `# v1.2.3`).
     pub fn logical_tag(&self) -> Option<String> {
         let tag = self.current_tag.as_ref()?;
-        let is_sha = (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-            || tag.starts_with("sha256:");
-        if is_sha {
+        if is_hash_ref(tag) {
             if let Some(comment) = &self.comment {
                 if let Some(captures) = VERSION_COMMENT_REGEX.captures(comment) {
                     if let Some(m) = captures.get(1) {
                         return Some(m.as_str().to_string());
                     }
                 }
+            }
+            if let Some(image_tag) = &self.image_tag {
+                return Some(image_tag.clone());
             }
             if let Some(preceding) = &self.preceding_comments {
                 for line in preceding.lines() {
@@ -116,6 +129,26 @@ pub struct CompromisedDependency {
     pub action: DependencyName,
     /// The compromised hash.
     pub hash: String,
+    /// OSV advisories that flagged the hash (empty when it is listed in the config).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advisories: Vec<String>,
+    /// Line number.
+    pub line: usize,
+    /// Column number.
+    pub column: usize,
+}
+
+/// Details of a pinned dependency with known (non-malicious) vulnerabilities in OSV.
+#[derive(Debug, Serialize, Clone)]
+pub struct VulnerableDependency {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// Action name.
+    pub action: DependencyName,
+    /// The pinned commit.
+    pub hash: String,
+    /// OSV advisory identifiers.
+    pub advisories: Vec<String>,
     /// Line number.
     pub line: usize,
     /// Column number.
@@ -137,6 +170,21 @@ pub struct NonVettedDependency {
     pub column: usize,
 }
 
+/// Details of a pinned container image that carries no cosign signature.
+#[derive(Debug, Serialize, Clone)]
+pub struct UnsignedDependency {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// Image name.
+    pub action: DependencyName,
+    /// The pinned digest.
+    pub digest: String,
+    /// Line number.
+    pub line: usize,
+    /// Column number.
+    pub column: usize,
+}
+
 /// The result of a verification operation.
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct VerificationResult {
@@ -145,15 +193,29 @@ pub struct VerificationResult {
     /// List of compromised dependencies found.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compromised: Vec<CompromisedDependency>,
+    /// Pinned commits with known vulnerabilities (only checked with OSV checks enabled).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vulnerable: Vec<VulnerableDependency>,
     /// List of non-vetted dependencies found (only populated/checked in strict mode).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub non_vetted: Vec<NonVettedDependency>,
+    /// Pinned images without a cosign signature (only checked with OSV checks enabled).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsigned: Vec<UnsignedDependency>,
+    /// Whether strict mode was enabled, which makes unsigned images fail verification.
+    #[serde(skip)]
+    pub strict: bool,
 }
 
 impl VerificationResult {
-    /// Returns true if no unpinned, compromised, or non-vetted dependencies were found.
+    /// Returns true if nothing is unpinned, compromised, vulnerable or non-vetted and,
+    /// in strict mode, no image is unsigned.
     pub fn is_success(&self) -> bool {
-        self.unpinned.is_empty() && self.compromised.is_empty() && self.non_vetted.is_empty()
+        self.unpinned.is_empty()
+            && self.compromised.is_empty()
+            && self.vulnerable.is_empty()
+            && self.non_vetted.is_empty()
+            && (!self.strict || self.unsigned.is_empty())
     }
 }
 
@@ -187,10 +249,28 @@ mod tests {
             path: PathBuf::from("f.yml"),
             action: "a/b".into(),
             hash: "compromised_hash".to_string(),
+            advisories: vec![],
             line: 1,
             column: 1,
         });
         assert!(!res.is_success());
+    }
+
+    #[test]
+    fn test_verification_result_vulnerable() {
+        let mut res = VerificationResult::default();
+        res.vulnerable.push(VulnerableDependency {
+            path: PathBuf::from("f.yml"),
+            action: "a/b".into(),
+            hash: "sha".to_string(),
+            advisories: vec!["GHSA-1".to_string()],
+            line: 1,
+            column: 1,
+        });
+        assert!(!res.is_success());
+        let json = serde_json::to_string(&res).unwrap();
+        assert!(json.contains("\"vulnerable\":[{"));
+        assert!(json.contains("GHSA-1"));
     }
 
     #[test]
@@ -203,6 +283,21 @@ mod tests {
             line: 1,
             column: 1,
         });
+        assert!(!res.is_success());
+    }
+
+    #[test]
+    fn test_verification_result_unsigned_fails_only_when_strict() {
+        let mut res = VerificationResult::default();
+        res.unsigned.push(UnsignedDependency {
+            path: PathBuf::from("f.yml"),
+            action: "alpine".into(),
+            digest: "sha256:abc".to_string(),
+            line: 1,
+            column: 1,
+        });
+        assert!(res.is_success());
+        res.strict = true;
         assert!(!res.is_success());
     }
 
@@ -258,5 +353,36 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(task.logical_tag(), Some("v6.0.2".to_string()));
+
+        // Free-form comments must not be mistaken for versions
+        let sha = "de0fac2e4500dabe0009e67214ff5f5447ce83dd";
+        for comment in [
+            "# mainly for tests",
+            "# 3 retries",
+            "# v1 is broken upstream",
+        ] {
+            let task = UpdateTask {
+                current_tag: Some(sha.to_string()),
+                comment: Some(comment.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(task.logical_tag(), Some(sha.to_string()), "{comment}");
+        }
+
+        // Bare numeric image tags (e.g. node:20) are still versions
+        let task = UpdateTask {
+            current_tag: Some(format!("sha256:{}", "a".repeat(64))),
+            comment: Some("# 20".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("20".to_string()));
+
+        // Inline image tag next to a digest
+        let task = UpdateTask {
+            current_tag: Some(format!("sha256:{}", "a".repeat(64))),
+            image_tag: Some("3.20".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("3.20".to_string()));
     }
 }

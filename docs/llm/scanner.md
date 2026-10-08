@@ -81,6 +81,17 @@ The system determines the CI provider via the file path (e.g., `.github/workflow
 
 ---
 
+## Reference Splitting & Skipped Values
+
+`create_task` splits each value into a dependency name and a tag:
+*   `name@ref` splits on `@`; otherwise the last `:` after the final `/` separates an image tag (so `localhost:5000/app` keeps its port).
+*   **Image tag + digest**: For image keys (`image`, `container`, or `docker://` values), `alpine:3.20@sha256:…` yields the name `alpine`, the digest as `current_tag`, and `3.20` as `UpdateTask::image_tag`. `logical_tag()` falls back to `image_tag` when there is no version comment, and the patcher keeps the inline layout.
+*   **Skipped values**: Local actions (`./…`) and templated values containing `$`, `{` or `}` (`${{ matrix.image }}`, `$CI_REGISTRY_IMAGE`, `{{ .Values.image }}`) are ignored, since they are resolved by the CI system at run time and cannot be pinned statically.
+
+Pinned-reference detection is shared through `core::is_git_sha`, `is_oci_digest`, `is_hash_ref` and `is_immutable_ref` (`src/core/dependency.rs`). CircleCI orbs count as pinned unless they use the `volatile` channel.
+
+---
+
 ## GitLab Special Case: Virtual Dependencies
 
 In GitLab CI, references to external templates are written with separate `project` and `ref` keys in a YAML map:

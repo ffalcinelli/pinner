@@ -62,10 +62,11 @@ pub trait RemoteProvider: Send + Sync {
 /// is used multiple times across different files in a project, and across different runs.
 pub struct CachedProvider<T: RemoteProvider> {
     inner: T,
-    sha_cache: Cache<(DependencyName, String), DependencyRef>,
-    release_cache: Cache<DependencyName, String>,
-    branch_cache: Cache<DependencyName, BranchName>,
+    sha_cache: Cache<(DependencyName, String, String), DependencyRef>,
+    release_cache: Cache<(DependencyName, String), String>,
+    branch_cache: Cache<(DependencyName, String), BranchName>,
     disk_cache_path: Option<PathBuf>,
+    namespace: String,
     offline: bool,
     ttl: Duration,
 }
@@ -95,9 +96,32 @@ impl<T: RemoteProvider> CachedProvider<T> {
                 .time_to_live(memory_ttl)
                 .build(),
             disk_cache_path,
+            namespace: String::new(),
             offline,
             ttl,
         }
+    }
+
+    /// Scopes disk cache entries to `namespace`, typically derived from the configured
+    /// provider URLs, so results cached for one host (e.g. github.com) are never served
+    /// for another (e.g. a GitHub Enterprise instance) with the same repository names.
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = namespace.into();
+        self
+    }
+
+    fn disk_key(&self, kind: &str, parts: &[&str]) -> String {
+        let mut key = String::new();
+        if !self.namespace.is_empty() {
+            key.push_str(&self.namespace);
+            key.push('|');
+        }
+        key.push_str(kind);
+        for part in parts {
+            key.push(':');
+            key.push_str(part);
+        }
+        key
     }
 
     /// Reads from the disk cache, returning the decoded value if it's within TTL.
@@ -144,14 +168,14 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         tag: &str,
         key: &str,
     ) -> Result<DependencyRef, PinnerError> {
-        let mem_key = (action.clone(), tag.to_string());
+        let mem_key = (action.clone(), tag.to_string(), key.to_string());
+        let disk_key = self.disk_key("sha", &[&action.0, tag, key]);
         if self.ttl > Duration::from_secs(0) {
             if let Some(sha) = self.sha_cache.get(&mem_key).await {
                 return Ok(sha);
             }
 
             // Try disk cache
-            let disk_key = format!("sha:{}:{}:{}", action, tag, key);
             if let Some(val) = self.try_read_disk_cache(&disk_key).await {
                 let sha = DependencyRef::from(val);
                 self.sha_cache.insert(mem_key, sha.clone()).await;
@@ -172,7 +196,6 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         if self.ttl > Duration::from_secs(0) {
             self.sha_cache.insert(mem_key, sha.clone()).await;
             if let Some(path) = &self.disk_cache_path {
-                let disk_key = format!("sha:{}:{}:{}", action, tag, key);
                 let encoded = encode_cached_value(&sha.to_string());
                 let _ = cacache::write(path, &disk_key, encoded.as_bytes()).await;
             }
@@ -186,15 +209,16 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<String, PinnerError> {
+        let mem_key = (action.clone(), key.to_string());
+        let disk_key = self.disk_key("release", &[&action.0, key]);
         if self.ttl > Duration::from_secs(0) {
-            if let Some(tag) = self.release_cache.get(action).await {
+            if let Some(tag) = self.release_cache.get(&mem_key).await {
                 return Ok(tag);
             }
 
             // Try disk cache
-            let disk_key = format!("release:{}:{}", action, key);
             if let Some(val) = self.try_read_disk_cache(&disk_key).await {
-                self.release_cache.insert(action.clone(), val.clone()).await;
+                self.release_cache.insert(mem_key, val.clone()).await;
                 return Ok(val);
             }
         }
@@ -210,9 +234,8 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
 
         // Update caches
         if self.ttl > Duration::from_secs(0) {
-            self.release_cache.insert(action.clone(), tag.clone()).await;
+            self.release_cache.insert(mem_key, tag.clone()).await;
             if let Some(path) = &self.disk_cache_path {
-                let disk_key = format!("release:{}:{}", action, key);
                 let encoded = encode_cached_value(&tag);
                 let _ = cacache::write(path, &disk_key, encoded.as_bytes()).await;
             }
@@ -241,18 +264,17 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
         action: &DependencyName,
         key: &str,
     ) -> Result<BranchName, PinnerError> {
+        let mem_key = (action.clone(), key.to_string());
+        let disk_key = self.disk_key("branch", &[&action.0, key]);
         if self.ttl > Duration::from_secs(0) {
-            if let Some(branch) = self.branch_cache.get(action).await {
+            if let Some(branch) = self.branch_cache.get(&mem_key).await {
                 return Ok(branch);
             }
 
             // Try disk cache
-            let disk_key = format!("branch:{}:{}", action, key);
             if let Some(val) = self.try_read_disk_cache(&disk_key).await {
                 let branch = BranchName(val);
-                self.branch_cache
-                    .insert(action.clone(), branch.clone())
-                    .await;
+                self.branch_cache.insert(mem_key, branch.clone()).await;
                 return Ok(branch);
             }
         }
@@ -268,11 +290,8 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
 
         // Update caches
         if self.ttl > Duration::from_secs(0) {
-            self.branch_cache
-                .insert(action.clone(), branch.clone())
-                .await;
+            self.branch_cache.insert(mem_key, branch.clone()).await;
             if let Some(path) = &self.disk_cache_path {
-                let disk_key = format!("branch:{}:{}", action, key);
                 let encoded = encode_cached_value(&branch.0);
                 let _ = cacache::write(path, &disk_key, encoded.as_bytes()).await;
             }
@@ -1346,6 +1365,52 @@ mod tests {
         // Fallback (GitHub)
         let provider = registry.get_provider("uses", &DependencyName::from("actions/checkout"));
         assert!(format!("{:?}", Arc::as_ptr(&provider)).is_ascii());
+    }
+
+    #[tokio::test]
+    async fn test_disk_cache_is_scoped_by_namespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let action = DependencyName::from("o/r");
+        let cached = |sha: &'static str, calls: usize, namespace: &str| {
+            let mut inner = MockRemoteProvider::new();
+            inner
+                .expect_get_commit_sha()
+                .times(calls)
+                .returning(move |_, _, _| Ok(DependencyRef::GitSha(sha.to_string())));
+            CachedProvider::new(
+                inner,
+                Some(dir.path().to_path_buf()),
+                false,
+                Duration::from_secs(3600),
+            )
+            .with_namespace(namespace)
+        };
+
+        let public = cached("aaa", 1, "github=https://api.github.com");
+        assert_eq!(
+            public.get_commit_sha(&action, "v1", "uses").await.unwrap(),
+            DependencyRef::GitSha("aaa".into())
+        );
+
+        // A different host must not see the cached entry.
+        let enterprise = cached("bbb", 1, "github=https://ghe.example.com/api/v3");
+        assert_eq!(
+            enterprise
+                .get_commit_sha(&action, "v1", "uses")
+                .await
+                .unwrap(),
+            DependencyRef::GitSha("bbb".into())
+        );
+
+        // The same host is served from disk without calling the provider.
+        let public_again = cached("unused", 0, "github=https://api.github.com");
+        assert_eq!(
+            public_again
+                .get_commit_sha(&action, "v1", "uses")
+                .await
+                .unwrap(),
+            DependencyRef::GitSha("aaa".into())
+        );
     }
 
     #[tokio::test]

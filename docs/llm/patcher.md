@@ -8,15 +8,17 @@ The Patcher layer is responsible for surgically editing workflow files to inject
 
 To modify files without changing indentation or breaking comments, `pinner` avoids re-serializing the entire parsed AST to YAML. Instead, it applies surgical string operations on the original content string using byte offsets:
 
-1.  **Line End Capture**: Locates the end of the line containing the dependency value (using `.find('\n')`).
+1.  **Line End Capture**: Locates the end of the line containing the dependency value (using `.find('\n')`). A trailing `\r` (CRLF files) is left outside the replaced range so line endings are preserved.
 2.  **Comment Processing**:
-    *   Uses `COMMENT_REGEX` (`r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*"`) to detect if the existing comment contains a mutable version tag (like `# v1` or `# main`).
+    *   Uses the shared `VERSION_COMMENT_REGEX` from `core/update.rs` (`r"^#\s*(v\d[a-zA-Z0-9.\-_+]*|main|\d[a-zA-Z0-9.\-_+]*)\s*(?:#|$)"`) to detect a version-only comment (like `# v1`, `# main` or `# v1 # note`). The token must be the whole comment or be followed by another `#`, so free-form comments such as `# mainly for X` or `# 3 retries` are never treated as versions.
     *   If matched, the old version portion is stripped, but any additional annotations in the comment (e.g., `# important comment`) are preserved.
+    *   A version-only comment on the line directly above the dependency is refreshed too. Only the version token is replaced; the rest of that line and its line ending are kept.
 3.  **Separator Formatting**:
     *   **GitHub/Registry**: Uses the `@` separator (e.g., `actions/checkout@<sha>`).
     *   **Bitbucket Pipes**: Uses the `:` separator (e.g., `bitbucket-pipelines:pipe:<sha>`).
     *   **GitLab Ref**: Directly overrides the `ref` value (no symbol prefix).
 4.  **Tag Annotation**: Appends the original tag version as a comment next to the SHA (e.g., `actions/checkout@<sha> # v3`). If the original tag is already a SHA or digest, the comment annotation is omitted.
+5.  **Inline Image Tags**: Image references written as `name:tag@digest` (`UpdateTask::image_tag`) keep that layout (`alpine:3.20@sha256:<new>`); no version comment is added because the tag is already visible.
 
 ---
 
@@ -35,6 +37,15 @@ Line 25: uses: actions/setup-node@v2 (Offset: 500)
 2. First update setup-node at offset 500 -> String length changes.
 3. Second update checkout at offset 200 -> Offset remains valid because length changes occurred downstream.
 ```
+
+---
+
+## Verification Reports (`report.rs`)
+
+`Pipeline::verify` classifies every dependency into a `VerifyFinding` with a `VerifyStatus`:
+`Unpinned`, `Compromised`, `Vulnerable`, `Unsigned`, `NotVetted` (strict only), `Pinned` or `Vetted`. `VerifyStatus::is_failure(strict)` decides the exit status: `Unsigned` fails only in strict mode. OSV advisory IDs are carried in `VerifyFinding::advisories`. `scan` uses the same OSV assessment and the same configured `compromised` list, so the two commands always classify a reference the same way. With `--check-osv`, commits are queried in OSV and images are checked for a cosign signature. These checks run concurrently, deduplicated by `(action, reference)`, and a lookup error is a warning that leaves the finding unchanged.
+
+`report.rs` renders findings as strings: `render_text` (stderr), `render_github` (`::error`/`::warning` commands with escaped values), `render_markdown` (escaped table cells) and `render_junit` (XML-escaped). JSON output is the serialized `VerificationResult`, printed by `lib.rs`.
 
 ---
 
@@ -65,4 +76,4 @@ If security feedback is enabled, these statuses are appended inline in the print
 Disk writing is protected by user-interaction:
 *   **Dry Run**: Outputs diffs to the console without writing changes.
 *   **Interactive Confirmation**: If `--yes` (`-y`) is not set, a progress bar/interactive prompt displays each patch's diff and asks the user to confirm application (`[y/N]`) before writing to disk.
-*   **Atomic Writes**: Changes are written to the target file only after all patch replacements succeed.
+*   **Atomic Writes**: All replacements for a file are computed in memory first. `disk::write_atomic` then writes the result to a temporary file in the same directory and renames it over the original, so an interrupted run never leaves a truncated workflow. File permissions are preserved, and symlinks are followed rather than replaced.

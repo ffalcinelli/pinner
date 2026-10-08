@@ -48,8 +48,22 @@ impl Drop for TestCwdGuard {
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Runs a command, loading configuration from the current directory and the
+/// user's global configuration files.
 pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     cli: Cli,
+    remote: G,
+    registry: R,
+    paths: Vec<PathBuf>,
+) -> Result<(), PinnerError> {
+    let config = crate::config::Config::load()?;
+    run_with_config(cli, &config, remote, registry, paths).await
+}
+
+/// Runs a command with an already loaded configuration.
+pub async fn run_with_config<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
+    cli: Cli,
+    config: &crate::config::Config,
     remote: G,
     registry: R,
     paths: Vec<PathBuf>,
@@ -78,52 +92,12 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         | Commands::Scan { upgrade_strategy } => upgrade_strategy.clone(),
         _ => crate::cli::UpgradeStrategy::Latest,
     };
-    let config = crate::config::Config::load();
     let scanner = Scanner::new(cli.ignore.clone());
-    let local_vetted: Vec<String> = config
-        .vetted
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-    let local_compromised: Vec<String> = config
-        .compromised
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-
-    let global_config = crate::config::Config::load_global();
-    let global_vetted: Vec<String> = global_config
-        .vetted
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-    let global_compromised: Vec<String> = global_config
-        .compromised
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-
-    let mut vetted = local_vetted;
-    for item in global_vetted {
-        if !vetted.contains(&item) && !local_compromised.contains(&item) {
-            vetted.push(item);
-        }
-    }
-
-    let mut compromised = local_compromised;
-    for item in global_compromised {
-        if !compromised.contains(&item) && !vetted.contains(&item) {
-            compromised.push(item);
-        }
-    }
+    let references = |list: &Option<Vec<crate::config::SecurityEntry>>| -> Vec<String> {
+        list.iter().flatten().map(|e| e.reference.clone()).collect()
+    };
+    let vetted = references(&config.vetted);
+    let compromised = references(&config.compromised);
 
     let formatter = Formatter::new(
         cli.format.clone(),
@@ -153,12 +127,10 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         cache_ttl,
     ));
     let resolver = Resolver::new(
-        Arc::new(CachedProvider::new(
-            remote,
-            disk_cache,
-            cli.offline,
-            cache_ttl,
-        )),
+        Arc::new(
+            CachedProvider::new(remote, disk_cache, cli.offline, cache_ttl)
+                .with_namespace(cache_namespace(&cli)),
+        ),
         Arc::new(registry),
         osv_client,
         upgrade_strategy,
@@ -202,6 +174,15 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     }
 
     Ok(())
+}
+
+/// Builds the disk-cache namespace from the configured provider URLs, so cached
+/// lookups are never shared between different hosts.
+fn cache_namespace(cli: &Cli) -> String {
+    format!(
+        "github={},gitlab={},bitbucket={},forgejo={},circleci={}",
+        cli.github_url, cli.gitlab_url, cli.bitbucket_url, cli.forgejo_url, cli.circleci_url
+    )
 }
 
 #[cfg(test)]
@@ -351,6 +332,14 @@ mod tests {
             .create_async()
             .await;
 
+        // Any other commit (e.g. upgrade candidates) has no advisories.
+        let _m_rest = osv_server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body(r#"{"vulns":[]}"#)
+            .create_async()
+            .await;
+
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "jobs:\n  test:\n    steps:\n      - uses: clean@1111111111111111111111111111111111111111\n      - uses: comp@2222222222222222222222222222222222222222\n      - uses: vuln@3333333333333333333333333333333333333333").unwrap();
@@ -422,36 +411,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_override_precedence() {
-        let local_vetted = vec!["actions/checkout@v3".to_string()];
-        let local_compromised = vec![];
-        let global_vetted = vec![];
-        let global_compromised = vec!["actions/checkout@v3".to_string()];
+        use crate::config::Config;
+        use crate::patcher::formatter::HashSecurityStatus;
 
-        let mut vetted = local_vetted;
-        for item in global_vetted {
-            if !vetted.contains(&item) && !local_compromised.contains(&item) {
-                vetted.push(item);
-            }
-        }
-        let mut compromised = local_compromised;
-        for item in global_compromised {
-            if !compromised.contains(&item) && !vetted.contains(&item) {
-                compromised.push(item);
-            }
-        }
+        let parse = |s: &str| -> Config { toml::from_str(s).unwrap() };
+        let status_with = |global: &str, local: &str| {
+            let config = Config::layered(parse(global), parse(local));
+            let refs = |l: Option<Vec<crate::config::SecurityEntry>>| {
+                l.unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.reference)
+                    .collect()
+            };
+            Formatter::new(
+                crate::cli::OutputFormat::Text,
+                true,
+                refs(config.vetted),
+                refs(config.compromised),
+                true,
+            )
+            .check_hash_security("actions/checkout", "v3")
+        };
 
-        let formatter = Formatter::new(
-            crate::cli::OutputFormat::Text,
-            true,
-            vetted,
-            compromised,
-            true,
-        );
-
-        let status = formatter.check_hash_security("actions/checkout", "v3");
+        // A local vetted entry overrides a global compromised one, and vice versa.
         assert_eq!(
-            status,
-            crate::patcher::formatter::HashSecurityStatus::Vetted
+            status_with(
+                "compromised = ['actions/checkout@v3']",
+                "vetted = ['actions/checkout@v3']"
+            ),
+            HashSecurityStatus::Vetted
+        );
+        assert_eq!(
+            status_with(
+                "vetted = ['actions/checkout@v3']",
+                "compromised = ['actions/checkout@v3']"
+            ),
+            HashSecurityStatus::Compromised
+        );
+        // Global entries apply when the project says nothing.
+        assert_eq!(
+            status_with("compromised = ['actions/checkout@v3']", ""),
+            HashSecurityStatus::Compromised
         );
     }
 
@@ -636,6 +636,22 @@ mod tests {
 
         let res = pipeline.scan(&[f], true).await;
         assert!(res.is_ok());
+
+        // Signed images are vetted; unsigned images are reported but never blacklisted.
+        let toml_content = fs::read_to_string(".pinner.toml").unwrap();
+        let config: crate::config::Config = toml::from_str(&toml_content).unwrap();
+        let refs = |entries: Option<Vec<crate::config::SecurityEntry>>| -> Vec<String> {
+            entries
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| e.reference)
+                .collect()
+        };
+        let vetted = refs(config.vetted);
+        let compromised = refs(config.compromised);
+        assert!(vetted.iter().any(|r| r.contains("clean-img")));
+        assert!(!vetted.iter().any(|r| r.contains("compromised-img")));
+        assert!(compromised.is_empty(), "{:?}", compromised);
     }
 
     #[tokio::test]
@@ -683,5 +699,134 @@ vetted = [
 
         let res = pipeline.scan(&[f], true).await;
         assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_verify_and_scan_classify_consistently() {
+        let sha = |c: char| c.to_string().repeat(40);
+        let mut osv = mockito::Server::new_async().await;
+        std::env::set_var("PINNER_OSV_URL", osv.url());
+        let mut advisory = |commit: String, body: &'static str| {
+            osv.mock("POST", "/")
+                .match_body(mockito::Matcher::JsonString(format!(
+                    r#"{{"commit":"{}"}}"#,
+                    commit
+                )))
+                .with_status(200)
+                .with_body(body)
+        };
+        let _vuln = advisory(
+            sha('1'),
+            r#"{"vulns":[{"id":"GHSA-dos","summary":"Denial of service"}]}"#,
+        )
+        .create_async()
+        .await;
+        let _mal = advisory(sha('2'), r#"{"vulns":[{"id":"MAL-2025-1"}]}"#)
+            .create_async()
+            .await;
+        let _clean = advisory(sha('3'), r#"{"vulns":[]}"#).create_async().await;
+
+        let dir = tempdir().unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
+        fs::write(".pinner.toml", "yes = true\n").unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(
+            &f,
+            format!(
+                "steps:\n  - uses: vuln/a@{}\n  - uses: mal/b@{}\n  - uses: clean/c@{}\n  - uses: listed/d@{}\n",
+                sha('1'),
+                sha('2'),
+                sha('3'),
+                sha('4')
+            ),
+        )
+        .unwrap();
+
+        let pipeline = || {
+            let mut remote = MockRemoteProvider::new();
+            remote
+                .expect_get_latest_release()
+                .returning(|_, _| Err(PinnerError::Api("no releases".into())));
+            let resolver = Resolver::new(
+                Arc::new(remote),
+                Arc::new(MockRegistryProvider::new()),
+                Arc::new(resolver::OsvClient::new(
+                    None,
+                    false,
+                    Duration::from_secs(0),
+                )),
+                UpgradeStrategy::Latest,
+                4,
+            );
+            let formatter = Formatter::new(
+                crate::cli::OutputFormat::Text,
+                true,
+                vec![],
+                vec![format!("listed/d@{}", sha('4'))],
+                true,
+            );
+            let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+            Pipeline::new(
+                Scanner::new(vec![]),
+                resolver,
+                Patcher::new(formatter, ui, false),
+            )
+        };
+
+        let result = pipeline()
+            .verify(std::slice::from_ref(&f), true, false)
+            .await
+            .unwrap();
+        let names = |v: Vec<String>| {
+            let mut v = v;
+            v.sort();
+            v
+        };
+        assert_eq!(
+            names(
+                result
+                    .vulnerable
+                    .iter()
+                    .map(|d| d.action.to_string())
+                    .collect()
+            ),
+            vec!["vuln/a"]
+        );
+        assert_eq!(result.vulnerable[0].advisories, vec!["GHSA-dos"]);
+        assert_eq!(
+            names(
+                result
+                    .compromised
+                    .iter()
+                    .map(|d| d.action.to_string())
+                    .collect()
+            ),
+            vec!["listed/d", "mal/b"]
+        );
+
+        pipeline()
+            .scan(std::slice::from_ref(&f), true)
+            .await
+            .unwrap();
+        let config: crate::config::Config =
+            toml::from_str(&fs::read_to_string(".pinner.toml").unwrap()).unwrap();
+        let refs = |l: Option<Vec<crate::config::SecurityEntry>>| {
+            names(
+                l.unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.reference)
+                    .collect(),
+            )
+        };
+        // Only the clean commit is vetted; the OSV-compromised one is blacklisted; the
+        // vulnerable one is left for review; the configured one is not re-added.
+        assert_eq!(refs(config.vetted), vec![format!("clean/c@{}", sha('3'))]);
+        assert_eq!(
+            refs(config.compromised),
+            vec![format!("mal/b@{}", sha('2'))]
+        );
+
+        std::env::remove_var("PINNER_OSV_URL");
     }
 }

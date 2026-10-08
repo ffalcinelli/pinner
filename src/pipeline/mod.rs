@@ -1,8 +1,13 @@
+use crate::cli::OutputFormat;
 use crate::error::PinnerError;
+use crate::patcher::formatter::HashSecurityStatus;
+use crate::patcher::report::{self, VerifyFinding, VerifyStatus};
 use crate::patcher::Patcher;
-use crate::resolver::Resolver;
+use crate::resolver::{OsvVerdict, Resolver};
 use crate::scanner::Scanner;
 use colored::Colorize;
+use futures::stream::{self, StreamExt};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub mod init;
@@ -67,6 +72,10 @@ impl Pipeline {
     }
 
     /// Verifies that all dependencies in the provided paths are pinned to an immutable hash.
+    ///
+    /// Each dependency is classified (see [`VerifyStatus`]); with `check_osv`, pinned
+    /// commits are looked up in OSV and pinned images are checked for a cosign
+    /// signature. The findings are then rendered in the configured output format.
     pub async fn verify(
         &self,
         paths: &[PathBuf],
@@ -74,307 +83,149 @@ impl Pipeline {
         strict: bool,
     ) -> Result<crate::core::VerificationResult, PinnerError> {
         let (tasks, _) = self.scanner.collect_tasks(paths).await?;
-        let mut unpinned = Vec::new();
-        let mut compromised = Vec::new();
-        let mut non_vetted = Vec::new();
+        let formatter = &self.patcher.formatter;
 
-        if !self.patcher.formatter.quiet
-            && self.patcher.formatter.format == crate::cli::OutputFormat::Text
-        {
+        if !formatter.quiet && formatter.format == OutputFormat::Text {
             eprintln!("{}", "Verifying workflow dependencies...".bold());
         }
 
-        let mut junit_cases = Vec::new();
-        let mut markdown_rows = Vec::new();
+        let mut findings: Vec<VerifyFinding> = tasks
+            .into_iter()
+            .map(|task| {
+                let status = match task.current_tag.as_deref() {
+                    Some(tag) if crate::core::is_immutable_ref(tag, &task.key) => {
+                        match formatter.check_hash_security(&task.action.to_string(), tag) {
+                            HashSecurityStatus::Vetted => VerifyStatus::Vetted,
+                            HashSecurityStatus::Compromised => VerifyStatus::Compromised,
+                            HashSecurityStatus::NotChecked => VerifyStatus::Pinned,
+                        }
+                    }
+                    _ => VerifyStatus::Unpinned,
+                };
+                VerifyFinding {
+                    task,
+                    status,
+                    advisories: Vec::new(),
+                }
+            })
+            .collect();
 
-        for task in tasks {
-            let is_pinned = if let Some(tag) = &task.current_tag {
-                (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                    || (tag.starts_with("sha256:") && tag.len() == 71)
-                    || (task.key == "orbs" && !tag.is_empty())
-            } else {
-                false
-            };
+        if check_osv {
+            self.apply_remote_checks(&mut findings).await;
+        }
 
-            let action_name = task.action.to_string();
-            let file_path = task.path.display().to_string();
+        if strict {
+            for f in findings
+                .iter_mut()
+                .filter(|f| f.status == VerifyStatus::Pinned)
+            {
+                f.status = VerifyStatus::NotVetted;
+            }
+        }
 
-            if !is_pinned {
-                let display_tag = task.current_tag.as_deref().unwrap_or("latest");
-                unpinned.push(crate::core::UnpinnedDependency {
-                    path: task.path.clone(),
-                    action: task.action.clone(),
-                    tag: task.current_tag.clone(),
-                    line: task.line,
-                    column: task.column,
-                });
+        if !formatter.quiet {
+            match formatter.format {
+                OutputFormat::Text => eprint!("{}", report::render_text(&findings, strict)),
+                OutputFormat::Github => print!("{}", report::render_github(&findings, strict)),
+                OutputFormat::Markdown => {
+                    print!("{}", report::render_markdown(&findings, strict))
+                }
+                OutputFormat::Junit => print!("{}", report::render_junit(&findings, strict)),
+                OutputFormat::Json => {}
+            }
+        }
 
-                markdown_rows.push(format!(
-                    "| ❌ | `{}` | `{}` | `{}:{}:{}` | Unpinned mutable dependency |",
-                    action_name, display_tag, file_path, task.line, task.column
-                ));
+        Ok(build_verification_result(findings, strict))
+    }
 
-                if !self.patcher.formatter.quiet {
-                    if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
+    /// Queries OSV for pinned commits and checks pinned images for a cosign signature,
+    /// downgrading findings accordingly. Identical references are checked once and up
+    /// to `resolver.concurrency` checks run at a time. Lookup failures are reported as
+    /// warnings and leave the finding unchanged.
+    async fn apply_remote_checks(&self, findings: &mut [VerifyFinding]) {
+        let mut targets: Vec<(String, String)> = findings
+            .iter()
+            .filter(|f| f.status == VerifyStatus::Pinned && f.task.key != "orbs")
+            .map(|f| (f.task.action.to_string(), f.reference().to_string()))
+            .collect();
+        targets.sort();
+        targets.dedup();
+
+        type Outcome = Option<(VerifyStatus, Vec<String>)>;
+        let outcomes: HashMap<(String, String), Outcome> = stream::iter(targets)
+            .map(|(action, reference)| async move {
+                let outcome = self.remote_check(&action, &reference).await;
+                ((action, reference), outcome)
+            })
+            .buffer_unordered(self.resolver.concurrency.max(1))
+            .collect()
+            .await;
+
+        for f in findings.iter_mut() {
+            let key = (f.task.action.to_string(), f.reference().to_string());
+            if let Some(Some((status, advisories))) = outcomes.get(&key) {
+                f.status = *status;
+                f.advisories = advisories.clone();
+            }
+        }
+    }
+
+    /// Returns the downgraded status (and OSV advisory IDs) for a pinned reference, or
+    /// `None` when the check passes or cannot be completed.
+    async fn remote_check(
+        &self,
+        action: &str,
+        reference: &str,
+    ) -> Option<(VerifyStatus, Vec<String>)> {
+        let quiet = self.patcher.formatter.quiet;
+
+        if !crate::core::is_git_sha(reference) {
+            let image = action.strip_prefix("docker://").unwrap_or(action);
+            return match self
+                .resolver
+                .registry
+                .verify_provenance(image, reference)
+                .await
+            {
+                Ok(true) => None,
+                Ok(false) => Some((VerifyStatus::Unsigned, Vec::new())),
+                Err(e) => {
+                    if !quiet {
                         eprintln!(
-                            "  {} {}@{} in {}:{}:{} [✗ unpinned]",
-                            "✗".red().bold(),
-                            task.action.to_string().yellow(),
-                            display_tag.yellow(),
-                            task.path.display().to_string().cyan(),
-                            task.line.to_string().magenta(),
-                            task.column.to_string().magenta(),
-                        );
-                    } else if self.patcher.formatter.format == crate::cli::OutputFormat::Github {
-                        println!(
-                            "::error file={},line={},col={}::Dependency {} is not pinned to an immutable hash (found tag: {})",
-                            file_path, task.line, task.column, action_name, display_tag
+                            "{} Could not verify OCI provenance for {}@{} due to error: {}",
+                            "warning:".yellow().bold(),
+                            image,
+                            reference,
+                            e
                         );
                     }
+                    None
                 }
-
-                if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                    junit_cases.push(format!(
-                        "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\">\n      <failure message=\"Dependency is not pinned\">Dependency {} is not pinned to an immutable hash (found tag: {}) in {}:{}:{}</failure>\n    </testcase>",
-                        action_name, file_path, action_name, display_tag, file_path, task.line, task.column
-                    ));
-                }
-            } else {
-                let tag = task.current_tag.as_deref().unwrap_or("");
-                let mut status = self
-                    .patcher
-                    .formatter
-                    .check_hash_security(&task.action.to_string(), tag);
-
-                if status == crate::patcher::formatter::HashSecurityStatus::NotChecked && check_osv
-                {
-                    let action_str = task.action.to_string();
-                    let is_git_sha = tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit());
-
-                    if !is_git_sha {
-                        let image_name =
-                            action_str.strip_prefix("docker://").unwrap_or(&action_str);
-                        match self
-                            .resolver
-                            .registry
-                            .verify_provenance(image_name, tag)
-                            .await
-                        {
-                            Ok(true) => {}
-                            Ok(false) => {
-                                status = crate::patcher::formatter::HashSecurityStatus::Compromised;
-                            }
-                            Err(e) => {
-                                if !self.patcher.formatter.quiet {
-                                    eprintln!(
-                                        "{} Could not verify OCI provenance for {}@{} due to error: {}",
-                                        "warning:".yellow().bold(),
-                                        image_name, tag, e
-                                    );
-                                }
-                            }
-                        }
-                    } else if let Ok(Some(body)) = self.resolver.check_vulnerabilities(tag).await {
-                        #[derive(serde::Deserialize)]
-                        struct OsvResponse {
-                            vulns: Option<Vec<serde_json::Value>>,
-                        }
-
-                        if let Ok(osv_resp) = serde_json::from_str::<OsvResponse>(&body) {
-                            if let Some(vulns) = osv_resp.vulns {
-                                if !vulns.is_empty() {
-                                    status =
-                                        crate::patcher::formatter::HashSecurityStatus::Compromised;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                match status {
-                    crate::patcher::formatter::HashSecurityStatus::Compromised => {
-                        compromised.push(crate::core::CompromisedDependency {
-                            path: task.path.clone(),
-                            action: task.action.clone(),
-                            hash: tag.to_string(),
-                            line: task.line,
-                            column: task.column,
-                        });
-
-                        markdown_rows.push(format!(
-                            "| 🚨 | `{}` | `{}` | `{}:{}:{}` | Compromised (Supply Chain Attack) |",
-                            action_name, tag, file_path, task.line, task.column
-                        ));
-
-                        if !self.patcher.formatter.quiet {
-                            if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
-                                eprintln!(
-                                    "  {} {}@{} in {}:{}:{} [✗ compromised]",
-                                    "✗".red().bold(),
-                                    task.action.to_string().yellow(),
-                                    tag.red(),
-                                    task.path.display().to_string().cyan(),
-                                    task.line.to_string().magenta(),
-                                    task.column.to_string().magenta(),
-                                );
-                            } else if self.patcher.formatter.format
-                                == crate::cli::OutputFormat::Github
-                            {
-                                println!(
-                                    "::error file={},line={},col={}::Dependency {}@{} is COMPROMISED (Supply Chain Attack)!",
-                                    file_path, task.line, task.column, action_name, tag
-                                );
-                            }
-                        }
-
-                        if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                            junit_cases.push(format!(
-                                "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\">\n      <failure message=\"Dependency is compromised\">Dependency {}@{} is COMPROMISED (Supply Chain Attack)! in {}:{}:{}</failure>\n    </testcase>",
-                                action_name, file_path, action_name, tag, file_path, task.line, task.column
-                            ));
-                        }
-                    }
-                    crate::patcher::formatter::HashSecurityStatus::NotChecked => {
-                        if strict {
-                            non_vetted.push(crate::core::NonVettedDependency {
-                                path: task.path.clone(),
-                                action: task.action.clone(),
-                                tag: task.current_tag.clone(),
-                                line: task.line,
-                                column: task.column,
-                            });
-
-                            markdown_rows.push(format!(
-                                "| ⚠️ | `{}` | `{}` | `{}:{}:{}` | Not vetted (strict mode) |",
-                                action_name, tag, file_path, task.line, task.column
-                            ));
-
-                            if !self.patcher.formatter.quiet {
-                                if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
-                                    eprintln!(
-                                        "  {} {}@{} in {}:{}:{} [✗ not vetted]",
-                                        "✗".red().bold(),
-                                        task.action.to_string().yellow(),
-                                        tag.yellow(),
-                                        task.path.display().to_string().cyan(),
-                                        task.line.to_string().magenta(),
-                                        task.column.to_string().magenta(),
-                                    );
-                                } else if self.patcher.formatter.format
-                                    == crate::cli::OutputFormat::Github
-                                {
-                                    println!(
-                                        "::error file={},line={},col={}::Dependency {}@{} is pinned but not vetted (strict mode enabled)",
-                                        file_path, task.line, task.column, action_name, tag
-                                    );
-                                }
-                            }
-
-                            if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                                junit_cases.push(format!(
-                                    "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\">\n      <failure message=\"Dependency is not vetted\">Dependency {}@{} is pinned but not vetted in {}:{}:{}</failure>\n    </testcase>",
-                                    action_name, file_path, action_name, tag, file_path, task.line, task.column
-                                ));
-                            }
-                        } else {
-                            markdown_rows.push(format!(
-                                "| ℹ️ | `{}` | `{}` | `{}:{}:{}` | Pinned (not vetted) |",
-                                action_name, tag, file_path, task.line, task.column
-                            ));
-                            if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                                junit_cases.push(format!(
-                                    "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\"/>",
-                                    action_name, file_path
-                                ));
-                            }
-                        }
-                    }
-                    crate::patcher::formatter::HashSecurityStatus::Vetted => {
-                        markdown_rows.push(format!(
-                            "| ✔ | `{}` | `{}` | `{}:{}:{}` | Pinned & Vetted |",
-                            action_name, tag, file_path, task.line, task.column
-                        ));
-                        if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                            junit_cases.push(format!(
-                                "    <testcase name=\"{}\" classname=\"{}\" time=\"0.0\"/>",
-                                action_name, file_path
-                            ));
-                        }
-                    }
-                }
-            }
+            };
         }
 
-        let is_success = unpinned.is_empty() && compromised.is_empty() && non_vetted.is_empty();
-
-        if !self.patcher.formatter.quiet {
-            if self.patcher.formatter.format == crate::cli::OutputFormat::Text {
-                if is_success {
+        match self.resolver.assess_commit(reference).await {
+            Ok(assessment) => {
+                let status = match assessment.verdict {
+                    OsvVerdict::Clean => return None,
+                    OsvVerdict::Vulnerable => VerifyStatus::Vulnerable,
+                    OsvVerdict::Compromised => VerifyStatus::Compromised,
+                };
+                Some((status, assessment.ids()))
+            }
+            Err(e) => {
+                if !quiet {
                     eprintln!(
-                        "\n{} Verification successful! All dependencies are pinned and secure.",
-                        "✔".green().bold()
-                    );
-                } else {
-                    eprintln!(
-                        "\n{} Verification failed! Some dependencies are not pinned, are compromised, or are not vetted.",
-                        "✗".red().bold()
-                    );
-                    eprintln!(
-                        "{} Run `pinner pin` to automatically secure your dependencies, or `pinner verify --help` for options.",
-                        "hint:".blue()
+                        "{} Could not query OSV for {}@{}: {}",
+                        "warning:".yellow().bold(),
+                        action,
+                        reference,
+                        e
                     );
                 }
-            } else if self.patcher.formatter.format == crate::cli::OutputFormat::Markdown {
-                println!("## Pinner Verification Report\n");
-                println!("| Status | Dependency | Reference | Location | Details |");
-                println!("| :---: | :--- | :--- | :--- | :--- |");
-                for row in &markdown_rows {
-                    println!("{}", row);
-                }
-                if is_success {
-                    println!("\n> **Result**: ✔ All dependencies are pinned to immutable hashes and secure.");
-                } else {
-                    println!(
-                        "\n> **Result**: ❌ Verification failed ({} unpinned, {} compromised, {} non-vetted). Run `pinner pin` to automatically secure your dependencies.",
-                        unpinned.len(),
-                        compromised.len(),
-                        non_vetted.len()
-                    );
-                }
-            } else if self.patcher.formatter.format == crate::cli::OutputFormat::Junit {
-                let mut xml = String::new();
-                xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-
-                let total_tests = junit_cases.len();
-                let total_failures = unpinned.len() + compromised.len() + non_vetted.len();
-
-                use std::fmt::Write;
-                let _ = writeln!(
-                    xml,
-                    "<testsuites name=\"Pinner Verification\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">",
-                    total_tests, total_failures
-                );
-                let _ = writeln!(
-                    xml,
-                    "  <testsuite name=\"pinner.verify\" tests=\"{}\" failures=\"{}\" errors=\"0\" time=\"0.0\">",
-                    total_tests, total_failures
-                );
-                for case in junit_cases {
-                    xml.push_str(&case);
-                    xml.push('\n');
-                }
-                xml.push_str("  </testsuite>\n");
-                xml.push_str("</testsuites>\n");
-
-                print!("{}", xml);
+                None
             }
         }
-
-        Ok(crate::core::VerificationResult {
-            unpinned,
-            compromised,
-            non_vetted,
-        })
     }
 
     /// Forcibly sets a specific action to a provided hash across all files, optionally overriding the tag comment.
@@ -406,6 +257,70 @@ impl Pipeline {
 
         self.patcher.apply_changes(results, file_contents).await
     }
+}
+
+/// Collects the findings into the serializable verification result.
+fn build_verification_result(
+    findings: Vec<VerifyFinding>,
+    strict: bool,
+) -> crate::core::VerificationResult {
+    use crate::core::{
+        CompromisedDependency, NonVettedDependency, UnpinnedDependency, UnsignedDependency,
+        VulnerableDependency,
+    };
+
+    let mut result = crate::core::VerificationResult {
+        strict,
+        ..Default::default()
+    };
+    for f in findings {
+        let VerifyFinding {
+            task,
+            status,
+            advisories,
+        } = f;
+        match status {
+            VerifyStatus::Unpinned => result.unpinned.push(UnpinnedDependency {
+                path: task.path,
+                action: task.action,
+                tag: task.current_tag,
+                line: task.line,
+                column: task.column,
+            }),
+            VerifyStatus::Compromised => result.compromised.push(CompromisedDependency {
+                path: task.path,
+                action: task.action,
+                hash: task.current_tag.unwrap_or_default(),
+                advisories,
+                line: task.line,
+                column: task.column,
+            }),
+            VerifyStatus::Vulnerable => result.vulnerable.push(VulnerableDependency {
+                path: task.path,
+                action: task.action,
+                hash: task.current_tag.unwrap_or_default(),
+                advisories,
+                line: task.line,
+                column: task.column,
+            }),
+            VerifyStatus::Unsigned => result.unsigned.push(UnsignedDependency {
+                path: task.path,
+                action: task.action,
+                digest: task.current_tag.unwrap_or_default(),
+                line: task.line,
+                column: task.column,
+            }),
+            VerifyStatus::NotVetted => result.non_vetted.push(NonVettedDependency {
+                path: task.path,
+                action: task.action,
+                tag: task.current_tag,
+                line: task.line,
+                column: task.column,
+            }),
+            VerifyStatus::Pinned | VerifyStatus::Vetted => {}
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -780,5 +695,82 @@ mod tests {
             content.contains("v3sha"),
             "File should be pinned with the new sha"
         );
+    }
+
+    fn verify_pipeline(
+        registry: MockRegistryProvider,
+        check_format: crate::cli::OutputFormat,
+    ) -> Pipeline {
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(registry),
+            Arc::new(crate::resolver::OsvClient::new(
+                None,
+                false,
+                Duration::from_secs(0),
+            )),
+            UpgradeStrategy::Latest,
+            4,
+        );
+        let patcher = Patcher::new(
+            Formatter::new(check_format, true, vec![], vec![], true),
+            Arc::new(crate::patcher::ui::TestUi { response: true }),
+            false,
+        );
+        Pipeline::new(Scanner::new(vec![]), resolver, patcher)
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_verify_unsigned_image_warns_unless_strict() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        let digest = format!("sha256:{}", "1".repeat(64));
+        fs::write(
+            &f,
+            format!(
+                "jobs:\n  a:\n    container: alpine@{d}\n    services:\n      db:\n        image: alpine@{d}\n",
+                d = digest
+            ),
+        )
+        .unwrap();
+
+        for strict in [false, true] {
+            let mut registry = MockRegistryProvider::new();
+            // Identical references are checked only once.
+            registry
+                .expect_verify_provenance()
+                .times(1)
+                .returning(|_, _| Ok(false));
+            let pipeline = verify_pipeline(registry, crate::cli::OutputFormat::Text);
+
+            let res = pipeline
+                .verify(std::slice::from_ref(&f), true, strict)
+                .await
+                .unwrap();
+            assert_eq!(res.unsigned.len(), 2);
+            assert!(res.compromised.is_empty());
+            assert!(res.non_vetted.is_empty());
+            assert_eq!(res.is_success(), !strict);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_verify_provenance_error_keeps_finding() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(&f, format!("image: alpine@sha256:{}", "1".repeat(64))).unwrap();
+
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_verify_provenance()
+            .returning(|_, _| Err(PinnerError::Api("boom".into())));
+        let pipeline = verify_pipeline(registry, crate::cli::OutputFormat::Text);
+
+        let res = pipeline
+            .verify(std::slice::from_ref(&f), true, false)
+            .await
+            .unwrap();
+        assert!(res.is_success());
+        assert!(res.unsigned.is_empty());
     }
 }

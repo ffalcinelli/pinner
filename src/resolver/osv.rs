@@ -1,12 +1,116 @@
 use crate::error::PinnerError;
 use crate::resolver::provider::{decode_cached_value, encode_cached_value};
 use moka::future::Cache;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// How OSV advisories classify a commit.
+///
+/// Ordered by severity, so the worst verdict of several advisories is their maximum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OsvVerdict {
+    /// No advisories.
+    Clean,
+    /// Ordinary vulnerabilities (CVEs and similar).
+    Vulnerable,
+    /// A malicious or hijacked release (supply-chain compromise).
+    Compromised,
+}
+
+/// A single OSV advisory affecting a commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OsvAdvisory {
+    /// Advisory identifier (e.g. `GHSA-…`, `MAL-…`).
+    pub id: String,
+    /// One-line summary, empty if OSV provides none.
+    pub summary: String,
+    /// Whether the advisory describes a supply-chain compromise.
+    pub compromise: bool,
+}
+
+/// The classified OSV result for a commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OsvAssessment {
+    /// The most severe verdict across all advisories.
+    pub verdict: OsvVerdict,
+    /// Every advisory returned by OSV.
+    pub advisories: Vec<OsvAdvisory>,
+}
+
+impl OsvAssessment {
+    /// An assessment with no advisories.
+    pub fn clean() -> Self {
+        Self {
+            verdict: OsvVerdict::Clean,
+            advisories: Vec::new(),
+        }
+    }
+
+    /// Advisory identifiers, for compact reporting.
+    pub fn ids(&self) -> Vec<String> {
+        self.advisories.iter().map(|a| a.id.clone()).collect()
+    }
+}
+
+/// Words in an OSV advisory that indicate a supply-chain compromise rather than a
+/// regular vulnerability.
+const COMPROMISE_KEYWORDS: [&str; 6] = [
+    "malicious",
+    "compromised",
+    "backdoor",
+    "malware",
+    "hijacked",
+    "exfiltrat",
+];
+
+/// Classifies an OSV `/v1/query` response body.
+///
+/// An advisory is a compromise when it comes from OSV's malicious-packages database
+/// (`MAL-` identifiers) or its summary/details mention malicious, backdoored,
+/// hijacked or exfiltrating code. Any other advisory is an ordinary vulnerability.
+/// `verify` and `scan` both use this, so they always agree.
+pub fn assess_osv_response(body: &str) -> Result<OsvAssessment, PinnerError> {
+    #[derive(serde::Deserialize)]
+    struct OsvResponse {
+        vulns: Option<Vec<OsvVulnerability>>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct OsvVulnerability {
+        id: String,
+        summary: Option<String>,
+        details: Option<String>,
+    }
+
+    let response: OsvResponse = serde_json::from_str(body)
+        .map_err(|e| PinnerError::Api(format!("Invalid OSV response: {}", e)))?;
+
+    let mut assessment = OsvAssessment::clean();
+    for vuln in response.vulns.unwrap_or_default() {
+        let summary = vuln.summary.unwrap_or_default();
+        let text = format!("{} {}", summary, vuln.details.unwrap_or_default()).to_lowercase();
+        let compromise =
+            vuln.id.starts_with("MAL-") || COMPROMISE_KEYWORDS.iter().any(|k| text.contains(k));
+        let verdict = if compromise {
+            OsvVerdict::Compromised
+        } else {
+            OsvVerdict::Vulnerable
+        };
+        assessment.verdict = assessment.verdict.max(verdict);
+        assessment.advisories.push(OsvAdvisory {
+            id: vuln.id,
+            summary,
+            compromise,
+        });
+    }
+    Ok(assessment)
+}
+
 /// Client to query the OSV database with in-memory and on-disk caching.
 pub struct OsvClient {
-    client: reqwest::Client,
+    client: ClientWithMiddleware,
     memory_cache: Cache<String, String>,
     disk_cache_path: Option<PathBuf>,
     offline: bool,
@@ -22,8 +126,16 @@ impl OsvClient {
             Duration::from_secs(1)
         };
 
+        let client = reqwest::Client::builder()
+            .user_agent("pinner")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+
         Self {
-            client: reqwest::Client::new(),
+            client: ClientBuilder::new(client)
+                .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+                .build(),
             memory_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_live(memory_ttl)
@@ -31,6 +143,14 @@ impl OsvClient {
             disk_cache_path,
             offline,
             ttl,
+        }
+    }
+
+    /// Queries OSV for a commit and classifies the advisories.
+    pub async fn assess_commit(&self, commit: &str) -> Result<OsvAssessment, PinnerError> {
+        match self.query_commit(commit).await? {
+            Some(body) => assess_osv_response(&body),
+            None => Ok(OsvAssessment::clean()),
         }
     }
 
@@ -75,9 +195,13 @@ impl OsvClient {
         let response = self
             .client
             .post(&base_url)
-            .json(&OsvQuery {
-                commit: commit.to_string(),
-            })
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(
+                serde_json::to_vec(&OsvQuery {
+                    commit: commit.to_string(),
+                })
+                .map_err(|e| PinnerError::Api(e.to_string()))?,
+            )
             .send()
             .await
             .map_err(|e| PinnerError::Api(format!("Failed to send OSV request: {}", e)))?;
@@ -223,5 +347,36 @@ mod tests {
         let res = client.query_commit("hash123").await;
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), PinnerError::Offline(_)));
+    }
+
+    #[test]
+    fn test_assess_osv_response() {
+        assert_eq!(
+            assess_osv_response(r#"{"vulns":[]}"#).unwrap(),
+            OsvAssessment::clean()
+        );
+        assert_eq!(assess_osv_response("{}").unwrap(), OsvAssessment::clean());
+
+        let cve =
+            assess_osv_response(r#"{"vulns":[{"id":"GHSA-1","summary":"Denial of service"}]}"#)
+                .unwrap();
+        assert_eq!(cve.verdict, OsvVerdict::Vulnerable);
+        assert_eq!(cve.ids(), vec!["GHSA-1"]);
+        assert!(!cve.advisories[0].compromise);
+
+        let mixed = assess_osv_response(
+            r#"{"vulns":[
+                {"id":"GHSA-1","summary":"Denial of service"},
+                {"id":"GHSA-2","summary":"Release","details":"The tag was HIJACKED to exfiltrate secrets"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(mixed.verdict, OsvVerdict::Compromised);
+        assert!(mixed.advisories[1].compromise);
+
+        let mal = assess_osv_response(r#"{"vulns":[{"id":"MAL-2025-1"}]}"#).unwrap();
+        assert_eq!(mal.verdict, OsvVerdict::Compromised);
+
+        assert!(assess_osv_response("not json").is_err());
     }
 }

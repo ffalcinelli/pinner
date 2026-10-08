@@ -1,16 +1,6 @@
-use crate::core::UpdateResult;
+use crate::core::update::VERSION_COMMENT_REGEX as COMMENT_REGEX;
+use crate::core::{is_hash_ref, UpdateResult};
 use crate::error::PinnerError;
-use regex::Regex;
-use std::sync::LazyLock;
-
-/// Regex used to identify "version-only" comments that should be replaced during an update.
-///
-/// If a comment matches this pattern (e.g., `# v1`, `# main`), it is considered a
-/// placeholder for the dependency version and is replaced by the new version's tag.
-static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
-        .expect("Failed to compile COMMENT_REGEX")
-});
 
 /// Applies an update to the string content of a YAML file.
 ///
@@ -27,10 +17,14 @@ pub fn apply_update(
     res: &UpdateResult,
 ) -> Result<Option<(String, String)>, PinnerError> {
     // Determine the end of the line to capture any existing trailing comments.
-    let line_end = content[res.task.end..]
+    // A CRLF terminator is left outside the replaced range so line endings survive.
+    let mut line_end = content[res.task.end..]
         .find('\n')
         .map(|pos| res.task.end + pos)
         .unwrap_or(content.len());
+    if line_end > res.task.end && content.as_bytes()[line_end - 1] == b'\r' {
+        line_end -= 1;
+    }
 
     let suffix = &content[res.task.end..line_end];
 
@@ -56,9 +50,7 @@ pub fn apply_update(
 
     // Prepare the new comment showing the symbolic tag (e.g., " # v3").
     let new_comment = if let Some(t) = &res.new_tag {
-        let is_sha =
-            (t.len() == 40 && t.chars().all(|c| c.is_ascii_hexdigit())) || t.starts_with("sha256:");
-        if is_sha {
+        if is_hash_ref(t) {
             // Don't add a comment if the tag is already a SHA or digest.
             "".to_string()
         } else {
@@ -79,6 +71,18 @@ pub fn apply_update(
 
     let new_val = if res.task.key == "ref" {
         format!("{}{}{}", res.new_sha, new_comment, extra_suffix)
+    } else if let Some(inline_tag) = &res.task.image_tag {
+        // Keep the `name:tag@digest` layout. The tag is already visible inline,
+        // so no version comment is added.
+        let tag = res
+            .new_tag
+            .as_deref()
+            .filter(|t| !is_hash_ref(t))
+            .unwrap_or(inline_tag);
+        format!(
+            "{}:{}@{}{}",
+            res.task.action, tag, res.new_sha, extra_suffix
+        )
     } else {
         let separator = if res.task.key == "pipe" { ":" } else { "@" };
         format!(
@@ -87,52 +91,42 @@ pub fn apply_update(
         )
     };
 
-    // Calculate line starts in the original content to find the preceding line if any.
-    let mut line_starts = vec![0];
-    for (idx, c) in content.char_indices() {
-        if c == '\n' {
-            line_starts.push(idx + 1);
-        }
-    }
-
+    // If the line directly above is a version-only comment (e.g. `# v1`), refresh it
+    // as well, keeping any annotation after the version and the original line ending.
     let mut start_range = res.task.start;
-    let mut prefix_replacement = "".to_string();
+    let mut prefix_replacement = String::new();
 
-    if res.task.line >= 2 {
-        let prev_line_idx = res.task.line - 2;
-        if prev_line_idx < line_starts.len() {
-            let start = line_starts[prev_line_idx];
-            let end = if prev_line_idx + 1 < line_starts.len() {
-                line_starts[prev_line_idx + 1]
-            } else {
-                content.len()
-            };
-            let prev_line_str = &content[start..end];
-            let trimmed = prev_line_str.trim();
-            if trimmed.starts_with('#') && COMMENT_REGEX.is_match(trimmed) {
-                if let Some(new_t) = &res.new_tag {
-                    let is_sha = (new_t.len() == 40
-                        && new_t.chars().all(|c| c.is_ascii_hexdigit()))
-                        || new_t.starts_with("sha256:");
-                    if !is_sha {
-                        let indent = prev_line_str.len() - prev_line_str.trim_start().len();
-                        let indent_str = &prev_line_str[..indent];
-                        let newline_str = if prev_line_str.ends_with('\n') {
-                            "\n"
-                        } else {
-                            ""
-                        };
+    let line_start = content[..res.task.start]
+        .rfind('\n')
+        .map_or(0, |pos| pos + 1);
+    if let (true, Some(new_t)) = (line_start > 0, &res.new_tag) {
+        let prev_start = content[..line_start - 1]
+            .rfind('\n')
+            .map_or(0, |pos| pos + 1);
+        let prev_line = &content[prev_start..line_start];
+        let body = prev_line.trim_end_matches(['\n', '\r']);
+        let newline = &prev_line[body.len()..];
+        let trimmed = body.trim();
 
-                        start_range = start;
-                        prefix_replacement = format!(
-                            "{}# {}{}{}",
-                            indent_str,
-                            new_t,
-                            newline_str,
-                            &content[end..res.task.start]
-                        );
-                    }
-                }
+        if let Some(mat) = COMMENT_REGEX.find(trimmed) {
+            if !is_hash_ref(new_t) {
+                let indent = &body[..body.len() - body.trim_start().len()];
+                let rest = trimmed[mat.end()..].trim();
+                let rest = if rest.is_empty() {
+                    String::new()
+                } else {
+                    format!(" # {}", rest)
+                };
+
+                start_range = prev_start;
+                prefix_replacement = format!(
+                    "{}# {}{}{}{}",
+                    indent,
+                    new_t,
+                    rest,
+                    newline,
+                    &content[line_start..res.task.start]
+                );
             }
         }
     }
@@ -170,6 +164,7 @@ mod tests {
                 current_tag: Some("v3".to_string()),
                 comment: None,
                 preceding_comments: None,
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -199,6 +194,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: None,
                 preceding_comments: Some("# v1".to_string()),
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 2,
                 column: 7,
@@ -227,6 +223,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: Some("# keep me".to_string()),
                 preceding_comments: None,
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -255,6 +252,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: Some("# v1".to_string()),
                 preceding_comments: None,
+                image_tag: None,
                 key: "uses".to_string(),
                 line: 1,
                 column: 1,
@@ -283,6 +281,7 @@ mod tests {
                 current_tag: Some("sha256:oldhash".to_string()),
                 comment: Some("# stable".to_string()),
                 preceding_comments: None,
+                image_tag: None,
                 key: "image".to_string(),
                 line: 1,
                 column: 1,
@@ -312,6 +311,7 @@ mod tests {
                 current_tag: Some("v1".to_string()),
                 comment: None,
                 preceding_comments: None,
+                image_tag: None,
                 key: "ref".to_string(),
                 line: 1,
                 column: 1,
@@ -396,5 +396,124 @@ mod tests {
 
         apply_update(&mut content, &res).unwrap();
         assert_eq!(content, "image: alpine@sha256:digest # latest");
+    }
+
+    fn result_for(
+        content: &str,
+        value: &str,
+        comment: Option<&str>,
+        new_tag: &str,
+    ) -> UpdateResult {
+        let start = content.find(value).unwrap();
+        let line = content[..start].matches('\n').count() + 1;
+        UpdateResult {
+            action: "o/r".into(),
+            path: "f.yml".into(),
+            old_tag: Some("v1".to_string()),
+            task: UpdateTask {
+                path: "f.yml".into(),
+                start,
+                end: start + value.len(),
+                line,
+                action: "o/r".into(),
+                current_tag: Some("v1".to_string()),
+                comment: comment.map(String::from),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            new_sha: DependencyRef::from("hash".to_string()),
+            new_tag: Some(new_tag.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_apply_update_keeps_free_form_trailing_comments() {
+        for comment in [
+            "# mainly for tests",
+            "# 3 retries",
+            "# v1 is broken upstream",
+        ] {
+            let mut content = format!("uses: o/r@v1 {}", comment);
+            let res = result_for(&content, "o/r@v1", Some(comment), "v2");
+            apply_update(&mut content, &res).unwrap();
+            assert_eq!(content, format!("uses: o/r@hash # v2 {}", comment));
+        }
+    }
+
+    #[test]
+    fn test_apply_update_keeps_free_form_trailing_comment_without_parser_comment() {
+        let mut content = "uses: o/r@v1 # mainly for tests".to_string();
+        let res = result_for(&content, "o/r@v1", None, "v2");
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "uses: o/r@hash # v2 # mainly for tests");
+    }
+
+    #[test]
+    fn test_apply_update_preceding_comment_keeps_annotation() {
+        let mut content = "  # v1 # pinned for compat\n  uses: o/r@v1".to_string();
+        let res = result_for(&content, "o/r@v1", None, "v2");
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "  # v2 # pinned for compat\n  uses: o/r@hash # v2");
+    }
+
+    #[test]
+    fn test_apply_update_preceding_free_form_comment_untouched() {
+        for header in [
+            "# main build step",
+            "# 3 retries below",
+            "# v1 important note",
+        ] {
+            let mut content = format!("{}\nuses: o/r@v1", header);
+            let res = result_for(&content, "o/r@v1", None, "v2");
+            apply_update(&mut content, &res).unwrap();
+            assert_eq!(content, format!("{}\nuses: o/r@hash # v2", header));
+        }
+    }
+
+    #[test]
+    fn test_apply_update_preserves_crlf() {
+        let mut content = "# v1\r\nuses: o/r@v1\r\nnext: line\r\n".to_string();
+        let res = result_for(&content, "o/r@v1", None, "v2");
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "# v2\r\nuses: o/r@hash # v2\r\nnext: line\r\n");
+    }
+
+    #[test]
+    fn test_apply_update_crlf_with_trailing_comment() {
+        let mut content = "uses: o/r@v1 # keep\r\n".to_string();
+        let res = result_for(&content, "o/r@v1", Some("# keep"), "v2");
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, "uses: o/r@hash # v2 # keep\r\n");
+    }
+
+    #[test]
+    fn test_apply_update_keeps_inline_image_tag() {
+        let old = format!("sha256:{}", "1".repeat(64));
+        let new = format!("sha256:{}", "2".repeat(64));
+        let mut content = format!("image: alpine:3.20@{} # keep", old);
+        let value = format!("alpine:3.20@{}", old);
+        let start = content.find(&value).unwrap();
+        let res = UpdateResult {
+            action: "alpine".into(),
+            path: "f.yml".into(),
+            old_tag: Some(old.clone()),
+            task: UpdateTask {
+                path: "f.yml".into(),
+                start,
+                end: start + value.len(),
+                line: 1,
+                action: "alpine".into(),
+                current_tag: Some(old.clone()),
+                comment: Some("# keep".to_string()),
+                image_tag: Some("3.20".to_string()),
+                key: "image".to_string(),
+                ..Default::default()
+            },
+            new_sha: DependencyRef::from(new.clone()),
+            new_tag: Some("3.20".to_string()),
+        };
+
+        apply_update(&mut content, &res).unwrap();
+        assert_eq!(content, format!("image: alpine:3.20@{} # keep", new));
     }
 }

@@ -6,7 +6,8 @@ use crate::patcher::ui::UserInterface;
 use colored::Colorize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The `Patcher` coordinates the application of updates to the file system.
@@ -153,7 +154,7 @@ impl Patcher {
                     }
 
                     if self.ui.confirm_patch(&patch.path) {
-                        fs::write(&patch.path, patch.new_content)?;
+                        write_atomic(&patch.path, &patch.new_content)?;
                         self.ui.report_success(&patch.path);
                         all_results.extend(patch.results);
                     } else {
@@ -162,7 +163,7 @@ impl Patcher {
                 }
             } else if !self.dry_run {
                 // Non-text mode (e.g. JSON) or quiet mode: apply silently.
-                fs::write(&patch.path, patch.new_content)?;
+                write_atomic(&patch.path, &patch.new_content)?;
                 all_results.extend(patch.results);
             } else if self.dry_run {
                 // In dry-run but non-text mode (e.g. JSON), we still want the results.
@@ -184,6 +185,33 @@ impl Patcher {
         let patches = self.calculate_patches(results, file_contents)?;
         self.apply_patches(patches).await
     }
+}
+
+/// Replaces the contents of `path` atomically.
+///
+/// The new content is written to a temporary file in the same directory and then
+/// renamed over the original, so an interrupted run never leaves a half-written
+/// workflow behind. The original permissions are kept, and symlinks are followed so
+/// the link itself is not replaced by a regular file.
+pub fn write_atomic(path: &Path, content: &str) -> Result<(), PinnerError> {
+    let target = if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let dir = match target.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(content.as_bytes())?;
+    if let Ok(meta) = fs::metadata(&target) {
+        tmp.as_file().set_permissions(meta.permissions())?;
+    }
+    tmp.as_file().sync_all()?;
+    tmp.persist(&target).map_err(|e| PinnerError::Io(e.error))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -214,6 +242,7 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "uses".to_string(),
             provider: CiProvider::GitHub,
         };
@@ -467,5 +496,42 @@ mod tests {
 
         let res = patcher.apply_changes(vec![result], file_contents).await;
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_write_atomic_replaces_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("ci.yml");
+        fs::write(&f, "old").unwrap();
+
+        write_atomic(&f, "new").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        // No temporary files are left behind.
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_keeps_permissions_and_symlinks() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.yml");
+        fs::write(&real, "old").unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+        let link = dir.path().join("link.yml");
+        symlink(&real, &link).unwrap();
+
+        write_atomic(&link, "new").unwrap();
+
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+        assert_eq!(
+            fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
     }
 }

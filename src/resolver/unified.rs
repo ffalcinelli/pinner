@@ -1,7 +1,7 @@
 use colored::Colorize;
 
 use crate::cli::UpgradeStrategy;
-use crate::core::{DependencyRef, UpdateResult, UpdateTask};
+use crate::core::{is_git_sha, is_hash_ref, DependencyRef, UpdateResult, UpdateTask};
 use crate::error::PinnerError;
 use crate::resolver::osv::OsvClient;
 use crate::resolver::provider::RemoteProvider;
@@ -49,6 +49,14 @@ impl Resolver {
     /// Queries the OSV database for vulnerabilities related to a commit SHA.
     pub async fn check_vulnerabilities(&self, commit: &str) -> Result<Option<String>, PinnerError> {
         self.osv.query_commit(commit).await
+    }
+
+    /// Queries OSV for a commit and classifies its advisories.
+    pub async fn assess_commit(
+        &self,
+        commit: &str,
+    ) -> Result<crate::resolver::osv::OsvAssessment, PinnerError> {
+        self.osv.assess_commit(commit).await
     }
 
     /// Resolves a batch of tasks into results.
@@ -154,19 +162,25 @@ impl Resolver {
             return Ok(None);
         }
 
-        if let Some(ver) = &task.current_tag {
-            if task.action.is_docker() || task.key == "image" || task.key == "container" {
-                if !ver.starts_with("sha256:") {
-                    let image = task.action.trim_docker_prefix();
-                    let digest = registry.resolve_digest(image, ver).await?;
-                    return Ok(Some((DependencyRef::from(digest), Some(ver.clone()))));
-                }
-            } else if ver.len() != 40 {
-                let sha = remote.get_commit_sha(&task.action, ver, &task.key).await?;
-                return Ok(Some((sha, Some(ver.clone()))));
+        if is_image(task) {
+            // An image without a tag is pulled as `latest`, so pin exactly that.
+            let tag = task.current_tag.as_deref().unwrap_or("latest");
+            if is_hash_ref(tag) {
+                return Ok(None);
             }
+            let digest = registry
+                .resolve_digest(task.action.trim_docker_prefix(), tag)
+                .await?;
+            return Ok(Some((DependencyRef::from(digest), Some(tag.to_string()))));
         }
-        Ok(None)
+
+        match &task.current_tag {
+            Some(ver) if !is_git_sha(ver) => {
+                let sha = remote.get_commit_sha(&task.action, ver, &task.key).await?;
+                Ok(Some((sha, Some(ver.clone()))))
+            }
+            _ => Ok(None),
+        }
     }
 
     async fn resolve_upgrade(
@@ -175,74 +189,35 @@ impl Resolver {
         registry: Arc<dyn RegistryProvider>,
         strategy: UpgradeStrategy,
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
+        let current_tag = task.logical_tag().unwrap_or_default();
+
         if task.key == "orbs" {
             let tag = remote.get_latest_release(&task.action, &task.key).await?;
-            let current_tag = task.logical_tag().unwrap_or_default();
             if is_newer(&tag, &current_tag) {
                 return Ok(Some((DependencyRef::Version(tag), None)));
             }
             return Ok(None);
         }
 
-        if task.action.is_docker() || task.key == "image" || task.key == "container" {
-            let image = task.action.trim_docker_prefix();
-            let tag = task.current_tag.as_deref().unwrap_or("latest");
-            let digest = registry.resolve_digest(image, tag).await?;
-            return Ok(Some((DependencyRef::from(digest), Some(tag.to_string()))));
+        if is_image(task) {
+            return resolve_image_tag(task, registry.as_ref()).await;
         }
 
         if strategy == UpgradeStrategy::Commit {
-            let branch = remote.get_default_branch(&task.action, &task.key).await?;
-            let sha = remote
-                .get_commit_sha(&task.action, &branch.0, &task.key)
-                .await?;
-            return Ok(Some((sha, Some(branch.0))));
+            return resolve_default_branch(task, remote.as_ref()).await;
         }
 
-        let latest_tag = if strategy == UpgradeStrategy::Latest {
-            let tag = remote.get_latest_release(&task.action, &task.key).await?;
-            let current_tag = task.logical_tag().unwrap_or_default();
-            if is_newer(&tag, &current_tag) {
-                Some(tag)
-            } else {
-                None
-            }
-        } else {
-            let tags = remote.list_tags(&task.action, &task.key).await?;
-            let current_tag = task.logical_tag().unwrap_or_default();
-            let current_version = parse_relaxed_semver(&current_tag);
+        let candidate = select_candidate_tag(task, remote.as_ref(), &strategy)
+            .await?
+            .filter(|tag| is_newer(tag, &current_tag));
 
-            let mut filtered_tags: Vec<_> = tags
-                .into_iter()
-                .filter_map(|t| parse_relaxed_semver(&t).map(|v| (t, v)))
-                .collect();
-
-            filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
-
-            if let Some(cv) = current_version {
-                filtered_tags
-                    .into_iter()
-                    .find(|(_, v)| match strategy {
-                        UpgradeStrategy::Major => v.major == cv.major && v > &cv,
-                        UpgradeStrategy::Minor => {
-                            v.major == cv.major && v.minor == cv.minor && v > &cv
-                        }
-                        _ => false,
-                    })
-                    .map(|(t, _)| t)
-            } else {
-                None
-            }
-        };
-
-        if let Some(tag) = latest_tag {
-            if Some(&tag) != task.current_tag.as_ref() {
+        match candidate {
+            Some(tag) if Some(&tag) != task.current_tag.as_ref() => {
                 let sha = remote.get_commit_sha(&task.action, &tag, &task.key).await?;
-                return Ok(Some((sha, Some(tag))));
+                Ok(Some((sha, Some(tag))))
             }
+            _ => Ok(None),
         }
-
-        Ok(None)
     }
 
     /// Gets the upgrade candidate version/ref for a task, without applying is_newer checks.
@@ -250,65 +225,101 @@ impl Resolver {
         &self,
         task: &UpdateTask,
     ) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
-        let remote = self.remote.clone();
-        let registry = self.registry.clone();
-        let strategy = self.upgrade_strategy.clone();
+        let remote = self.remote.as_ref();
 
         if task.key == "orbs" {
             let tag = remote.get_latest_release(&task.action, &task.key).await?;
             return Ok(Some((DependencyRef::Version(tag.clone()), Some(tag))));
         }
 
-        if task.action.is_docker() || task.key == "image" || task.key == "container" {
-            let image = task.action.trim_docker_prefix();
-            let tag = task.current_tag.as_deref().unwrap_or("latest");
-            let digest = registry.resolve_digest(image, tag).await?;
-            return Ok(Some((DependencyRef::from(digest), Some(tag.to_string()))));
+        if is_image(task) {
+            return resolve_image_tag(task, self.registry.as_ref()).await;
         }
 
-        if strategy == UpgradeStrategy::Commit {
-            let branch = remote.get_default_branch(&task.action, &task.key).await?;
-            let sha = remote
-                .get_commit_sha(&task.action, &branch.0, &task.key)
-                .await?;
-            return Ok(Some((sha, Some(branch.0))));
+        if self.upgrade_strategy == UpgradeStrategy::Commit {
+            return resolve_default_branch(task, remote).await;
         }
 
-        let latest_tag = if strategy == UpgradeStrategy::Latest {
-            Some(remote.get_latest_release(&task.action, &task.key).await?)
-        } else {
-            let tags = remote.list_tags(&task.action, &task.key).await?;
-            let current_tag = task.logical_tag().unwrap_or_default();
-            let current_version = parse_relaxed_semver(&current_tag);
-
-            let mut filtered_tags: Vec<_> = tags
-                .into_iter()
-                .filter_map(|t| parse_relaxed_semver(&t).map(|v| (t, v)))
-                .collect();
-
-            filtered_tags.sort_by(|a, b| b.1.cmp(&a.1));
-
-            if let Some(cv) = current_version {
-                filtered_tags
-                    .into_iter()
-                    .find(|(_, v)| match strategy {
-                        UpgradeStrategy::Major => v.major == cv.major,
-                        UpgradeStrategy::Minor => v.major == cv.major && v.minor == cv.minor,
-                        _ => false,
-                    })
-                    .map(|(t, _)| t)
-            } else {
-                None
+        match select_candidate_tag(task, remote, &self.upgrade_strategy).await? {
+            Some(tag) => {
+                let sha = remote.get_commit_sha(&task.action, &tag, &task.key).await?;
+                Ok(Some((sha, Some(tag))))
             }
-        };
-
-        if let Some(tag) = latest_tag {
-            let sha = remote.get_commit_sha(&task.action, &tag, &task.key).await?;
-            return Ok(Some((sha, Some(tag))));
+            None => Ok(None),
         }
-
-        Ok(None)
     }
+}
+
+/// Returns true if the task refers to a container image rather than a repository.
+fn is_image(task: &UpdateTask) -> bool {
+    task.action.is_docker() || task.key == "image" || task.key == "container"
+}
+
+/// Re-resolves the digest for the tag an image tracks.
+///
+/// The tag comes from the reference itself or, for already pinned images, from the
+/// version comment or inline tag (`alpine:3.20@sha256:…`). A digest-pinned image with
+/// no recoverable tag is left alone rather than guessed to be `latest`.
+async fn resolve_image_tag(
+    task: &UpdateTask,
+    registry: &dyn RegistryProvider,
+) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
+    let tag = match task.logical_tag() {
+        Some(tag) if is_hash_ref(&tag) => return Ok(None),
+        Some(tag) => tag,
+        None => "latest".to_string(),
+    };
+    let digest = registry
+        .resolve_digest(task.action.trim_docker_prefix(), &tag)
+        .await?;
+    Ok(Some((DependencyRef::from(digest), Some(tag))))
+}
+
+/// Resolves the head commit of the repository's default branch.
+async fn resolve_default_branch(
+    task: &UpdateTask,
+    remote: &dyn RemoteProvider,
+) -> Result<Option<(DependencyRef, Option<String>)>, PinnerError> {
+    let branch = remote.get_default_branch(&task.action, &task.key).await?;
+    let sha = remote
+        .get_commit_sha(&task.action, &branch.0, &task.key)
+        .await?;
+    Ok(Some((sha, Some(branch.0))))
+}
+
+/// Picks the tag an upgrade would move to under `strategy`, without checking that it
+/// is newer than the current one.
+///
+/// - `Latest`: the latest release.
+/// - `Major`: the highest tag sharing the current major version.
+/// - `Minor`: the highest tag sharing the current major and minor versions.
+async fn select_candidate_tag(
+    task: &UpdateTask,
+    remote: &dyn RemoteProvider,
+    strategy: &UpgradeStrategy,
+) -> Result<Option<String>, PinnerError> {
+    if *strategy == UpgradeStrategy::Latest {
+        return Ok(Some(
+            remote.get_latest_release(&task.action, &task.key).await?,
+        ));
+    }
+
+    let current_tag = task.logical_tag().unwrap_or_default();
+    let Some(cv) = parse_relaxed_semver(&current_tag) else {
+        return Ok(None);
+    };
+
+    let tags = remote.list_tags(&task.action, &task.key).await?;
+    Ok(tags
+        .into_iter()
+        .filter_map(|t| parse_relaxed_semver(&t).map(|v| (t, v)))
+        .filter(|(_, v)| match strategy {
+            UpgradeStrategy::Major => v.major == cv.major,
+            UpgradeStrategy::Minor => v.major == cv.major && v.minor == cv.minor,
+            _ => false,
+        })
+        .max_by(|a, b| a.1.cmp(&b.1))
+        .map(|(t, _)| t))
 }
 
 fn normalize_semver(s: &str) -> String {
@@ -535,6 +546,7 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "uses".to_string(),
             line: 1,
             column: 1,
@@ -572,6 +584,7 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "uses".to_string(),
             line: 1,
             column: 1,
@@ -616,6 +629,7 @@ mod tests {
             current_tag: Some("v1.0.0".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "uses".to_string(),
             provider: crate::core::CiProvider::GitHub,
         };
@@ -656,6 +670,7 @@ mod tests {
             current_tag: Some("v3".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "uses".to_string(),
             line: 1,
             column: 1,
@@ -698,6 +713,7 @@ mod tests {
             current_tag: Some("5.0.0".to_string()),
             comment: None,
             preceding_comments: None,
+            image_tag: None,
             key: "orbs".to_string(),
             provider: crate::core::CiProvider::CircleCI,
         };
@@ -871,5 +887,91 @@ mod tests {
                 Some("latest".to_string())
             ))
         );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_pin_untagged_image_uses_latest() {
+        let mut registry = MockRegistryProvider::new();
+        registry
+            .expect_resolve_digest()
+            .with(eq("alpine"), eq("latest"))
+            .returning(|_, _| Ok("sha256:digest".to_string()));
+
+        let task = UpdateTask {
+            action: "alpine".into(),
+            current_tag: None,
+            key: "image".to_string(),
+            ..Default::default()
+        };
+
+        let res = Resolver::resolve_pin(
+            &task,
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(registry),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            res,
+            Some((
+                DependencyRef::DockerDigest("sha256:digest".to_string()),
+                Some("latest".to_string())
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upgrade_pinned_image_tracks_comment_tag() {
+        // The tag is recovered from a version comment or from an inline `name:tag@digest`.
+        for (comment, image_tag) in [(Some("# 3.20"), None), (None, Some("3.20"))] {
+            let mut registry = MockRegistryProvider::new();
+            registry
+                .expect_resolve_digest()
+                .with(eq("alpine"), eq("3.20"))
+                .returning(|_, _| Ok("sha256:new".to_string()));
+
+            let task = UpdateTask {
+                action: "alpine".into(),
+                current_tag: Some("sha256:old".to_string()),
+                comment: comment.map(String::from),
+                image_tag: image_tag.map(String::from),
+                key: "image".to_string(),
+                ..Default::default()
+            };
+            let res = Resolver::resolve_upgrade(
+                &task,
+                Arc::new(MockRemoteProvider::new()),
+                Arc::new(registry),
+                UpgradeStrategy::Latest,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                res,
+                Some((
+                    DependencyRef::DockerDigest("sha256:new".to_string()),
+                    Some("3.20".to_string())
+                ))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upgrade_digest_without_tag_is_left_alone() {
+        let task = UpdateTask {
+            action: "alpine".into(),
+            current_tag: Some("sha256:old".to_string()),
+            key: "image".to_string(),
+            ..Default::default()
+        };
+        let res = Resolver::resolve_upgrade(
+            &task,
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            UpgradeStrategy::Latest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res, None);
     }
 }
