@@ -75,6 +75,7 @@ Releases are automated using `scripts/release.sh`, which performs end-to-end ver
 *   **Mockito HTTP Mocks**: Starts standard async servers using `mockito::Server::new_async()`. The mock server URLs are injected into the CLI configuration args (e.g. `--github-url`) to redirect remote requests.
 *   **Sandbox Isolation**: Uses the `tempfile::tempdir` crate to create temporary workspace environments, avoiding interference with actual system configuration files.
 *   **Sequential Run**: Integration tests are annotated with `#[serial_test::serial]` to prevent port conflicts or overlapping resources during async execution.
+*   **Hermetic Configuration**: Unit tests never read global configuration (unless `PINNER_TEST_ALLOW_GLOBAL` is set). Integration tests set `PINNER_NO_GLOBAL_CONFIG=1` so a developer's `~/.config/pinner/config.toml` cannot change results. Do the same in new tests that call `pinner::run`.
 
 ---
 

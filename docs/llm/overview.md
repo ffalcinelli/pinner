@@ -55,10 +55,10 @@ src/
 ├── cli.rs             # CLI Configuration: Configures clap commands, arguments, and strategies.
 ├── lib.rs             # Library Entry Point: Orchestrates the scan -> resolve -> patch pipeline.
 ├── error.rs           # Error Handling: Defines custom PinnerError types.
-├── config.rs          # Config Loader: Parses and manages project configuration (.pinner.toml).
+├── config.rs          # Config Loader: Loads/validates .pinner.toml + global config, merges security lists.
 ├── core/              # Domain Layer: Pure logic and core domain structures.
 │   ├── mod.rs
-│   ├── dependency.rs  # Domain types for dependencies, references, and CI providers.
+│   ├── dependency.rs  # Domain types for dependencies, references, CI providers, SHA/digest helpers.
 │   └── update.rs      # Structures representing scan/resolution targets.
 ├── scanner/           # Scanning Layer: Traverses directories and parses syntax trees.
 │   ├── mod.rs
@@ -79,7 +79,8 @@ src/
     ├── mod.rs
     ├── mutator.rs     # Surgical byte-offset replacements on file contents.
     ├── formatter.rs   # Console diff rendering and status outputs.
-    ├── disk.rs        # Safe file reading/writing transactions.
+    ├── report.rs      # `verify` findings rendered as text/GitHub/Markdown/JUnit.
+    ├── disk.rs        # Patch calculation and atomic file writes.
     └── ui.rs          # Progress bars and CLI user interaction.
 ```
 
@@ -89,10 +90,10 @@ src/
 
 When a command like `pinner pin` or `pinner upgrade` runs:
 
-1.  **Initialization**: `main.rs` processes parameters. It loads settings from `.pinner.toml` if available via `config.rs`.
+1.  **Initialization**: `main.rs` loads configuration once via `Config::load()` (global files, then `.pinner.toml`/`.pinner.yaml`, then `PINNER_*` variables), merges it with CLI flags and calls `run_with_config`. An invalid local file or variable aborts with an error; an invalid global file is skipped with a warning; `PINNER_NO_GLOBAL_CONFIG` disables global files. `Config::layered` merges the vetted/compromised lists so local entries override opposite global ones.
 2.  **Scanning**: `walker.rs` concurrently searches the targeted workflow paths. For each matching file, `parser.rs` executes a Tree-Sitter query on the YAML AST to find all dependency key-value pairs (e.g. `uses: actions/checkout@v3`), yielding a list of `UpdateTask`s.
 3.  **Resolution**: The `Resolver` (`resolver/unified.rs`) groups `UpdateTask`s by their action name/tag to avoid redundant HTTP requests. Tasks are resolved concurrently (governed by the `concurrency` setting) via `UnifiedProvider`, which chooses the correct platform provider (e.g., `ReqwestGithubProvider` for GitHub Actions, or `RegistryProvider` for container images). Responses are cached in-memory and on disk to speed up subsequent executions.
-4.  **Patching**: The `apply_update` function in `patcher/mutator.rs` updates the content string at the exact offsets of the task. If a dry run is specified, `patcher/formatter.rs` prints a diff. Otherwise, `patcher/disk.rs` writes the modifications back to disk.
+4.  **Patching**: The `apply_update` function in `patcher/mutator.rs` updates the content string at the exact offsets of the task. If a dry run is specified, `patcher/formatter.rs` prints a diff. Otherwise, `patcher/disk.rs` writes the modifications back to disk atomically.
 
 ---
 

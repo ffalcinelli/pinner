@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- 🔐 **Unsigned images are no longer "compromised"**: `verify --check-osv` reported every image without a cosign signature as a supply-chain attack, and `scan --yes` wrote them to the `compromised` list. They now get a new **unsigned** status: a warning by default, and a failure only with `--strict`. `scan` lists them separately and never writes them to either list.
+- ⚙️ **Invalid configuration is an error**: An invalid `.pinner.toml`/`.pinner.yaml` or `PINNER_*` variable was silently replaced by defaults, which dropped the `vetted`/`compromised` lists so `verify` passed. Pinner now stops with an error naming the file. Invalid global files are skipped with a warning.
+- ⚖️ **Local overrides now work**: A global `compromised` entry beat a local `vetted` override, contrary to the documented precedence.
+- 🐳 **Registries using token challenges**: Anonymous pulls from GHCR, Quay, GCR and other registries failed with HTTP 401, so those images were silently skipped. Pinner now follows the standard `WWW-Authenticate: Bearer` challenge.
+- 🧩 **Multi-platform digests**: Manifest requests accept OCI index and Docker manifest-list types first, so tags resolve to the digest that covers all platforms. Requests use `HEAD` (free under Docker Hub pull limits) with a `GET` fallback, and `docker.io/...` names resolve against the correct registry host.
+- ⬆️ **Image upgrades**: `upgrade` never refreshed pinned images, because it re-resolved the digest instead of the tag from the version comment. Untagged images (`image: alpine`) are now pinned as `latest` instead of being flagged by `verify` while `pin` skipped them.
+- 🏷️ **`name:tag@digest` references**: These are now parsed correctly and keep their inline tag when updated.
+- 💬 **Comment handling**: Free-form comments such as `# mainly for X` or `# 3 retries` were mistaken for version comments and truncated, and a preceding `# v1 note` line lost its note. CRLF line endings are now preserved on patched lines.
+- 🧪 **Templated values**: Values such as `${{ matrix.image }}` and `$CI_REGISTRY_IMAGE` are skipped instead of being reported as unpinned.
+- 🗄️ **Cache isolation**: Disk cache entries are scoped by provider URL, so a GitHub Enterprise repository is never served a SHA cached from github.com.
+- 📄 **Report escaping**: JUnit output is XML-escaped, GitHub annotations escape their values, and Markdown table cells escape `|`.
+- 🛡️ **Scan safety**: A failed OSV or registry lookup is reported as a warning. Previously it counted as clean, so `scan --yes` vetted the reference.
+- CircleCI `volatile` orbs are now reported as unpinned.
+
+### Changed
+- 💾 **Atomic writes**: Patched files are written to a temporary file and renamed into place, which preserves permissions and symlinks.
+- ⚡ **Concurrent security checks**: `verify --check-osv` and `scan` run OSV/provenance lookups and upgrade-candidate resolution concurrently, deduplicated by reference.
+- 🧱 **Internals**: Shared SHA/digest helpers in `core`. `verify` output moved to a new `patcher::report` module. Upgrade-candidate selection is deduplicated. Configuration is loaded once and passed to the new `run_with_config`.
+- 🌍 **`PINNER_NO_GLOBAL_CONFIG`**: New variable that skips global configuration files. It replaces a test-only check based on the executable path.
+- `vetted`/`compromised` entries accept `reference` as an alias of `ref`.
+
 ## [0.0.17] - 2026-09-24
 
 ### Added

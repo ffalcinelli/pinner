@@ -291,6 +291,10 @@
                             <td class="px-6 py-4 text-white font-medium"><code>PINNER_GITHUB_URL</code></td>
                             <td class="px-6 py-4">Override default GitHub API URL. Also available for GitLab, Bitbucket, Forgejo, and CircleCI.</td>
                         </tr>
+                        <tr>
+                            <td class="px-6 py-4 text-white font-medium"><code>PINNER_NO_GLOBAL_CONFIG</code></td>
+                            <td class="px-6 py-4">Ignore global configuration files (useful for reproducible CI runs).</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -377,6 +381,7 @@ no_security_feedback = false</code></pre>
             <div class="bg-sky-500/5 p-4 rounded-xl border border-sky-500/20 text-xs text-gray-400 leading-relaxed">
                 <strong>Local Precedence Rules</strong>:
                 A project-level <code>.pinner.toml</code> serves as a strict override. If a dependency reference is marked <code>vetted</code> locally, it overrides global <code>compromised</code> flags, and if marked <code>compromised</code> locally, it overrides global <code>vetted</code> entries.
+                An invalid local configuration file or <code>PINNER_*</code> variable stops Pinner with an error instead of silently dropping your lists; an invalid global file is skipped with a warning.
             </div>
         </section>
 

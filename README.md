@@ -23,7 +23,7 @@ Hash-pinning ensures that you run the **exact** code you've audited, every singl
 - **Surgical Replacement**: Uses `tree-sitter` for precise YAML parsing, preserving comments, indentation, and formatting perfectly.
 - **Multi-Forge & Composite Action Support**: Works with GitHub Actions (workflows and local composite actions in `.github/actions/` or `action.yml`/`action.yaml`), GitLab, Bitbucket, CircleCI, Azure DevOps, AWS CodeBuild, Tekton, Kubernetes, and Forgejo/Gitea.
 - **Tag Preservation**: Automatically appends the original tag as a comment (e.g., `@<hash> # v2`).
-- **Container Pinning**: Automatically pins Docker images to their immutable digests across `image:` declarations and GitHub Actions `container:` definitions (e.g., `image: alpine@sha256:...`, `container: node@sha256:...`).
+- **Container Pinning**: Automatically pins Docker images to their immutable digests across `image:` declarations and GitHub Actions `container:` definitions (e.g., `image: alpine@sha256:...`, `container: node@sha256:...`). Tags resolve to the multi-platform index digest, so pinned images keep working on arm64 and amd64 runners. Public images on Docker Hub, GHCR, Quay, GCR and other OCI registries resolve anonymously, and `name:tag@digest` references keep their inline tag. An untagged `image: alpine` is pinned as `latest`.
 - **Preceding/Header Comments Support**: Parses block/header comments, extracting version tags and surgically updating version-only comments above dependencies (e.g. `# v1` -> `# v2`).
 - **Tekton & Kubernetes Support**: Parses and pins OCI bundles in Tekton files and container images in standard Kubernetes manifests.
 - **Auto-Mitigation (PR Creation)**: Automates running pinning, branching, committing, pushing, and creating Pull/Merge Requests on GitHub/GitLab.
@@ -94,6 +94,8 @@ pinner verify --format markdown
 pinner verify --format junit
 ```
 
+Each dependency is reported as **unpinned**, **compromised** (listed in `compromised` or flagged by OSV), **unsigned** (an image without a cosign signature), **not vetted** (`--strict` only), or pinned. Unpinned, compromised and not-vetted dependencies fail verification. Unsigned images are a warning because most public images are not signed; they fail only with `--strict`. Signature and OSV checks run only with `--check-osv` (or `check_osv = true`). Values that the CI system templates at run time, such as `${{ matrix.image }}`, are skipped.
+
 ### 4. Install Git Hook
 Automatically install a pre-commit hook to verify pinning before every commit.
 ```bash
@@ -129,7 +131,7 @@ pinner pr-create --branch pinner/pin-dependencies --message "security: pin depen
 ```
 
 ### 9. Security Scan
-Audits your dependencies for vulnerabilities. It queries the OpenSSF OSV database for both current hashes and proposed upgrade candidates, and executes Sigstore/Cosign provenance and signature verification for OCI container images. It presents an interactive report and updates your vetted whitelist or compromised blacklist.
+Audits your dependencies for vulnerabilities. It queries the OpenSSF OSV database for both current hashes and proposed upgrade candidates, and executes Sigstore/Cosign provenance and signature verification for OCI container images. It presents an interactive report and updates your vetted whitelist or compromised blacklist. Unsigned images are listed in their own section and are never added to either list. A reference whose OSV or registry lookup fails is reported as a warning and is not vetted.
 ```bash
 # Scan workflows and interactively update your .pinner.toml config
 pinner scan
@@ -183,6 +185,8 @@ compromised = [
 no_security_feedback = false
 ```
 
+Structured entries accept either `ref` or `reference` as the key. Settings can also be given as `PINNER_`-prefixed environment variables (e.g. `PINNER_CONCURRENCY=5`). If `.pinner.toml`, `.pinner.yaml`/`.pinner.yml` or a `PINNER_` variable is invalid, Pinner stops with an error that names the problem. It does not fall back to defaults, which would silently drop your `vetted` and `compromised` lists.
+
 ## Global Configuration & Overrides 🌍
 
 Pinner automatically loads security configurations from global user locations, allowing you to share whitelists/blacklists across projects:
@@ -191,7 +195,9 @@ Pinner automatically loads security configurations from global user locations, a
 3. `~/.pinner.toml` (Home directory configuration file)
 
 **Precedence (Local Overrides)**:
-The local project-level `.pinner.toml` works as a strict override. If a dependency is marked `vetted` locally, it will override any global `compromised` status, and if marked `compromised` locally, it overrides any global `vetted` status. Non-conflicting items are combined automatically.
+The local project-level `.pinner.toml` works as a strict override. If a dependency is marked `vetted` locally, it will override any global `compromised` status, and if marked `compromised` locally, it overrides any global `vetted` status. Non-conflicting items are combined automatically. If one file lists the same reference as both vetted and compromised, it is treated as compromised.
+
+An invalid global file is skipped with a warning. Set `PINNER_NO_GLOBAL_CONFIG=1` to ignore global configuration entirely, for example for reproducible CI runs.
 
 
 ## Supported Platforms 🌐
