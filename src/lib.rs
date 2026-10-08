@@ -127,12 +127,10 @@ pub async fn run_with_config<G: RemoteProvider + 'static, R: RegistryProvider + 
         cache_ttl,
     ));
     let resolver = Resolver::new(
-        Arc::new(CachedProvider::new(
-            remote,
-            disk_cache,
-            cli.offline,
-            cache_ttl,
-        )),
+        Arc::new(
+            CachedProvider::new(remote, disk_cache, cli.offline, cache_ttl)
+                .with_namespace(cache_namespace(&cli)),
+        ),
         Arc::new(registry),
         osv_client,
         upgrade_strategy,
@@ -176,6 +174,15 @@ pub async fn run_with_config<G: RemoteProvider + 'static, R: RegistryProvider + 
     }
 
     Ok(())
+}
+
+/// Builds the disk-cache namespace from the configured provider URLs, so cached
+/// lookups are never shared between different hosts.
+fn cache_namespace(cli: &Cli) -> String {
+    format!(
+        "github={},gitlab={},bitbucket={},forgejo={},circleci={}",
+        cli.github_url, cli.gitlab_url, cli.bitbucket_url, cli.forgejo_url, cli.circleci_url
+    )
 }
 
 #[cfg(test)]
