@@ -48,8 +48,22 @@ impl Drop for TestCwdGuard {
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Runs a command, loading configuration from the current directory and the
+/// user's global configuration files.
 pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
     cli: Cli,
+    remote: G,
+    registry: R,
+    paths: Vec<PathBuf>,
+) -> Result<(), PinnerError> {
+    let config = crate::config::Config::load()?;
+    run_with_config(cli, &config, remote, registry, paths).await
+}
+
+/// Runs a command with an already loaded configuration.
+pub async fn run_with_config<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
+    cli: Cli,
+    config: &crate::config::Config,
     remote: G,
     registry: R,
     paths: Vec<PathBuf>,
@@ -78,52 +92,12 @@ pub async fn run<G: RemoteProvider + 'static, R: RegistryProvider + 'static>(
         | Commands::Scan { upgrade_strategy } => upgrade_strategy.clone(),
         _ => crate::cli::UpgradeStrategy::Latest,
     };
-    let config = crate::config::Config::load();
     let scanner = Scanner::new(cli.ignore.clone());
-    let local_vetted: Vec<String> = config
-        .vetted
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-    let local_compromised: Vec<String> = config
-        .compromised
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-
-    let global_config = crate::config::Config::load_global();
-    let global_vetted: Vec<String> = global_config
-        .vetted
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-    let global_compromised: Vec<String> = global_config
-        .compromised
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| e.reference)
-        .collect();
-
-    let mut vetted = local_vetted;
-    for item in global_vetted {
-        if !vetted.contains(&item) && !local_compromised.contains(&item) {
-            vetted.push(item);
-        }
-    }
-
-    let mut compromised = local_compromised;
-    for item in global_compromised {
-        if !compromised.contains(&item) && !vetted.contains(&item) {
-            compromised.push(item);
-        }
-    }
+    let references = |list: &Option<Vec<crate::config::SecurityEntry>>| -> Vec<String> {
+        list.iter().flatten().map(|e| e.reference.clone()).collect()
+    };
+    let vetted = references(&config.vetted);
+    let compromised = references(&config.compromised);
 
     let formatter = Formatter::new(
         cli.format.clone(),
@@ -422,36 +396,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_override_precedence() {
-        let local_vetted = vec!["actions/checkout@v3".to_string()];
-        let local_compromised = vec![];
-        let global_vetted = vec![];
-        let global_compromised = vec!["actions/checkout@v3".to_string()];
+        use crate::config::Config;
+        use crate::patcher::formatter::HashSecurityStatus;
 
-        let mut vetted = local_vetted;
-        for item in global_vetted {
-            if !vetted.contains(&item) && !local_compromised.contains(&item) {
-                vetted.push(item);
-            }
-        }
-        let mut compromised = local_compromised;
-        for item in global_compromised {
-            if !compromised.contains(&item) && !vetted.contains(&item) {
-                compromised.push(item);
-            }
-        }
+        let parse = |s: &str| -> Config { toml::from_str(s).unwrap() };
+        let status_with = |global: &str, local: &str| {
+            let config = Config::layered(parse(global), parse(local));
+            let refs = |l: Option<Vec<crate::config::SecurityEntry>>| {
+                l.unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.reference)
+                    .collect()
+            };
+            Formatter::new(
+                crate::cli::OutputFormat::Text,
+                true,
+                refs(config.vetted),
+                refs(config.compromised),
+                true,
+            )
+            .check_hash_security("actions/checkout", "v3")
+        };
 
-        let formatter = Formatter::new(
-            crate::cli::OutputFormat::Text,
-            true,
-            vetted,
-            compromised,
-            true,
-        );
-
-        let status = formatter.check_hash_security("actions/checkout", "v3");
+        // A local vetted entry overrides a global compromised one, and vice versa.
         assert_eq!(
-            status,
-            crate::patcher::formatter::HashSecurityStatus::Vetted
+            status_with(
+                "compromised = ['actions/checkout@v3']",
+                "vetted = ['actions/checkout@v3']"
+            ),
+            HashSecurityStatus::Vetted
+        );
+        assert_eq!(
+            status_with(
+                "vetted = ['actions/checkout@v3']",
+                "compromised = ['actions/checkout@v3']"
+            ),
+            HashSecurityStatus::Compromised
+        );
+        // Global entries apply when the project says nothing.
+        assert_eq!(
+            status_with("compromised = ['actions/checkout@v3']", ""),
+            HashSecurityStatus::Compromised
         );
     }
 

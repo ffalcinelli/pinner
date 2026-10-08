@@ -232,38 +232,9 @@ impl Pipeline {
             }
         }
 
-        let local_config = if std::path::Path::new(".pinner.toml").exists() {
-            let content = std::fs::read_to_string(".pinner.toml")?;
-            toml::from_str::<crate::config::Config>(&content).map_err(|e| {
-                crate::error::PinnerError::Config(format!("Failed to parse .pinner.toml: {}", e))
-            })?
-        } else {
-            crate::config::Config::default()
-        };
-        let global_config = crate::config::Config::load_global();
-
-        let mut combined_vetted = local_config.vetted.clone().unwrap_or_default();
-        if let Some(gv) = global_config.vetted {
-            for item in gv {
-                if !combined_vetted
-                    .iter()
-                    .any(|e| e.reference == item.reference)
-                {
-                    combined_vetted.push(item);
-                }
-            }
-        }
-        let mut combined_compromised = local_config.compromised.clone().unwrap_or_default();
-        if let Some(gc) = global_config.compromised {
-            for item in gc {
-                if !combined_compromised
-                    .iter()
-                    .any(|e| e.reference == item.reference)
-                {
-                    combined_compromised.push(item);
-                }
-            }
-        }
+        // References already listed in the merged (local + global) configuration.
+        let combined_vetted = &self.patcher.formatter.vetted;
+        let combined_compromised = &self.patcher.formatter.compromised;
 
         let mut clean_to_vet = Vec::new();
         if !clean_deps.is_empty() {
@@ -274,7 +245,7 @@ impl Pipeline {
                     let full_ref = format!("{}@{}", d.action, d.sha);
                     !combined_vetted
                         .iter()
-                        .any(|e| e.reference == full_ref || e.reference == d.sha)
+                        .any(|e| *e == full_ref || *e == d.sha)
                 })
                 .collect();
 
@@ -317,7 +288,7 @@ impl Pipeline {
                     let full_ref = format!("{}@{}", d.action, d.sha);
                     !combined_compromised
                         .iter()
-                        .any(|e| e.reference == full_ref || e.reference == d.sha)
+                        .any(|e| *e == full_ref || *e == d.sha)
                 })
                 .collect();
 

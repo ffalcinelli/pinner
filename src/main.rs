@@ -5,7 +5,7 @@ use colored::Colorize;
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use pinner::{resolver::OciRegistryProvider, run, Cli};
+use pinner::{resolver::OciRegistryProvider, run_with_config, Cli};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -14,10 +14,20 @@ use std::process::ExitCode;
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let config = pinner::config::Config::load();
-    let cli = config.merge_with_cli(cli);
+    let config = match pinner::config::Config::load() {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("{} {}", "error:".red().bold(), e);
+            eprintln!(
+                "{} Fix the configuration file or PINNER_* environment variable named above.",
+                "hint:".blue()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let cli = config.clone().merge_with_cli(cli);
 
-    if let Err(e) = run_app(cli).await {
+    if let Err(e) = run_app(cli, config).await {
         // Check if it's a verification failure (already printed details)
         let is_verification_failure = e
             .root_cause()
@@ -57,7 +67,7 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
+pub async fn run_app(cli: Cli, config: pinner::config::Config) -> anyhow::Result<()> {
     if let pinner::Commands::GenerateCompletion { shell } = cli.command {
         let mut cmd = Cli::command();
         let shell = shell.or_else(detect_shell).context(
@@ -113,7 +123,7 @@ pub async fn run_app(cli: Cli) -> anyhow::Result<()> {
     let workflows_to_process = get_workflows(&cli.workflows);
 
     // Execute the requested command
-    run(cli, provider, registry, workflows_to_process)
+    run_with_config(cli, &config, provider, registry, workflows_to_process)
         .await
         .context("Failed to run pinner")?;
 
@@ -271,19 +281,19 @@ mod tests {
     async fn test_run_app_completion() {
         let cli = Cli::try_parse_from(["pinner", "generate-completion", "bash"]).unwrap();
         // This will print to stdout, but should cover the code path
-        run_app(cli).await.unwrap();
+        run_app(cli, Default::default()).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_run_app_quiet() {
         let cli = Cli::try_parse_from(["pinner", "--quiet", "verify"]).unwrap();
         // This will fail if no workflows found, but that's okay for coverage
-        let _ = run_app(cli).await;
+        let _ = run_app(cli, Default::default()).await;
     }
 
     #[tokio::test]
     async fn test_run_app_verbose() {
         let cli = Cli::try_parse_from(["pinner", "--verbose", "verify"]).unwrap();
-        let _ = run_app(cli).await;
+        let _ = run_app(cli, Default::default()).await;
     }
 }

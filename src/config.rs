@@ -3,6 +3,7 @@
 //! This module handles loading configuration from files (e.g., `.pinner.toml`)
 //! and environment variables, merging them with CLI arguments.
 
+use colored::Colorize;
 use figment::{
     providers::{Env, Format, Toml, Yaml},
     Figment,
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::cli::{Cli, Commands, OutputFormat, UpgradeStrategy};
+use crate::error::PinnerError;
 
 /// Configuration for Pinner, typically loaded from a file or environment.
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -83,17 +85,34 @@ impl Config {
     /// 2. Local `.pinner.toml`
     /// 3. Local `.pinner.yaml` or `.pinner.yml`
     /// 4. Environment variables prefixed with `PINNER_` (e.g., `PINNER_YES=true`).
-    pub fn load() -> Self {
-        let mut global = Config::load_global();
-        let local = Figment::new()
+    ///
+    /// Returns an error if a local configuration file or a `PINNER_` variable is
+    /// invalid: silently falling back to defaults would drop the `vetted` and
+    /// `compromised` lists and weaken `verify`. Invalid global files are skipped with
+    /// a warning instead, so a broken personal config does not block every project.
+    pub fn load() -> Result<Self, PinnerError> {
+        let global = Config::load_global();
+        let local: Config = Figment::new()
             .merge(Toml::file(".pinner.toml"))
             .merge(Yaml::file(".pinner.yaml"))
             .merge(Yaml::file(".pinner.yml"))
             .merge(Env::prefixed("PINNER_"))
             .extract()
-            .unwrap_or_else(|_| Config::default());
-        global.merge_all(local);
-        global
+            .map_err(|e| PinnerError::Config(e.to_string()))?;
+        Ok(Config::layered(global, local))
+    }
+
+    /// Layers a local configuration over a global one.
+    ///
+    /// Settings present in `local` win. Security lists are combined with
+    /// [`merge_security_lists`], so a local entry overrides the opposite global one.
+    pub fn layered(global: Config, local: Config) -> Config {
+        let (vetted, compromised) = merge_security_lists(&local, &global);
+        let mut merged = global;
+        merged.merge_all(local);
+        merged.vetted = (!vetted.is_empty()).then_some(vetted);
+        merged.compromised = (!compromised.is_empty()).then_some(compromised);
+        merged
     }
 
     /// Loads configuration from global user locations.
@@ -102,49 +121,38 @@ impl Config {
     /// 1. `dirs::cache_dir()/pinner/config.toml`
     /// 2. `dirs::config_dir()/pinner/config.toml`
     /// 3. `dirs::home_dir()/.pinner.toml`
+    ///
+    /// Set `PINNER_NO_GLOBAL_CONFIG` to skip global configuration entirely (useful for
+    /// hermetic CI runs and tests).
     pub fn load_global() -> Self {
-        let is_test = cfg!(test)
-            || std::env::current_exe()
-                .map(|path| path.to_string_lossy().contains("/deps/"))
-                .unwrap_or(false);
-        if is_test && std::env::var("PINNER_TEST_ALLOW_GLOBAL").is_err() {
+        let disabled = std::env::var_os("PINNER_NO_GLOBAL_CONFIG").is_some()
+            || (cfg!(test) && std::env::var_os("PINNER_TEST_ALLOW_GLOBAL").is_none());
+        if disabled {
             return Config::default();
         }
 
+        let candidates = [
+            dirs::cache_dir().map(|p| p.join("pinner").join("config.toml")),
+            dirs::config_dir().map(|p| p.join("pinner").join("config.toml")),
+            dirs::home_dir().map(|p| p.join(".pinner.toml")),
+        ];
+
         let mut global = Config::default();
-
-        if let Some(mut p) = dirs::cache_dir() {
-            p.push("pinner");
-            p.push("config.toml");
-            if p.exists() {
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    if let Ok(cfg) = toml::from_str::<Config>(&content) {
-                        global.merge_all(cfg);
-                    }
-                }
+        for path in candidates.into_iter().flatten() {
+            if !path.exists() {
+                continue;
             }
-        }
-
-        if let Some(mut p) = dirs::config_dir() {
-            p.push("pinner");
-            p.push("config.toml");
-            if p.exists() {
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    if let Ok(cfg) = toml::from_str::<Config>(&content) {
-                        global.merge_all(cfg);
-                    }
-                }
-            }
-        }
-
-        if let Some(mut p) = dirs::home_dir() {
-            p.push(".pinner.toml");
-            if p.exists() {
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    if let Ok(cfg) = toml::from_str::<Config>(&content) {
-                        global.merge_all(cfg);
-                    }
-                }
+            let parsed = std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|content| toml::from_str::<Config>(&content).map_err(|e| e.to_string()));
+            match parsed {
+                Ok(cfg) => global.merge_all(cfg),
+                Err(e) => eprintln!(
+                    "{} Ignoring invalid global config {}: {}",
+                    "warning:".yellow().bold(),
+                    path.display(),
+                    e
+                ),
             }
         }
 
@@ -492,6 +500,47 @@ fn format_security_list(s: &mut String, list: &[SecurityEntry]) {
         }
     }
     s.push(']');
+}
+
+/// Combines the `vetted` and `compromised` lists of a local and a global configuration.
+///
+/// Local entries always apply. A global entry is dropped when the local configuration
+/// lists the same reference on the opposite list, so a project can vouch for a
+/// reference its user blacklists globally (and vice versa). When one scope lists a
+/// reference as both vetted and compromised, both entries are kept and the
+/// compromised one takes precedence during checks.
+pub fn merge_security_lists(
+    local: &Config,
+    global: &Config,
+) -> (Vec<SecurityEntry>, Vec<SecurityEntry>) {
+    fn refs(list: &Option<Vec<SecurityEntry>>) -> Vec<&str> {
+        list.iter()
+            .flatten()
+            .map(|e| e.reference.as_str())
+            .collect()
+    }
+    fn combine(
+        local: &Option<Vec<SecurityEntry>>,
+        global: &Option<Vec<SecurityEntry>>,
+        overridden: &[&str],
+    ) -> Vec<SecurityEntry> {
+        let mut out: Vec<SecurityEntry> = local.iter().flatten().cloned().collect();
+        for entry in global.iter().flatten() {
+            let known = out.iter().any(|e| e.reference == entry.reference);
+            if !known && !overridden.contains(&entry.reference.as_str()) {
+                out.push(entry.clone());
+            }
+        }
+        out
+    }
+
+    let vetted = combine(&local.vetted, &global.vetted, &refs(&local.compromised));
+    let compromised = combine(
+        &local.compromised,
+        &global.compromised,
+        &refs(&local.vetted),
+    );
+    (vetted, compromised)
 }
 
 /// Represents an entry in the vetted or compromised lists, which can include a version and timestamp.
@@ -928,6 +977,45 @@ mod tests {
         assert_eq!(merged.forgejo_url, "https://my-forgejo");
         assert_eq!(merged.circleci_url, "https://my-circleci");
         assert_eq!(merged.format, OutputFormat::Json);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_load_rejects_invalid_local_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
+        std::fs::write(".pinner.toml", "compromised = [").unwrap();
+
+        let err = Config::load().unwrap_err();
+        assert!(matches!(err, PinnerError::Config(_)));
+        assert!(err.to_string().contains(".pinner.toml"), "{err}");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_load_valid_local_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::TestCwdGuard::new(dir.path());
+        std::fs::write(".pinner.toml", "concurrency = 3\ncompromised = ['a@b']\n").unwrap();
+
+        let config = Config::load().unwrap();
+        assert_eq!(config.concurrency, Some(3));
+        assert_eq!(config.compromised.unwrap()[0].reference, "a@b");
+    }
+
+    #[test]
+    fn test_merge_security_lists() {
+        let local: Config =
+            toml::from_str("vetted = ['a@1', 'shared@1']\ncompromised = ['b@1']").unwrap();
+        let global: Config =
+            toml::from_str("vetted = ['b@1', 'c@1', 'shared@1']\ncompromised = ['a@1', 'd@1']")
+                .unwrap();
+
+        let (vetted, compromised) = merge_security_lists(&local, &global);
+        let refs = |l: Vec<SecurityEntry>| l.into_iter().map(|e| e.reference).collect::<Vec<_>>();
+        // Global 'b@1' (vetted) is overridden by local compromised, and vice versa for 'a@1'.
+        assert_eq!(refs(vetted), vec!["a@1", "shared@1", "c@1"]);
+        assert_eq!(refs(compromised), vec!["b@1", "d@1"]);
     }
 
     #[test]

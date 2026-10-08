@@ -161,3 +161,22 @@ fn test_cli_verify_format_markdown() {
             "| ❌ | `actions/checkout` | `v3` |",
         ));
 }
+
+#[test]
+fn test_cli_invalid_config_fails() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".pinner.toml"), "compromised = [").unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3").unwrap();
+
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.current_dir(dir.path())
+        .env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .arg("--workflows")
+        .arg(wf.to_str().unwrap())
+        .arg("verify");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("Config error"))
+        .stderr(predicate::str::contains(".pinner.toml"));
+}
