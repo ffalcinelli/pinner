@@ -129,6 +129,26 @@ pub struct CompromisedDependency {
     pub action: DependencyName,
     /// The compromised hash.
     pub hash: String,
+    /// OSV advisories that flagged the hash (empty when it is listed in the config).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advisories: Vec<String>,
+    /// Line number.
+    pub line: usize,
+    /// Column number.
+    pub column: usize,
+}
+
+/// Details of a pinned dependency with known (non-malicious) vulnerabilities in OSV.
+#[derive(Debug, Serialize, Clone)]
+pub struct VulnerableDependency {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// Action name.
+    pub action: DependencyName,
+    /// The pinned commit.
+    pub hash: String,
+    /// OSV advisory identifiers.
+    pub advisories: Vec<String>,
     /// Line number.
     pub line: usize,
     /// Column number.
@@ -173,6 +193,9 @@ pub struct VerificationResult {
     /// List of compromised dependencies found.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compromised: Vec<CompromisedDependency>,
+    /// Pinned commits with known vulnerabilities (only checked with OSV checks enabled).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vulnerable: Vec<VulnerableDependency>,
     /// List of non-vetted dependencies found (only populated/checked in strict mode).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub non_vetted: Vec<NonVettedDependency>,
@@ -185,11 +208,12 @@ pub struct VerificationResult {
 }
 
 impl VerificationResult {
-    /// Returns true if nothing is unpinned, compromised or non-vetted and, in strict
-    /// mode, no image is unsigned.
+    /// Returns true if nothing is unpinned, compromised, vulnerable or non-vetted and,
+    /// in strict mode, no image is unsigned.
     pub fn is_success(&self) -> bool {
         self.unpinned.is_empty()
             && self.compromised.is_empty()
+            && self.vulnerable.is_empty()
             && self.non_vetted.is_empty()
             && (!self.strict || self.unsigned.is_empty())
     }
@@ -225,10 +249,28 @@ mod tests {
             path: PathBuf::from("f.yml"),
             action: "a/b".into(),
             hash: "compromised_hash".to_string(),
+            advisories: vec![],
             line: 1,
             column: 1,
         });
         assert!(!res.is_success());
+    }
+
+    #[test]
+    fn test_verification_result_vulnerable() {
+        let mut res = VerificationResult::default();
+        res.vulnerable.push(VulnerableDependency {
+            path: PathBuf::from("f.yml"),
+            action: "a/b".into(),
+            hash: "sha".to_string(),
+            advisories: vec!["GHSA-1".to_string()],
+            line: 1,
+            column: 1,
+        });
+        assert!(!res.is_success());
+        let json = serde_json::to_string(&res).unwrap();
+        assert!(json.contains("\"vulnerable\":[{"));
+        assert!(json.contains("GHSA-1"));
     }
 
     #[test]

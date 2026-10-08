@@ -94,7 +94,7 @@ pinner verify --format markdown
 pinner verify --format junit
 ```
 
-Each dependency is reported as **unpinned**, **compromised** (listed in `compromised` or flagged by OSV), **unsigned** (an image without a cosign signature), **not vetted** (`--strict` only), or pinned. Unpinned, compromised and not-vetted dependencies fail verification. Unsigned images are a warning because most public images are not signed; they fail only with `--strict`. Signature and OSV checks run only with `--check-osv` (or `check_osv = true`). Values that the CI system templates at run time, such as `${{ matrix.image }}`, are skipped.
+Each dependency is reported as **unpinned**, **compromised** (listed in `compromised`, or an OSV advisory describes a malicious or hijacked release), **vulnerable** (OSV reports ordinary vulnerabilities), **unsigned** (an image without a cosign signature), **not vetted** (`--strict` only), or pinned. Unpinned, compromised, vulnerable and not-vetted dependencies fail verification, and the OSV advisory IDs are shown in every output format. To accept a vulnerable commit after review, add it to `vetted`; vetted references are not re-checked. Unsigned images are a warning because most public images are not signed; they fail only with `--strict`. Signature and OSV checks run only with `--check-osv` (or `check_osv = true`). Values that the CI system templates at run time, such as `${{ matrix.image }}`, are skipped.
 
 ### 4. Install Git Hook
 Automatically install a pre-commit hook to verify pinning before every commit.
@@ -131,7 +131,7 @@ pinner pr-create --branch pinner/pin-dependencies --message "security: pin depen
 ```
 
 ### 9. Security Scan
-Audits your dependencies for vulnerabilities. It queries the OpenSSF OSV database for both current hashes and proposed upgrade candidates, and executes Sigstore/Cosign provenance and signature verification for OCI container images. It presents an interactive report and updates your vetted whitelist or compromised blacklist. Unsigned images are listed in their own section and are never added to either list. A reference whose OSV or registry lookup fails is reported as a warning and is not vetted.
+Audits your dependencies for vulnerabilities. It queries the OpenSSF OSV database for both current hashes and proposed upgrade candidates, and executes Sigstore/Cosign provenance and signature verification for OCI container images. It presents an interactive report and updates your vetted whitelist or compromised blacklist. It classifies references exactly like `verify --check-osv`: entries in your `compromised` list are reported as compromised, OSV advisories for malicious or hijacked releases (including `MAL-` IDs) are compromised, and other advisories are vulnerable. Only clean references are offered for vetting, and only compromised ones are offered for blacklisting; vulnerable ones are left for you to review. Unsigned images are listed in their own section and are never added to either list. A reference whose OSV or registry lookup fails is reported as a warning and is not vetted.
 ```bash
 # Scan workflows and interactively update your .pinner.toml config
 pinner scan

@@ -13,8 +13,10 @@ use std::fmt::Write;
 pub enum VerifyStatus {
     /// Referenced by a mutable tag or branch.
     Unpinned,
-    /// Listed as compromised, or flagged by OSV.
+    /// Listed as compromised, or flagged by OSV as malicious/hijacked.
     Compromised,
+    /// OSV reports ordinary vulnerabilities for the pinned commit.
+    Vulnerable,
     /// Pinned image with no cosign signature. Fails only in strict mode.
     Unsigned,
     /// Pinned but not in the vetted list (strict mode only).
@@ -29,7 +31,7 @@ impl VerifyStatus {
     /// Returns true if this status makes verification fail.
     pub fn is_failure(self, strict: bool) -> bool {
         match self {
-            Self::Unpinned | Self::Compromised | Self::NotVetted => true,
+            Self::Unpinned | Self::Compromised | Self::Vulnerable | Self::NotVetted => true,
             Self::Unsigned => strict,
             Self::Pinned | Self::Vetted => false,
         }
@@ -43,12 +45,23 @@ pub struct VerifyFinding {
     pub task: UpdateTask,
     /// Its verification outcome.
     pub status: VerifyStatus,
+    /// OSV advisory identifiers behind a `Compromised` or `Vulnerable` status.
+    pub advisories: Vec<String>,
 }
 
 impl VerifyFinding {
     /// The reference as written in the file, or `latest` when none is given.
     pub fn reference(&self) -> &str {
         self.task.current_tag.as_deref().unwrap_or("latest")
+    }
+
+    /// ` (ID-1, ID-2)` when OSV advisories are attached, otherwise empty.
+    fn advisory_suffix(&self) -> String {
+        if self.advisories.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", self.advisories.join(", "))
+        }
     }
 
     fn location(&self) -> String {
@@ -70,8 +83,16 @@ impl VerifyFinding {
                 action, reference
             ),
             VerifyStatus::Compromised => format!(
-                "Dependency {}@{} is COMPROMISED (Supply Chain Attack)!",
-                action, reference
+                "Dependency {}@{} is COMPROMISED (Supply Chain Attack)!{}",
+                action,
+                reference,
+                self.advisory_suffix()
+            ),
+            VerifyStatus::Vulnerable => format!(
+                "Dependency {}@{} has known vulnerabilities{}",
+                action,
+                reference,
+                self.advisory_suffix()
             ),
             VerifyStatus::Unsigned => format!(
                 "Image {}@{} has no cosign signature; its provenance cannot be verified",
@@ -93,6 +114,7 @@ impl VerifyFinding {
 pub struct VerifySummary {
     pub unpinned: usize,
     pub compromised: usize,
+    pub vulnerable: usize,
     pub unsigned: usize,
     pub non_vetted: usize,
 }
@@ -104,6 +126,7 @@ impl VerifySummary {
             match f.status {
                 VerifyStatus::Unpinned => summary.unpinned += 1,
                 VerifyStatus::Compromised => summary.compromised += 1,
+                VerifyStatus::Vulnerable => summary.vulnerable += 1,
                 VerifyStatus::Unsigned => summary.unsigned += 1,
                 VerifyStatus::NotVetted => summary.non_vetted += 1,
                 VerifyStatus::Pinned | VerifyStatus::Vetted => {}
@@ -120,6 +143,7 @@ pub fn render_text(findings: &[VerifyFinding], strict: bool) -> String {
         let label = match f.status {
             VerifyStatus::Unpinned => "[✗ unpinned]",
             VerifyStatus::Compromised => "[✗ compromised]",
+            VerifyStatus::Vulnerable => "[✗ vulnerable]",
             VerifyStatus::NotVetted => "[✗ not vetted]",
             VerifyStatus::Unsigned => "[! unsigned]",
             VerifyStatus::Pinned | VerifyStatus::Vetted => continue,
@@ -137,14 +161,15 @@ pub fn render_text(findings: &[VerifyFinding], strict: bool) -> String {
         };
         let _ = writeln!(
             out,
-            "  {} {}@{} in {}:{}:{} {}",
+            "  {} {}@{} in {}:{}:{} {}{}",
             marker,
             f.task.action.to_string().yellow(),
             reference,
             f.task.path.display().to_string().cyan(),
             f.task.line.to_string().magenta(),
             f.task.column.to_string().magenta(),
-            label
+            label,
+            f.advisory_suffix()
         );
     }
 
@@ -152,7 +177,7 @@ pub fn render_text(findings: &[VerifyFinding], strict: bool) -> String {
     if findings.iter().any(|f| f.status.is_failure(strict)) {
         let _ = writeln!(
             out,
-            "\n{} Verification failed! Some dependencies are not pinned, are compromised, or are not vetted.",
+            "\n{} Verification failed! Some dependencies are not pinned, are compromised or vulnerable, or are not vetted.",
             "✗".red().bold()
         );
         let _ = writeln!(
@@ -210,6 +235,7 @@ pub fn render_markdown(findings: &[VerifyFinding], strict: bool) -> String {
         let (icon, details) = match f.status {
             VerifyStatus::Unpinned => ("❌", "Unpinned mutable dependency"),
             VerifyStatus::Compromised => ("🚨", "Compromised (Supply Chain Attack)"),
+            VerifyStatus::Vulnerable => ("🐛", "Known vulnerabilities"),
             VerifyStatus::NotVetted => ("⚠️", "Not vetted (strict mode)"),
             VerifyStatus::Unsigned if strict => ("❌", "Unsigned image (strict mode)"),
             VerifyStatus::Unsigned => ("⚠️", "Unsigned image (no cosign signature)"),
@@ -218,12 +244,13 @@ pub fn render_markdown(findings: &[VerifyFinding], strict: bool) -> String {
         };
         let _ = writeln!(
             out,
-            "| {} | `{}` | `{}` | `{}` | {} |",
+            "| {} | `{}` | `{}` | `{}` | {}{} |",
             icon,
             markdown_cell(&f.task.action.to_string()),
             markdown_cell(f.reference()),
             markdown_cell(&f.location()),
-            details
+            details,
+            markdown_cell(&f.advisory_suffix())
         );
     }
 
@@ -231,8 +258,8 @@ pub fn render_markdown(findings: &[VerifyFinding], strict: bool) -> String {
     if findings.iter().any(|f| f.status.is_failure(strict)) {
         let _ = write!(
             out,
-            "\n> **Result**: ❌ Verification failed ({} unpinned, {} compromised, {} non-vetted",
-            s.unpinned, s.compromised, s.non_vetted
+            "\n> **Result**: ❌ Verification failed ({} unpinned, {} compromised, {} vulnerable, {} non-vetted",
+            s.unpinned, s.compromised, s.vulnerable, s.non_vetted
         );
         if strict {
             let _ = write!(out, ", {} unsigned", s.unsigned);
@@ -280,6 +307,7 @@ pub fn render_junit(findings: &[VerifyFinding], strict: bool) -> String {
             let short = match f.status {
                 VerifyStatus::Unpinned => "Dependency is not pinned",
                 VerifyStatus::Compromised => "Dependency is compromised",
+                VerifyStatus::Vulnerable => "Dependency has known vulnerabilities",
                 VerifyStatus::NotVetted => "Dependency is not vetted",
                 _ => "Image is unsigned",
             };
@@ -352,6 +380,7 @@ mod tests {
                 ..Default::default()
             },
             status,
+            advisories: Vec::new(),
         }
     }
 
@@ -423,7 +452,7 @@ mod tests {
         assert!(out.starts_with("## Pinner Verification Report"));
         assert!(out.contains("| ❌ | `a/b` | `v1` | `ci.yml:3:7` | Unpinned mutable dependency |"));
         assert!(out.contains("`c\\|d`"));
-        assert!(out.contains("(1 unpinned, 0 compromised, 0 non-vetted)"));
+        assert!(out.contains("(1 unpinned, 0 compromised, 0 vulnerable, 0 non-vetted)"));
     }
 
     #[test]
@@ -453,9 +482,30 @@ mod tests {
             VerifySummary {
                 unpinned: 1,
                 compromised: 0,
+                vulnerable: 0,
                 unsigned: 2,
                 non_vetted: 0
             }
         );
+    }
+
+    #[test]
+    fn test_vulnerable_findings_list_advisories() {
+        colored::control::set_override(false);
+        let mut f = finding("a/b", Some("sha"), "ci.yml", VerifyStatus::Vulnerable);
+        f.advisories = vec!["GHSA-1".into(), "GHSA-2".into()];
+        let findings = vec![f];
+
+        assert!(VerifyStatus::Vulnerable.is_failure(false));
+        assert!(render_text(&findings, false)
+            .contains("a/b@sha in ci.yml:3:7 [✗ vulnerable] (GHSA-1, GHSA-2)"));
+        assert!(render_github(&findings, false).contains(
+            "::error file=ci.yml,line=3,col=7::Dependency a/b@sha has known vulnerabilities (GHSA-1, GHSA-2)"
+        ));
+        assert!(render_markdown(&findings, false).contains(
+            "| 🐛 | `a/b` | `sha` | `ci.yml:3:7` | Known vulnerabilities (GHSA-1, GHSA-2) |"
+        ));
+        assert!(render_junit(&findings, false)
+            .contains("<failure message=\"Dependency has known vulnerabilities\">"));
     }
 }

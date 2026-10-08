@@ -19,7 +19,7 @@ pub mod unified;
 pub use azure::ReqwestAzureProvider;
 pub use bitbucket::ReqwestBitbucketProvider;
 pub use circleci::ReqwestCircleCiProvider;
-pub use osv::OsvClient;
+pub use osv::{assess_osv_response, OsvAdvisory, OsvAssessment, OsvClient, OsvVerdict};
 pub use provider::{
     CachedProvider, ProviderType, RemoteProvider, UnifiedProvider, UnifiedProviderConfig,
 };

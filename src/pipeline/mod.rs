@@ -3,7 +3,7 @@ use crate::error::PinnerError;
 use crate::patcher::formatter::HashSecurityStatus;
 use crate::patcher::report::{self, VerifyFinding, VerifyStatus};
 use crate::patcher::Patcher;
-use crate::resolver::Resolver;
+use crate::resolver::{OsvVerdict, Resolver};
 use crate::scanner::Scanner;
 use colored::Colorize;
 use futures::stream::{self, StreamExt};
@@ -102,7 +102,11 @@ impl Pipeline {
                     }
                     _ => VerifyStatus::Unpinned,
                 };
-                VerifyFinding { task, status }
+                VerifyFinding {
+                    task,
+                    status,
+                    advisories: Vec::new(),
+                }
             })
             .collect();
 
@@ -147,7 +151,8 @@ impl Pipeline {
         targets.sort();
         targets.dedup();
 
-        let outcomes: HashMap<(String, String), Option<VerifyStatus>> = stream::iter(targets)
+        type Outcome = Option<(VerifyStatus, Vec<String>)>;
+        let outcomes: HashMap<(String, String), Outcome> = stream::iter(targets)
             .map(|(action, reference)| async move {
                 let outcome = self.remote_check(&action, &reference).await;
                 ((action, reference), outcome)
@@ -158,13 +163,20 @@ impl Pipeline {
 
         for f in findings.iter_mut() {
             let key = (f.task.action.to_string(), f.reference().to_string());
-            if let Some(Some(status)) = outcomes.get(&key) {
+            if let Some(Some((status, advisories))) = outcomes.get(&key) {
                 f.status = *status;
+                f.advisories = advisories.clone();
             }
         }
     }
 
-    async fn remote_check(&self, action: &str, reference: &str) -> Option<VerifyStatus> {
+    /// Returns the downgraded status (and OSV advisory IDs) for a pinned reference, or
+    /// `None` when the check passes or cannot be completed.
+    async fn remote_check(
+        &self,
+        action: &str,
+        reference: &str,
+    ) -> Option<(VerifyStatus, Vec<String>)> {
         let quiet = self.patcher.formatter.quiet;
 
         if !crate::core::is_git_sha(reference) {
@@ -176,7 +188,7 @@ impl Pipeline {
                 .await
             {
                 Ok(true) => None,
-                Ok(false) => Some(VerifyStatus::Unsigned),
+                Ok(false) => Some((VerifyStatus::Unsigned, Vec::new())),
                 Err(e) => {
                     if !quiet {
                         eprintln!(
@@ -192,18 +204,15 @@ impl Pipeline {
             };
         }
 
-        #[derive(serde::Deserialize)]
-        struct OsvResponse {
-            vulns: Option<Vec<serde_json::Value>>,
-        }
-
-        match self.resolver.check_vulnerabilities(reference).await {
-            Ok(Some(body)) => serde_json::from_str::<OsvResponse>(&body)
-                .ok()
-                .and_then(|r| r.vulns)
-                .filter(|v| !v.is_empty())
-                .map(|_| VerifyStatus::Compromised),
-            Ok(None) => None,
+        match self.resolver.assess_commit(reference).await {
+            Ok(assessment) => {
+                let status = match assessment.verdict {
+                    OsvVerdict::Clean => return None,
+                    OsvVerdict::Vulnerable => VerifyStatus::Vulnerable,
+                    OsvVerdict::Compromised => VerifyStatus::Compromised,
+                };
+                Some((status, assessment.ids()))
+            }
             Err(e) => {
                 if !quiet {
                     eprintln!(
@@ -257,6 +266,7 @@ fn build_verification_result(
 ) -> crate::core::VerificationResult {
     use crate::core::{
         CompromisedDependency, NonVettedDependency, UnpinnedDependency, UnsignedDependency,
+        VulnerableDependency,
     };
 
     let mut result = crate::core::VerificationResult {
@@ -264,7 +274,11 @@ fn build_verification_result(
         ..Default::default()
     };
     for f in findings {
-        let VerifyFinding { task, status } = f;
+        let VerifyFinding {
+            task,
+            status,
+            advisories,
+        } = f;
         match status {
             VerifyStatus::Unpinned => result.unpinned.push(UnpinnedDependency {
                 path: task.path,
@@ -277,6 +291,15 @@ fn build_verification_result(
                 path: task.path,
                 action: task.action,
                 hash: task.current_tag.unwrap_or_default(),
+                advisories,
+                line: task.line,
+                column: task.column,
+            }),
+            VerifyStatus::Vulnerable => result.vulnerable.push(VulnerableDependency {
+                path: task.path,
+                action: task.action,
+                hash: task.current_tag.unwrap_or_default(),
+                advisories,
                 line: task.line,
                 column: task.column,
             }),

@@ -43,7 +43,7 @@ Line 25: uses: actions/setup-node@v2 (Offset: 500)
 ## Verification Reports (`report.rs`)
 
 `Pipeline::verify` classifies every dependency into a `VerifyFinding` with a `VerifyStatus`:
-`Unpinned`, `Compromised`, `Unsigned`, `NotVetted` (strict only), `Pinned` or `Vetted`. `VerifyStatus::is_failure(strict)` decides the exit status: `Unsigned` fails only in strict mode. With `--check-osv`, commits are queried in OSV and images are checked for a cosign signature. These checks run concurrently, deduplicated by `(action, reference)`, and a lookup error is a warning that leaves the finding unchanged.
+`Unpinned`, `Compromised`, `Vulnerable`, `Unsigned`, `NotVetted` (strict only), `Pinned` or `Vetted`. `VerifyStatus::is_failure(strict)` decides the exit status: `Unsigned` fails only in strict mode. OSV advisory IDs are carried in `VerifyFinding::advisories`. `scan` uses the same OSV assessment and the same configured `compromised` list, so the two commands always classify a reference the same way. With `--check-osv`, commits are queried in OSV and images are checked for a cosign signature. These checks run concurrently, deduplicated by `(action, reference)`, and a lookup error is a warning that leaves the finding unchanged.
 
 `report.rs` renders findings as strings: `render_text` (stderr), `render_github` (`::error`/`::warning` commands with escaped values), `render_markdown` (escaped table cells) and `render_junit` (XML-escaped). JSON output is the serialized `VerificationResult`, printed by `lib.rs`.
 

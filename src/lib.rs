@@ -332,6 +332,14 @@ mod tests {
             .create_async()
             .await;
 
+        // Any other commit (e.g. upgrade candidates) has no advisories.
+        let _m_rest = osv_server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_body(r#"{"vulns":[]}"#)
+            .create_async()
+            .await;
+
         let dir = tempdir().unwrap();
         let f = dir.path().join("f.yml");
         fs::write(&f, "jobs:\n  test:\n    steps:\n      - uses: clean@1111111111111111111111111111111111111111\n      - uses: comp@2222222222222222222222222222222222222222\n      - uses: vuln@3333333333333333333333333333333333333333").unwrap();
@@ -691,5 +699,134 @@ vetted = [
 
         let res = pipeline.scan(&[f], true).await;
         assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_verify_and_scan_classify_consistently() {
+        let sha = |c: char| c.to_string().repeat(40);
+        let mut osv = mockito::Server::new_async().await;
+        std::env::set_var("PINNER_OSV_URL", osv.url());
+        let mut advisory = |commit: String, body: &'static str| {
+            osv.mock("POST", "/")
+                .match_body(mockito::Matcher::JsonString(format!(
+                    r#"{{"commit":"{}"}}"#,
+                    commit
+                )))
+                .with_status(200)
+                .with_body(body)
+        };
+        let _vuln = advisory(
+            sha('1'),
+            r#"{"vulns":[{"id":"GHSA-dos","summary":"Denial of service"}]}"#,
+        )
+        .create_async()
+        .await;
+        let _mal = advisory(sha('2'), r#"{"vulns":[{"id":"MAL-2025-1"}]}"#)
+            .create_async()
+            .await;
+        let _clean = advisory(sha('3'), r#"{"vulns":[]}"#).create_async().await;
+
+        let dir = tempdir().unwrap();
+        let _guard = TestCwdGuard::new(dir.path());
+        fs::write(".pinner.toml", "yes = true\n").unwrap();
+        let f = dir.path().join("f.yml");
+        fs::write(
+            &f,
+            format!(
+                "steps:\n  - uses: vuln/a@{}\n  - uses: mal/b@{}\n  - uses: clean/c@{}\n  - uses: listed/d@{}\n",
+                sha('1'),
+                sha('2'),
+                sha('3'),
+                sha('4')
+            ),
+        )
+        .unwrap();
+
+        let pipeline = || {
+            let mut remote = MockRemoteProvider::new();
+            remote
+                .expect_get_latest_release()
+                .returning(|_, _| Err(PinnerError::Api("no releases".into())));
+            let resolver = Resolver::new(
+                Arc::new(remote),
+                Arc::new(MockRegistryProvider::new()),
+                Arc::new(resolver::OsvClient::new(
+                    None,
+                    false,
+                    Duration::from_secs(0),
+                )),
+                UpgradeStrategy::Latest,
+                4,
+            );
+            let formatter = Formatter::new(
+                crate::cli::OutputFormat::Text,
+                true,
+                vec![],
+                vec![format!("listed/d@{}", sha('4'))],
+                true,
+            );
+            let ui = Arc::new(crate::patcher::ui::TestUi { response: true });
+            Pipeline::new(
+                Scanner::new(vec![]),
+                resolver,
+                Patcher::new(formatter, ui, false),
+            )
+        };
+
+        let result = pipeline()
+            .verify(std::slice::from_ref(&f), true, false)
+            .await
+            .unwrap();
+        let names = |v: Vec<String>| {
+            let mut v = v;
+            v.sort();
+            v
+        };
+        assert_eq!(
+            names(
+                result
+                    .vulnerable
+                    .iter()
+                    .map(|d| d.action.to_string())
+                    .collect()
+            ),
+            vec!["vuln/a"]
+        );
+        assert_eq!(result.vulnerable[0].advisories, vec!["GHSA-dos"]);
+        assert_eq!(
+            names(
+                result
+                    .compromised
+                    .iter()
+                    .map(|d| d.action.to_string())
+                    .collect()
+            ),
+            vec!["listed/d", "mal/b"]
+        );
+
+        pipeline()
+            .scan(std::slice::from_ref(&f), true)
+            .await
+            .unwrap();
+        let config: crate::config::Config =
+            toml::from_str(&fs::read_to_string(".pinner.toml").unwrap()).unwrap();
+        let refs = |l: Option<Vec<crate::config::SecurityEntry>>| {
+            names(
+                l.unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.reference)
+                    .collect(),
+            )
+        };
+        // Only the clean commit is vetted; the OSV-compromised one is blacklisted; the
+        // vulnerable one is left for review; the configured one is not re-added.
+        assert_eq!(refs(config.vetted), vec![format!("clean/c@{}", sha('3'))]);
+        assert_eq!(
+            refs(config.compromised),
+            vec![format!("mal/b@{}", sha('2'))]
+        );
+
+        std::env::remove_var("PINNER_OSV_URL");
     }
 }

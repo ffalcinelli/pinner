@@ -51,6 +51,14 @@ impl Resolver {
         self.osv.query_commit(commit).await
     }
 
+    /// Queries OSV for a commit and classifies its advisories.
+    pub async fn assess_commit(
+        &self,
+        commit: &str,
+    ) -> Result<crate::resolver::osv::OsvAssessment, PinnerError> {
+        self.osv.assess_commit(commit).await
+    }
+
     /// Resolves a batch of tasks into results.
     ///
     /// This method:

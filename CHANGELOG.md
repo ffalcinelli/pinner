@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 📄 **Report escaping**: JUnit output is XML-escaped, GitHub annotations escape their values, and Markdown table cells escape `|`.
 - 🛡️ **Scan safety**: A failed OSV or registry lookup is reported as a warning. Previously it counted as clean, so `scan --yes` vetted the reference.
 - CircleCI `volatile` orbs are now reported as unpinned.
+- 🔁 **`verify` and `scan` agree**: `verify --check-osv` reported any OSV advisory as a supply-chain attack, while `scan` separated malicious releases from ordinary CVEs, and `scan` ignored the configured `compromised` list (offering blacklisted commits for vetting). Both now share one OSV classifier, which also recognizes OSV `MAL-` advisories. `verify` has a new **vulnerable** status, and the JSON output has a `vulnerable` list. Advisory IDs appear in every report format. Vulnerable commits still fail `verify`, as before; vet them to accept them.
+- 🌐 The OSV client now sends a user-agent and retries transient failures.
 
 ### Changed
 - 💾 **Atomic writes**: Patched files are written to a temporary file and renamed into place, which preserves permissions and symlinks.

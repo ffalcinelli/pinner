@@ -1,7 +1,9 @@
 use crate::core::{is_git_sha, is_hash_ref, is_oci_digest, DependencyRef, UpdateResult};
 use crate::error::PinnerError;
+use crate::patcher::formatter::HashSecurityStatus;
 use crate::pipeline::init::{init_project, init_project_with_selection};
 use crate::pipeline::Pipeline;
+use crate::resolver::OsvVerdict;
 use colored::Colorize;
 use futures::stream::{self, StreamExt};
 use std::path::PathBuf;
@@ -30,17 +32,6 @@ struct ScanEntry {
     /// OSV advisories as `(id, summary)`.
     advisories: Vec<(String, String)>,
 }
-
-/// Words in an OSV advisory that indicate a supply-chain compromise rather than a
-/// regular vulnerability.
-const COMPROMISE_KEYWORDS: [&str; 6] = [
-    "malicious",
-    "compromised",
-    "backdoor",
-    "malware",
-    "hijacked",
-    "exfiltrat",
-];
 
 impl Pipeline {
     /// Scans workflows and queries OSV to identify compromised dependencies.
@@ -392,8 +383,9 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Classifies one reference: commits are looked up in OSV, images are checked for
-    /// a cosign signature. Lookup failures are returned as warning messages so the
+    /// Classifies one reference the same way `verify --check-osv` does: references in
+    /// the configured compromised list are compromised, commits are classified with
+    /// the shared OSV assessment, and images are checked for a cosign signature. Lookup failures are returned as warning messages so the
     /// reference is neither vetted nor blacklisted on incomplete information.
     async fn scan_target(
         &self,
@@ -409,6 +401,20 @@ impl Pipeline {
             candidate,
             advisories: Vec::new(),
         };
+
+        // A reference blacklisted in the configuration is compromised, exactly as in
+        // `verify`, regardless of what OSV or the registry report.
+        let listed = self
+            .patcher
+            .formatter
+            .check_hash_security(&entry.action, &entry.sha);
+        if listed == HashSecurityStatus::Compromised {
+            entry.advisories.push((
+                "config".to_string(),
+                "Listed in the compromised list of your configuration".to_string(),
+            ));
+            return Ok((ScanVerdict::Compromised, entry));
+        }
 
         if !is_git_sha(&entry.sha) {
             let image = entry
@@ -430,49 +436,22 @@ impl Pipeline {
             };
         }
 
-        #[derive(serde::Deserialize)]
-        struct OsvResponse {
-            vulns: Option<Vec<OsvVulnerability>>,
-        }
-
-        #[derive(serde::Deserialize)]
-        struct OsvVulnerability {
-            id: String,
-            summary: Option<String>,
-            details: Option<String>,
-        }
-
-        let body = match self.resolver.check_vulnerabilities(&entry.sha).await {
-            Ok(Some(body)) => body,
-            Ok(None) => return Ok((ScanVerdict::Clean, entry)),
-            Err(e) => {
-                return Err(format!(
-                    "Could not query OSV for {}@{}: {}",
-                    entry.action, entry.sha, e
-                ))
-            }
+        let assessment = self.resolver.assess_commit(&entry.sha).await.map_err(|e| {
+            format!(
+                "Could not query OSV for {}@{}: {}",
+                entry.action, entry.sha, e
+            )
+        })?;
+        entry.advisories = assessment
+            .advisories
+            .into_iter()
+            .map(|a| (a.id, a.summary))
+            .collect();
+        let verdict = match assessment.verdict {
+            OsvVerdict::Clean => ScanVerdict::Clean,
+            OsvVerdict::Vulnerable => ScanVerdict::Vulnerable,
+            OsvVerdict::Compromised => ScanVerdict::Compromised,
         };
-        let vulns = serde_json::from_str::<OsvResponse>(&body)
-            .map_err(|e| {
-                format!(
-                    "Invalid OSV response for {}@{}: {}",
-                    entry.action, entry.sha, e
-                )
-            })?
-            .vulns
-            .unwrap_or_default();
-
-        let mut verdict = ScanVerdict::Clean;
-        for vuln in vulns {
-            let summary = vuln.summary.unwrap_or_default();
-            let text = format!("{} {}", summary, vuln.details.unwrap_or_default()).to_lowercase();
-            if COMPROMISE_KEYWORDS.iter().any(|k| text.contains(k)) {
-                verdict = ScanVerdict::Compromised;
-            } else if verdict == ScanVerdict::Clean {
-                verdict = ScanVerdict::Vulnerable;
-            }
-            entry.advisories.push((vuln.id, summary));
-        }
         Ok((verdict, entry))
     }
 }
