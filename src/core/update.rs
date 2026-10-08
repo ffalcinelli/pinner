@@ -33,11 +33,15 @@ pub struct UpdateTask {
 
 /// Matches "version-only" comments such as `# v1`, `# main` or `# 1.2.3`.
 ///
+/// The version token must be the whole comment or be followed by another `#`
+/// (the `# v1 # note` layout pinner itself writes), so free-form comments like
+/// `# mainly for X` or `# 3 retries` are never mistaken for versions.
+///
 /// Capture group 1 holds the version token. It is shared by the scanner (to recover
 /// the logical tag of a pinned dependency) and the patcher (to replace a stale
 /// version comment while keeping any extra annotation that follows it).
 pub(crate) static VERSION_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
+    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_+]*|main|\d[a-zA-Z0-9.\-_+]*)\s*(?:#|$)")
         .expect("Failed to compile VERSION_COMMENT_REGEX")
 });
 
@@ -261,5 +265,28 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(task.logical_tag(), Some("v6.0.2".to_string()));
+
+        // Free-form comments must not be mistaken for versions
+        let sha = "de0fac2e4500dabe0009e67214ff5f5447ce83dd";
+        for comment in [
+            "# mainly for tests",
+            "# 3 retries",
+            "# v1 is broken upstream",
+        ] {
+            let task = UpdateTask {
+                current_tag: Some(sha.to_string()),
+                comment: Some(comment.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(task.logical_tag(), Some(sha.to_string()), "{comment}");
+        }
+
+        // Bare numeric image tags (e.g. node:20) are still versions
+        let task = UpdateTask {
+            current_tag: Some(format!("sha256:{}", "a".repeat(64))),
+            comment: Some("# 20".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(task.logical_tag(), Some("20".to_string()));
     }
 }
