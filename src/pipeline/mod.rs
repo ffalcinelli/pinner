@@ -88,13 +88,10 @@ impl Pipeline {
         let mut markdown_rows = Vec::new();
 
         for task in tasks {
-            let is_pinned = if let Some(tag) = &task.current_tag {
-                (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-                    || (tag.starts_with("sha256:") && tag.len() == 71)
-                    || (task.key == "orbs" && !tag.is_empty())
-            } else {
-                false
-            };
+            let is_pinned = task
+                .current_tag
+                .as_deref()
+                .is_some_and(|tag| crate::core::is_immutable_ref(tag, &task.key));
 
             let action_name = task.action.to_string();
             let file_path = task.path.display().to_string();
@@ -149,9 +146,7 @@ impl Pipeline {
                 if status == crate::patcher::formatter::HashSecurityStatus::NotChecked && check_osv
                 {
                     let action_str = task.action.to_string();
-                    let is_git_sha = tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit());
-
-                    if !is_git_sha {
+                    if !crate::core::is_git_sha(tag) {
                         let image_name =
                             action_str.strip_prefix("docker://").unwrap_or(&action_str);
                         match self

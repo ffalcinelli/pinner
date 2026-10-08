@@ -1,16 +1,6 @@
-use crate::core::UpdateResult;
+use crate::core::update::VERSION_COMMENT_REGEX as COMMENT_REGEX;
+use crate::core::{is_hash_ref, UpdateResult};
 use crate::error::PinnerError;
-use regex::Regex;
-use std::sync::LazyLock;
-
-/// Regex used to identify "version-only" comments that should be replaced during an update.
-///
-/// If a comment matches this pattern (e.g., `# v1`, `# main`), it is considered a
-/// placeholder for the dependency version and is replaced by the new version's tag.
-static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
-        .expect("Failed to compile COMMENT_REGEX")
-});
 
 /// Applies an update to the string content of a YAML file.
 ///
@@ -56,9 +46,7 @@ pub fn apply_update(
 
     // Prepare the new comment showing the symbolic tag (e.g., " # v3").
     let new_comment = if let Some(t) = &res.new_tag {
-        let is_sha =
-            (t.len() == 40 && t.chars().all(|c| c.is_ascii_hexdigit())) || t.starts_with("sha256:");
-        if is_sha {
+        if is_hash_ref(t) {
             // Don't add a comment if the tag is already a SHA or digest.
             "".to_string()
         } else {
@@ -111,10 +99,7 @@ pub fn apply_update(
             let trimmed = prev_line_str.trim();
             if trimmed.starts_with('#') && COMMENT_REGEX.is_match(trimmed) {
                 if let Some(new_t) = &res.new_tag {
-                    let is_sha = (new_t.len() == 40
-                        && new_t.chars().all(|c| c.is_ascii_hexdigit()))
-                        || new_t.starts_with("sha256:");
-                    if !is_sha {
+                    if !is_hash_ref(new_t) {
                         let indent = prev_line_str.len() - prev_line_str.trim_start().len();
                         let indent_str = &prev_line_str[..indent];
                         let newline_str = if prev_line_str.ends_with('\n') {

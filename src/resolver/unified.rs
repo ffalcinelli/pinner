@@ -1,7 +1,7 @@
 use colored::Colorize;
 
 use crate::cli::UpgradeStrategy;
-use crate::core::{DependencyRef, UpdateResult, UpdateTask};
+use crate::core::{is_git_sha, is_hash_ref, DependencyRef, UpdateResult, UpdateTask};
 use crate::error::PinnerError;
 use crate::resolver::osv::OsvClient;
 use crate::resolver::provider::RemoteProvider;
@@ -156,12 +156,12 @@ impl Resolver {
 
         if let Some(ver) = &task.current_tag {
             if task.action.is_docker() || task.key == "image" || task.key == "container" {
-                if !ver.starts_with("sha256:") {
+                if !is_hash_ref(ver) {
                     let image = task.action.trim_docker_prefix();
                     let digest = registry.resolve_digest(image, ver).await?;
                     return Ok(Some((DependencyRef::from(digest), Some(ver.clone()))));
                 }
-            } else if ver.len() != 40 {
+            } else if !is_git_sha(ver) {
                 let sha = remote.get_commit_sha(&task.action, ver, &task.key).await?;
                 return Ok(Some((sha, Some(ver.clone()))));
             }

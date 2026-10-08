@@ -26,8 +26,7 @@ impl Pipeline {
 
         for task in tasks {
             if let Some(ref tag) = task.current_tag {
-                let is_sha = tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit());
-                if is_sha {
+                if crate::core::is_git_sha(tag) {
                     results.push(crate::core::UpdateResult {
                         action: task.action.clone(),
                         path: task.path.clone(),
@@ -114,10 +113,8 @@ impl Pipeline {
                     let action_str = action.to_string();
 
                     // Extract tag version (if not a commit SHA)
-                    let is_sha =
-                        |s: &str| s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit());
                     let tag_version = if let Some(ref t) = new_tag {
-                        if is_sha(t) {
+                        if crate::core::is_git_sha(t) {
                             None
                         } else {
                             Some(t.clone())
@@ -127,9 +124,7 @@ impl Pipeline {
                     };
 
                     // Only query Git SHAs in OSV
-                    let is_git_sha =
-                        sha_str.len() == 40 && sha_str.chars().all(|c| c.is_ascii_hexdigit());
-                    if !is_git_sha {
+                    if !crate::core::is_git_sha(&sha_str) {
                         // Check provenance for OCI container images or other non-git registries
                         let mut reasons = Vec::new();
                         let mut is_compromised = false;

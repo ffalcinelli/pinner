@@ -136,6 +136,34 @@ impl From<String> for DependencyRef {
     }
 }
 
+/// Returns true if `s` is a full 40-character hexadecimal Git commit SHA-1.
+pub fn is_git_sha(s: &str) -> bool {
+    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Returns true if `s` is a complete OCI content digest (`sha256:` followed by 64 hex characters).
+pub fn is_oci_digest(s: &str) -> bool {
+    s.strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Returns true if `s` looks like a content hash rather than a symbolic tag:
+/// a Git commit SHA-1 or any `sha256:`-prefixed digest.
+///
+/// This is deliberately lenient about digest length; use [`is_oci_digest`] when
+/// the value must be a well-formed digest.
+pub fn is_hash_ref(s: &str) -> bool {
+    is_git_sha(s) || s.starts_with("sha256:")
+}
+
+/// Returns true if `tag` is an immutable reference for a dependency declared under `key`.
+///
+/// Git SHAs and full OCI digests are always immutable. CircleCI orb versions are
+/// immutable once published, except for the special `volatile` channel.
+pub fn is_immutable_ref(tag: &str, key: &str) -> bool {
+    is_git_sha(tag) || is_oci_digest(tag) || (key == "orbs" && !tag.is_empty() && tag != "volatile")
+}
+
 /// Represents a Git branch name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchName(pub String);
@@ -187,5 +215,31 @@ mod tests {
 
         let ver_ref = DependencyRef::Version("1.2.3".to_string());
         assert_eq!(format!("{}", ver_ref), "1.2.3");
+    }
+
+    #[test]
+    fn test_hash_detection() {
+        let sha = "de0fac2e4500dabe0009e67214ff5f5447ce83dd";
+        let digest = format!("sha256:{}", "a".repeat(64));
+
+        assert!(is_git_sha(sha));
+        assert!(!is_git_sha("v4"));
+        assert!(!is_git_sha(&"z".repeat(40)));
+
+        assert!(is_oci_digest(&digest));
+        assert!(!is_oci_digest("sha256:abc"));
+        assert!(!is_oci_digest(sha));
+
+        assert!(is_hash_ref(sha));
+        assert!(is_hash_ref("sha256:abc"));
+        assert!(!is_hash_ref("latest"));
+
+        assert!(is_immutable_ref(sha, "uses"));
+        assert!(is_immutable_ref(&digest, "image"));
+        assert!(!is_immutable_ref("sha256:abc", "image"));
+        assert!(!is_immutable_ref("v4", "uses"));
+        assert!(is_immutable_ref("5.0.0", "orbs"));
+        assert!(!is_immutable_ref("volatile", "orbs"));
+        assert!(!is_immutable_ref("", "orbs"));
     }
 }

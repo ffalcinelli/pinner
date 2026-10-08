@@ -1,4 +1,4 @@
-use crate::core::dependency::{CiProvider, DependencyName, DependencyRef};
+use crate::core::dependency::{is_hash_ref, CiProvider, DependencyName, DependencyRef};
 use regex::Regex;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -31,7 +31,12 @@ pub struct UpdateTask {
     pub provider: CiProvider,
 }
 
-static VERSION_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+/// Matches "version-only" comments such as `# v1`, `# main` or `# 1.2.3`.
+///
+/// Capture group 1 holds the version token. It is shared by the scanner (to recover
+/// the logical tag of a pinned dependency) and the patcher (to replace a stale
+/// version comment while keeping any extra annotation that follows it).
+pub(crate) static VERSION_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^#\s*(v\d[a-zA-Z0-9.\-_]*|main|\d[a-zA-Z0-9.\-_]*)\s*")
         .expect("Failed to compile VERSION_COMMENT_REGEX")
 });
@@ -42,9 +47,7 @@ impl UpdateTask {
     /// extract the tag from a trailing version comment (e.g., `# v1.2.3`).
     pub fn logical_tag(&self) -> Option<String> {
         let tag = self.current_tag.as_ref()?;
-        let is_sha = (tag.len() == 40 && tag.chars().all(|c| c.is_ascii_hexdigit()))
-            || tag.starts_with("sha256:");
-        if is_sha {
+        if is_hash_ref(tag) {
             if let Some(comment) = &self.comment {
                 if let Some(captures) = VERSION_COMMENT_REGEX.captures(comment) {
                     if let Some(m) = captures.get(1) {

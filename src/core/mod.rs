@@ -6,7 +6,10 @@
 pub mod dependency;
 pub mod update;
 
-pub use dependency::{BranchName, CiProvider, DependencyName, DependencyRef};
+pub use dependency::{
+    is_git_sha, is_hash_ref, is_immutable_ref, is_oci_digest, BranchName, CiProvider,
+    DependencyName, DependencyRef,
+};
 pub use update::{
     CompromisedDependency, JsonOutput, NonVettedDependency, UnpinnedDependency, UpdateResult,
     UpdateTask, VerificationResult,
