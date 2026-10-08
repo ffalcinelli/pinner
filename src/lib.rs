@@ -636,6 +636,22 @@ mod tests {
 
         let res = pipeline.scan(&[f], true).await;
         assert!(res.is_ok());
+
+        // Signed images are vetted; unsigned images are reported but never blacklisted.
+        let toml_content = fs::read_to_string(".pinner.toml").unwrap();
+        let config: crate::config::Config = toml::from_str(&toml_content).unwrap();
+        let refs = |entries: Option<Vec<crate::config::SecurityEntry>>| -> Vec<String> {
+            entries
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| e.reference)
+                .collect()
+        };
+        let vetted = refs(config.vetted);
+        let compromised = refs(config.compromised);
+        assert!(vetted.iter().any(|r| r.contains("clean-img")));
+        assert!(!vetted.iter().any(|r| r.contains("compromised-img")));
+        assert!(compromised.is_empty(), "{:?}", compromised);
     }
 
     #[tokio::test]

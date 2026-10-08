@@ -543,7 +543,7 @@ impl<'de> serde::Deserialize<'de> for SecurityEntry {
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
-                        "ref" => reference = Some(map.next_value()?),
+                        "ref" | "reference" => reference = Some(map.next_value()?),
                         "tag" => tag = Some(map.next_value()?),
                         "timestamp" => timestamp = Some(map.next_value()?),
                         _ => {
@@ -944,6 +944,10 @@ mod tests {
             unknown_field = 42
         "#;
         let entry: SecurityEntry = toml::from_str(toml_str).unwrap();
+        assert_eq!(entry.reference, "my-ref");
+
+        // `reference` is accepted as an alias of `ref`
+        let entry: SecurityEntry = toml::from_str(r#"reference = "my-ref""#).unwrap();
         assert_eq!(entry.reference, "my-ref");
 
         // Expecting/invalid type test

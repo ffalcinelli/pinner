@@ -11,6 +11,6 @@ pub use dependency::{
     DependencyName, DependencyRef,
 };
 pub use update::{
-    CompromisedDependency, JsonOutput, NonVettedDependency, UnpinnedDependency, UpdateResult,
-    UpdateTask, VerificationResult,
+    CompromisedDependency, JsonOutput, NonVettedDependency, UnpinnedDependency, UnsignedDependency,
+    UpdateResult, UpdateTask, VerificationResult,
 };

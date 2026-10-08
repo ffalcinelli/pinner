@@ -150,6 +150,21 @@ pub struct NonVettedDependency {
     pub column: usize,
 }
 
+/// Details of a pinned container image that carries no cosign signature.
+#[derive(Debug, Serialize, Clone)]
+pub struct UnsignedDependency {
+    /// Path to the file.
+    pub path: PathBuf,
+    /// Image name.
+    pub action: DependencyName,
+    /// The pinned digest.
+    pub digest: String,
+    /// Line number.
+    pub line: usize,
+    /// Column number.
+    pub column: usize,
+}
+
 /// The result of a verification operation.
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct VerificationResult {
@@ -161,12 +176,22 @@ pub struct VerificationResult {
     /// List of non-vetted dependencies found (only populated/checked in strict mode).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub non_vetted: Vec<NonVettedDependency>,
+    /// Pinned images without a cosign signature (only checked with OSV checks enabled).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsigned: Vec<UnsignedDependency>,
+    /// Whether strict mode was enabled, which makes unsigned images fail verification.
+    #[serde(skip)]
+    pub strict: bool,
 }
 
 impl VerificationResult {
-    /// Returns true if no unpinned, compromised, or non-vetted dependencies were found.
+    /// Returns true if nothing is unpinned, compromised or non-vetted and, in strict
+    /// mode, no image is unsigned.
     pub fn is_success(&self) -> bool {
-        self.unpinned.is_empty() && self.compromised.is_empty() && self.non_vetted.is_empty()
+        self.unpinned.is_empty()
+            && self.compromised.is_empty()
+            && self.non_vetted.is_empty()
+            && (!self.strict || self.unsigned.is_empty())
     }
 }
 
@@ -216,6 +241,21 @@ mod tests {
             line: 1,
             column: 1,
         });
+        assert!(!res.is_success());
+    }
+
+    #[test]
+    fn test_verification_result_unsigned_fails_only_when_strict() {
+        let mut res = VerificationResult::default();
+        res.unsigned.push(UnsignedDependency {
+            path: PathBuf::from("f.yml"),
+            action: "alpine".into(),
+            digest: "sha256:abc".to_string(),
+            line: 1,
+            column: 1,
+        });
+        assert!(res.is_success());
+        res.strict = true;
         assert!(!res.is_success());
     }
 
