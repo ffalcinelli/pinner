@@ -5,7 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.18] - 2026-10-09
+
+### Added
+- 💡 **Contextual Hints for Missing Paths**: Intercepts `PinnerError::PathNotFound` to provide actionable guidance when workflow directories are missing or default paths fail.
 
 ### Fixed
 - 🔐 **Unsigned images are no longer "compromised"**: `verify --check-osv` reported every image without a cosign signature as a supply-chain attack, and `scan --yes` wrote them to the `compromised` list. They now get a new **unsigned** status: a warning by default, and a failure only with `--strict`. `scan` lists them separately and never writes them to either list.
@@ -30,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🧱 **Internals**: Shared SHA/digest helpers in `core`. `verify` output moved to a new `patcher::report` module. Upgrade-candidate selection is deduplicated. Configuration is loaded once and passed to the new `run_with_config`.
 - 🌍 **`PINNER_NO_GLOBAL_CONFIG`**: New variable that skips global configuration files. It replaces a test-only check based on the executable path.
 - `vetted`/`compromised` entries accept `reference` as an alias of `ref`.
+- 🛠️ **Dependency Bumps**: Upgraded `tokio` to `1.53.2`, `clap` to `4.6.7`, `thiserror` to `2.0.21`, `xxhash-rust` to `0.8.19`, and updated CI actions and toolchains.
 
 ## [0.0.17] - 2026-09-24
 
