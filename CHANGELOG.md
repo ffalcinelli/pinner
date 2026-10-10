@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.19] - 2026-10-10
+
+### Fixed
+- 📦 **Installer no longer hits GitHub API rate limits**: `install.sh` and `install.ps1` resolved the latest release through the unauthenticated GitHub REST API. On shared CI runners this often returned HTTP 403, so the GitHub Action failed with "Could not determine latest release version". The installers now follow the `releases/latest` redirect on github.com, and accept `PINNER_VERSION` to install a specific release.
+- 📌 **The action installs with its own pinned script**: The GitHub Action downloaded `install.sh` from `main` even when the action itself was pinned to a commit. It now runs the `install.sh` that ships with the pinned action.
+
 ## [0.0.18] - 2026-10-09
 
 ### Added

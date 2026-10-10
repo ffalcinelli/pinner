@@ -46,8 +46,13 @@ fi
 
 echo "Installing pinner to $INSTALL_DIR..."
 
-# Get latest release tag
-LATEST_RELEASE=$(curl -sSf "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+# Resolve the release tag: honor PINNER_VERSION, otherwise follow the
+# github.com "latest" redirect (avoids the rate-limited REST API).
+if [ -n "$PINNER_VERSION" ]; then
+    LATEST_RELEASE="$PINNER_VERSION"
+else
+    LATEST_RELEASE=$(curl -fsSLo /dev/null -w '%{url_effective}' "$GITHUB_URL/releases/latest" | sed -n 's|.*/releases/tag/||p')
+fi
 
 if [ -z "$LATEST_RELEASE" ]; then
     echo "Error: Could not determine latest release version."

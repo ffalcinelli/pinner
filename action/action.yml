@@ -72,7 +72,7 @@ runs:
       run: |
         if ! command -v pinner &> /dev/null; then
           echo "Installing pinner..."
-          curl -LsSf https://raw.githubusercontent.com/ffalcinelli/pinner/main/install.sh | sh
+          sh "$GITHUB_ACTION_PATH/../install.sh"
         else
           echo "pinner is already installed."
         fi

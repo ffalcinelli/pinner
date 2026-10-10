@@ -25,9 +25,16 @@ $InstallDir = if (Test-Path "$HOME\.cargo\bin") {
 
 Write-Host "Installing pinner to $InstallDir..."
 
-# Get latest release tag
-$ReleaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
-$LatestRelease = $ReleaseInfo.tag_name
+# Resolve the release tag: honor PINNER_VERSION, otherwise follow the
+# github.com "latest" redirect (avoids the rate-limited REST API).
+if ($env:PINNER_VERSION) {
+    $LatestRelease = $env:PINNER_VERSION
+} else {
+    $Response = Invoke-WebRequest -Uri "$GithubUrl/releases/latest" -Method Head -UseBasicParsing
+    # Windows PowerShell exposes ResponseUri, PowerShell 7+ RequestMessage.RequestUri
+    $FinalUri = if ($Response.BaseResponse.ResponseUri) { $Response.BaseResponse.ResponseUri } else { $Response.BaseResponse.RequestMessage.RequestUri }
+    $LatestRelease = ($FinalUri.AbsoluteUri -split '/releases/tag/')[1]
+}
 
 if (-not $LatestRelease) {
     Write-Error "Could not determine latest release version."
