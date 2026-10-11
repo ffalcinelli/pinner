@@ -1,9 +1,9 @@
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
+use colored::*;
 use pinner::{resolver::OciRegistryProvider, run_with_config, Cli};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-use colored::*;
 
 use std::process::ExitCode;
 
@@ -58,7 +58,10 @@ async fn main() -> ExitCode {
                 }
                 pinner::error::PinnerError::Config(_) => {
                     eprintln!("{} {}", "error:".red().bold(), pe);
-                    eprintln!("{} Check your configuration or command-line arguments.", "hint:".blue());
+                    eprintln!(
+                        "{} Check your configuration or command-line arguments.",
+                        "hint:".blue()
+                    );
                 }
                 pinner::error::PinnerError::RateLimit(_) => {
                     eprintln!("{} {}", "error:".red().bold(), pe);
