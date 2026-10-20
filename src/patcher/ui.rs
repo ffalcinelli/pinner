@@ -97,7 +97,12 @@ impl UserInterface for ConsoleUi {
             .items(&items)
             .defaults(&vec![true; items.len()])
             .interact()
-            .map_err(|e| crate::error::PinnerError::Config(e.to_string()))?;
+            .map_err(|e| {
+                crate::error::PinnerError::Config(format!(
+                    "Interactive prompt failed ({}). Pass --yes to run without prompting",
+                    e
+                ))
+            })?;
 
         let mut final_results = Vec::new();
         for idx in chosen {

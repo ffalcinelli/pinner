@@ -1,6 +1,10 @@
+//! # Pinner CLI
+//!
+//! The CLI wrapper for the `pinner` library.
+use colored::Colorize;
+
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use colored::*;
 use pinner::{resolver::OciRegistryProvider, run_with_config, Cli};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -24,63 +28,17 @@ async fn main() -> ExitCode {
     let cli = config.clone().merge_with_cli(cli);
 
     if let Err(e) = run_app(cli, config).await {
-        // Check if it's a verification failure (already printed details)
-        let is_verification_failure = e
-            .root_cause()
-            .downcast_ref::<pinner::error::PinnerError>()
-            .is_some_and(|pe| matches!(pe, pinner::error::PinnerError::VerificationFailed(_)));
+        let pinner_error = e.root_cause().downcast_ref::<pinner::error::PinnerError>();
 
-        if is_verification_failure {
-            return ExitCode::FAILURE;
-        }
-
-        if let Some(pe) = e.root_cause().downcast_ref::<pinner::error::PinnerError>() {
-            match pe {
-                pinner::error::PinnerError::PathNotFound(path) => {
-                    eprintln!("{} {}", "error:".red().bold(), pe);
-                    let defaults = [
-                        ".github/workflows",
-                        ".gitlab-ci.yml",
-                        "bitbucket-pipelines.yml",
-                        ".circleci/config.yml",
-                    ];
-                    if defaults.iter().any(|d| path.contains(d)) {
-                        eprintln!(
-                            "{} No workflows found. Are you in the root of a repository? You can specify a custom path with `-w <path>`.",
-                            "hint:".blue()
-                        );
-                    } else {
-                        eprintln!(
-                            "{} Ensure the specified path exists and is accessible.",
-                            "hint:".blue()
-                        );
-                    }
-                }
-                pinner::error::PinnerError::Config(_) => {
-                    eprintln!("{} {}", "error:".red().bold(), pe);
-                    eprintln!(
-                        "{} Check your configuration or command-line arguments.",
-                        "hint:".blue()
-                    );
-                }
-                pinner::error::PinnerError::RateLimit(_) => {
-                    eprintln!("{} {}", "error:".red().bold(), pe);
-                    eprintln!("{} Rate limit exceeded. Try providing an authentication token (e.g., GITHUB_TOKEN) to increase your limit.", "hint:".blue());
-                }
-                pinner::error::PinnerError::Authentication(_) => {
-                    eprintln!("{} {}", "error:".red().bold(), pe);
-                    eprintln!("{} Check that your authentication tokens are valid and have the correct permissions.", "hint:".blue());
-                }
-                pinner::error::PinnerError::Offline(_) => {
-                    eprintln!("{} {}", "error:".red().bold(), pe);
-                    eprintln!("{} You are running in offline mode. Disable --offline to perform this action.", "hint:".blue());
-                }
-                _ => {
-                    eprintln!("{} {:#}", "error:".red().bold(), e);
-                }
-            }
-        } else {
+        // Verification failures have already printed their details.
+        if !matches!(
+            pinner_error,
+            Some(pinner::error::PinnerError::VerificationFailed(_))
+        ) {
             eprintln!("{} {:#}", "error:".red().bold(), e);
+            if let Some(hint) = pinner_error.and_then(|pe| pe.hint()) {
+                eprintln!("{} {}", "hint:".blue(), hint);
+            }
         }
         return ExitCode::FAILURE;
     }
@@ -143,9 +101,7 @@ pub async fn run_app(cli: Cli, config: pinner::config::Config) -> anyhow::Result
     let workflows_to_process = get_workflows(&cli.workflows);
 
     // Execute the requested command
-    run_with_config(cli, &config, provider, registry, workflows_to_process)
-        .await
-        .context("Failed to run pinner")?;
+    run_with_config(cli, &config, provider, registry, workflows_to_process).await?;
 
     Ok(())
 }
@@ -155,21 +111,7 @@ pub fn get_workflows(cli_workflows: &[PathBuf]) -> Vec<PathBuf> {
         return cli_workflows.to_vec();
     }
 
-    let default_paths = [
-        ".github/workflows",
-        ".github/actions",
-        "action.yml",
-        "action.yaml",
-        "bitbucket-pipelines.yml",
-        "bitbucket-pipelines.yaml",
-        ".gitlab-ci.yml",
-        ".circleci/config.yml",
-        ".travis.yml",
-        "appveyor.yml",
-        ".forgejo/workflows",
-    ];
-
-    let mut defaults: Vec<PathBuf> = default_paths
+    let mut defaults: Vec<PathBuf> = pinner::DEFAULT_WORKFLOW_PATHS
         .iter()
         .filter_map(|&p| {
             let path = Path::new(p);

@@ -20,6 +20,12 @@ Used for OCI container image resolution:
 *   `resolve_digest`: Maps an image tag (e.g., `ubuntu:latest`) to its SHA-256 digest (`sha256:abc...`).
 *   `verify_provenance`: Checks for a cosign signature manifest (`sha256-<hex>.sig`). `Ok(false)` means *unsigned*, which callers report as a warning, never as compromised.
 
+### HTTP Error Classification (`BaseHttpClient::handle_error`)
+The GitHub, GitLab and Forgejo providers share `BaseHttpClient`, which records the provider's token variable (`GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN`) and whether a token is set:
+*   `429`, or `403` with `x-ratelimit-remaining: 0` / `ratelimit-remaining: 0` / `retry-after`, becomes `PinnerError::RateLimit`. The message includes the reset time when known and, if no token is set, names the provider's token variable.
+*   Any other `401`/`403` becomes `PinnerError::Authentication`, saying whether the configured token was rejected or a token is required.
+*   Everything else becomes `PinnerError::Api` (non-fatal).
+
 ---
 
 ## The Caching Decorator (`CachedProvider`)
@@ -28,7 +34,7 @@ To prevent API rate-limiting and accelerate execution, `CachedProvider<T: Remote
 
 1.  **Memory Cache**: Uses the `moka` crate for high-performance, asynchronous in-memory caching.
 2.  **Disk Cache**: Uses the `cacache` crate for persistent, directory-based caching.
-3.  **Offline Mode**: When offline mode is enabled, network requests are bypassed, and values are exclusively read from cache. If a cache miss occurs, `PinnerError::Offline` is returned.
+3.  **Offline Mode**: When offline mode is enabled, network requests are bypassed, and values are exclusively read from cache. If a cache miss occurs, `PinnerError::Offline` is returned. `run_with_config` also returns `PinnerError::Offline` for commands that need the network (`scan`, `verify --check-osv`).
 4.  **Cache Keys**: Memory keys include the action, tag and YAML key. Disk keys are additionally scoped by a namespace (`CachedProvider::with_namespace`) that `lib.rs` builds from the configured provider URLs, so results cached for github.com are never served for a GitHub Enterprise host with the same repository names.
 
 ---

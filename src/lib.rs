@@ -22,6 +22,22 @@ pub use pipeline::Pipeline;
 pub use resolver::{CachedProvider, RegistryProvider, RemoteProvider, Resolver};
 pub use scanner::Scanner;
 
+/// CI configuration paths discovered (relative to the current directory) when
+/// no `--workflows` argument is given.
+pub const DEFAULT_WORKFLOW_PATHS: &[&str] = &[
+    ".github/workflows",
+    ".github/actions",
+    "action.yml",
+    "action.yaml",
+    "bitbucket-pipelines.yml",
+    "bitbucket-pipelines.yaml",
+    ".gitlab-ci.yml",
+    ".circleci/config.yml",
+    ".travis.yml",
+    "appveyor.yml",
+    ".forgejo/workflows",
+];
+
 #[doc(hidden)]
 pub struct TestCwdGuard {
     orig: std::path::PathBuf,
@@ -73,12 +89,12 @@ pub async fn run_with_config<G: RemoteProvider + 'static, R: RegistryProvider + 
             Commands::Verify {
                 check_osv: true, ..
             } => {
-                return Err(PinnerError::Config(
+                return Err(PinnerError::Offline(
                     "Cannot check OSV when offline mode is enabled".into(),
                 ));
             }
             Commands::Scan { .. } => {
-                return Err(PinnerError::Config(
+                return Err(PinnerError::Offline(
                     "Cannot run scan in offline mode".into(),
                 ));
             }

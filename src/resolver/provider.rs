@@ -373,6 +373,10 @@ impl reqwest_middleware::Middleware for RateLimitMiddleware {
 pub struct BaseHttpClient {
     pub client: ClientWithMiddleware,
     pub base_url: String,
+    /// Environment variable the token is read from, named in error messages.
+    pub token_env_var: String,
+    /// Whether requests are authenticated.
+    pub has_token: bool,
 }
 
 impl BaseHttpClient {
@@ -390,6 +394,7 @@ impl BaseHttpClient {
 
         // Precedence: explicit token > environment variable.
         let token = token.or_else(|| std::env::var(env_var).ok());
+        let has_token = token.is_some();
 
         if let Some(t) = token {
             let auth_val = if token_prefix.is_empty() {
@@ -414,25 +419,41 @@ impl BaseHttpClient {
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
-        Ok(Self { client, base_url })
+        Ok(Self {
+            client,
+            base_url,
+            token_env_var: env_var.to_string(),
+            has_token,
+        })
     }
 
     /// Converts a `reqwest::Response` into a `PinnerError`.
     ///
-    /// It specifically detects rate limiting (403/429) and attempts to parse
-    /// the `x-ratelimit-reset` or `retry-after` headers to provide helpful feedback.
+    /// It specifically detects rate limiting (429, or 403 with an exhausted quota or
+    /// `retry-after`) and attempts to parse the `x-ratelimit-reset` or `retry-after`
+    /// headers to provide helpful feedback. Other 401/403 responses are reported as
+    /// authentication failures.
     pub fn handle_error(&self, resp: reqwest::Response, action: &DependencyName) -> PinnerError {
+        use std::fmt::Write;
         let status = resp.status();
+        let headers = resp.headers();
+        let quota_exhausted = ["x-ratelimit-remaining", "ratelimit-remaining"]
+            .iter()
+            .any(|h| headers.get(*h).is_some_and(|v| v == "0"));
+        let is_rate_limit = match status.as_u16() {
+            429 => true,
+            403 => quota_exhausted || headers.contains_key("retry-after"),
+            _ => false,
+        };
         match status.as_u16() {
-            403 | 429 => {
+            _ if is_rate_limit => {
                 let mut msg = format!(
-                    "API rate limit exceeded (HTTP {}) at {}. Try providing an API token to increase limits.",
+                    "API rate limit exceeded (HTTP {}) at {}.",
                     status, self.base_url
                 );
 
                 // Try to parse the reset timestamp from various headers used by different providers.
-                use std::fmt::Write;
-                if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
+                if let Some(reset) = headers.get("x-ratelimit-reset") {
                     if let Ok(reset_str) = reset.to_str() {
                         if let Ok(ts) = reset_str.parse::<i64>() {
                             use chrono::{TimeZone, Utc};
@@ -445,14 +466,26 @@ impl BaseHttpClient {
                             }
                         }
                     }
-                } else if let Some(retry) = resp.headers().get("retry-after") {
+                } else if let Some(retry) = headers.get("retry-after") {
                     if let Ok(retry_str) = retry.to_str() {
                         let _ = write!(msg, " Retry after {} seconds.", retry_str);
                     }
                 }
 
+                if !self.has_token {
+                    let _ = write!(msg, " Set {} to increase limits.", self.token_env_var);
+                }
+
                 PinnerError::RateLimit(msg)
             }
+            401 | 403 if self.has_token => PinnerError::Authentication(format!(
+                "HTTP {} at {}: the configured token ({}) was rejected for {}",
+                status, self.base_url, self.token_env_var, action
+            )),
+            401 | 403 => PinnerError::Authentication(format!(
+                "HTTP {} at {}: {} requires authentication. Set {}",
+                status, self.base_url, action, self.token_env_var
+            )),
             _ => PinnerError::Api(format!(
                 "HTTP {}: Error for action {} at {}",
                 status, action, self.base_url
@@ -813,12 +846,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_api_error() {
-        let provider = ReqwestGithubProvider::new("https://api.github.com".into(), None).unwrap();
+        let mut provider =
+            ReqwestGithubProvider::new("https://api.github.com".into(), None).unwrap();
+        provider.base.has_token = false;
         let action = DependencyName::from("o/r");
 
         let resp = Response::from(
             http::Response::builder()
                 .status(StatusCode::FORBIDDEN)
+                .header("x-ratelimit-remaining", "0")
                 .body("")
                 .unwrap(),
         );
@@ -826,6 +862,42 @@ mod tests {
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
         assert!(format!("{}", err).contains("https://api.github.com"));
+        assert!(format!("{}", err).contains("Set GITHUB_TOKEN"));
+
+        // A 403 without rate-limit headers is a permission problem, not a rate limit.
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .header("x-ratelimit-remaining", "4999")
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
+        assert!(matches!(err, PinnerError::Authentication(_)));
+        assert!(format!("{}", err).contains("requires authentication. Set GITHUB_TOKEN"));
+
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body("")
+                .unwrap(),
+        );
+        provider.base.has_token = true;
+        let err = provider.base.handle_error(resp, &action);
+        assert!(matches!(err, PinnerError::Authentication(_)));
+        assert!(format!("{}", err).contains("configured token (GITHUB_TOKEN) was rejected"));
+
+        // With a token, the rate-limit message does not suggest setting one.
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .body("")
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action);
+        assert!(matches!(err, PinnerError::RateLimit(_)));
+        assert!(!format!("{}", err).contains("Set GITHUB_TOKEN"));
+        provider.base.has_token = false;
 
         let resp = Response::from(
             http::Response::builder()
@@ -860,6 +932,29 @@ mod tests {
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 500"));
         assert!(format!("{}", err).contains("https://api.github.com"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_rate_limit_names_provider_token() {
+        let action = DependencyName::from("o/r");
+        let resp = || {
+            Response::from(
+                http::Response::builder()
+                    .status(StatusCode::TOO_MANY_REQUESTS)
+                    .body("")
+                    .unwrap(),
+            )
+        };
+
+        let mut gitlab = ReqwestGitLabProvider::new("https://gitlab.com".into(), None).unwrap();
+        gitlab.base.has_token = false;
+        let err = gitlab.base.handle_error(resp(), &action);
+        assert!(format!("{}", err).contains("Set GITLAB_TOKEN"));
+
+        let mut forgejo = ReqwestForgejoProvider::new("https://codeberg.org".into(), None).unwrap();
+        forgejo.base.has_token = false;
+        let err = forgejo.base.handle_error(resp(), &action);
+        assert!(format!("{}", err).contains("Set FORGEJO_TOKEN"));
     }
 
     #[tokio::test]
@@ -1578,6 +1673,7 @@ mod tests {
 
         // Test 403 with x-ratelimit-reset
         let mut builder = http::Response::builder().status(403);
+        builder = builder.header("x-ratelimit-remaining", "0");
         builder = builder.header("x-ratelimit-reset", "1718352000"); // 2024-06-14 08:00:00 UTC
         let resp = builder.body("").unwrap();
         let reqwest_resp = reqwest::Response::from(resp);
