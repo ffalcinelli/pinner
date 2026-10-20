@@ -4,7 +4,14 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # Major bumps stay as individual PRs since they may need code changes.
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

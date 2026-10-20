@@ -5,6 +5,10 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  schedule:
+    # Daily advisory check, so new RustSec advisories surface on main
+    # before they show up as failures on unrelated PRs.
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -14,6 +18,7 @@ env:
 
 jobs:
   build_and_test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,13 +44,10 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
-          tool: cargo-audit,cargo-tarpaulin,cargo-deny
-
-      - name: Run cargo-audit
-        run: cargo audit
+          tool: cargo-tarpaulin,cargo-deny
 
       - name: Run cargo-deny
-        run: cargo deny check
+        run: cargo deny check bans licenses sources
 
       - name: Run cargo-tarpaulin
         run: cargo tarpaulin --out Xml
@@ -56,3 +58,21 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: cobertura.xml
           fail_ci_if_error: true
+
+  advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Install tools
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+        with:
+          tool: cargo-deny
+
+      - name: Check RustSec advisories
+        run: cargo deny check advisories
