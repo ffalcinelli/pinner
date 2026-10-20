@@ -39,6 +39,11 @@ cargo fmt -- --check
 *   **Pre-commit hook**: Checks/formats code with `cargo fmt`.
 *   **Pre-push hook**: Executes `cargo clippy` and `cargo audit` to detect dependency vulnerabilities.
 
+### Continuous Integration (`.github/workflows/ci.yml`)
+*   **`build_and_test`**: Runs formatting, clippy, tests, `cargo deny check bans licenses sources`, and tarpaulin coverage on every push and PR to `main`.
+*   **`advisories`**: Runs `cargo deny check advisories` against the RustSec database as a separate job, on every push and PR and on a daily schedule. A newly published advisory fails only this job, so test and coverage results still report. Ignored advisories live in `deny.toml` (and `.cargo/audit.toml` for the local `cargo audit` hook); keep both lists in sync.
+*   **Dependabot**: Minor and patch Cargo updates are grouped into one weekly PR, and GitHub Actions updates into another. Major Cargo bumps open their own PRs.
+
 ---
 
 ## Release Automation (`scripts/release.sh`)
