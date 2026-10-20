@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- 🧭 **Provider detection no longer matches inside unrelated names**: The CI provider was picked by searching the whole path for substrings such as `k8s` or `tekton`, so a file in a directory like `/tmp/.tmpAk8sZq/` was treated as a Kubernetes manifest and its `uses:` references were silently skipped. Patterns now match whole path components, or whole words within a component (`k8s-manifests/` and `buildspec-prod.yml` still match).
+
 ## [0.0.19] - 2026-10-10
 
 ### Fixed

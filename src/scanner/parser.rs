@@ -10,8 +10,18 @@ impl CiProvider {
     /// Detects the CI provider based on the file path.
     ///
     /// This heuristic matches standard CI/CD directory structures (e.g., `.github/workflows`).
+    ///
+    /// Patterns match whole path components (`.github/workflows`) or whole words within
+    /// a component (`k8s` matches `k8s-manifests/` but not `.tmpak8sz/`), so unrelated
+    /// directory names elsewhere in the path cannot change the detected provider.
     pub fn from_path(path: &Path) -> Self {
-        let path_str = path.to_string_lossy().to_lowercase();
+        let components: Vec<String> = path
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => Some(s.to_string_lossy().to_lowercase()),
+                _ => None,
+            })
+            .collect();
         let mappings = [
             (".github/workflows", CiProvider::GitHub),
             (".github/actions", CiProvider::GitHub),
@@ -28,7 +38,15 @@ impl CiProvider {
         ];
 
         for (pattern, provider) in mappings {
-            if path_str.contains(pattern) {
+            let parts: Vec<&str> = pattern.split('/').collect();
+            let matched = if parts.len() > 1 {
+                components
+                    .windows(parts.len())
+                    .any(|w| w.iter().zip(&parts).all(|(c, p)| c == p))
+            } else {
+                components.iter().any(|c| contains_word(c, pattern))
+            };
+            if matched {
                 return provider;
             }
         }
@@ -83,6 +101,17 @@ impl CiProvider {
             CiProvider::Unknown => true,
         }
     }
+}
+
+/// Returns true if `pattern` occurs in `component` bounded on both sides by the
+/// start/end of the component or by a `-`, `_` or `.` separator.
+fn contains_word(component: &str, pattern: &str) -> bool {
+    let is_sep = |c: char| matches!(c, '-' | '_' | '.');
+    component.match_indices(pattern).any(|(i, m)| {
+        let before = component[..i].chars().next_back();
+        let after = component[i + m.len()..].chars().next();
+        before.map_or(true, is_sep) && after.map_or(true, is_sep)
+    })
 }
 
 /// Tree-sitter query to identify potential dependency nodes in YAML.
@@ -915,6 +944,31 @@ jobs:
             CiProvider::from_path(Path::new("pod.yaml")),
             CiProvider::Kubernetes
         );
+    }
+
+    #[test]
+    fn test_ci_provider_from_path_matches_whole_words() {
+        let cases = [
+            // Patterns inside unrelated names (e.g. random temp dirs) must not match.
+            ("/tmp/.tmpAk8sZq/f.yml", CiProvider::Unknown),
+            ("/tmp/protekton2/f.yml", CiProvider::Unknown),
+            ("/srv/mybuildspecs/f.yml", CiProvider::Unknown),
+            // Whole words within a component still match.
+            ("k8s-manifests/app.yaml", CiProvider::Kubernetes),
+            ("deploy/my_k8s/app.yaml", CiProvider::Kubernetes),
+            ("K8S/app.yaml", CiProvider::Kubernetes),
+            ("tekton.pipeline.yaml", CiProvider::Tekton),
+            ("buildspec-prod.yml", CiProvider::AwsCodeBuild),
+            ("azure-pipelines-ci.yml", CiProvider::AzureDevOps),
+            (".gitlab-ci.yaml", CiProvider::GitLab),
+            // Multi-component patterns match consecutive components anywhere in the path.
+            ("/home/u/repo/.github/workflows/ci.yml", CiProvider::GitHub),
+            ("repo/.forgejo/workflows/ci.yml", CiProvider::Forgejo),
+            ("repo/.github/ci.yml", CiProvider::Unknown),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(CiProvider::from_path(Path::new(path)), expected, "{path}");
+        }
     }
 
     #[test]

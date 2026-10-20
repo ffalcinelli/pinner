@@ -65,7 +65,12 @@ The `USES_QUERY` static query captures:
 
 ## Provider-Specific Parsing Rules
 
-The system determines the CI provider via the file path (e.g., `.github/workflows` matches `CiProvider::GitHub`). Each provider activates parsing rules for specific YAML keys:
+The system determines the CI provider via the file path (e.g., `.github/workflows` matches `CiProvider::GitHub`). Patterns are checked in table order and match whole path components, not raw substrings:
+
+* Multi-component patterns (`.github/workflows`) must appear as consecutive components anywhere in the path.
+* Single patterns (`k8s`, `buildspec`, `.gitlab-ci`) must appear as a whole word within a component, bounded by the component's start/end or a `-`, `_` or `.` separator. So `k8s-manifests/` and `buildspec-prod.yml` match, while a temp dir like `.tmpAk8sZq/` does not.
+
+Each provider activates parsing rules for specific YAML keys:
 
 | CI Provider | Match Path Pattern | Supported Keys | Resolution Target Type |
 | :--- | :--- | :--- | :--- |
