@@ -109,16 +109,31 @@ fn test_cli_unhandled_error_styling() {
         .arg("non_existent_directory_for_test")
         .arg("verify");
 
-    // We expect it to fail and print our stylized error: "error: Failed to run pinner"
+    // We expect it to fail and print our stylized error and hint.
     // Note that colored output might include ANSI escape codes, or it might be stripped
     // by assert_cmd depending on the environment. We check for the presence of the
-    // lowercase "error:" prefix and the error message.
+    // lowercase "error:" and "hint:" prefixes and the messages.
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("error:"))
         .stderr(predicate::str::contains(
             "Path not found: non_existent_directory_for_test",
-        ));
+        ))
+        .stderr(predicate::str::contains("hint:"))
+        .stderr(predicate::str::contains("specified path exists"));
+}
+
+#[test]
+fn test_cli_offline_error_hint() {
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .env("PINNER_OFFLINE", "true")
+        .arg("scan");
+
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot run scan in offline mode"))
+        .stderr(predicate::str::contains("PINNER_OFFLINE=false"));
 }
 
 #[test]

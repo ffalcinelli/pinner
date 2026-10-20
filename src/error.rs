@@ -53,6 +53,33 @@ impl PinnerError {
         matches!(self, PinnerError::PathNotFound(_))
     }
 
+    /// Returns an actionable suggestion to show the user alongside the error, if any.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            PinnerError::PathNotFound(path) => {
+                let path = std::path::Path::new(path);
+                if crate::DEFAULT_WORKFLOW_PATHS
+                    .iter()
+                    .any(|d| path == std::path::Path::new(d))
+                {
+                    Some("No CI configuration found. Run pinner from the repository root, or pass the files to process with `-w <path>`.")
+                } else {
+                    Some("Ensure the specified path exists and is accessible.")
+                }
+            }
+            PinnerError::Config(_) => {
+                Some("Check .pinner.toml, PINNER_* environment variables and command-line flags.")
+            }
+            PinnerError::Authentication(_) => Some(
+                "Check that the token is valid, not expired, and authorized for the repository (e.g. SSO approval).",
+            ),
+            PinnerError::Offline(_) => Some(
+                "Offline mode is enabled (via --offline, PINNER_OFFLINE or `offline` in .pinner.toml). Set PINNER_OFFLINE=false to go online; an online run also fills the cache for later offline runs.",
+            ),
+            _ => None,
+        }
+    }
+
     /// Returns true if the error should stop the entire process (e.g., rate limits).
     ///
     /// Some errors (like a 404 for a single repository) are considered non-fatal
@@ -124,6 +151,36 @@ mod tests {
         assert!(PinnerError::Unsupported("".into()).is_fatal());
         assert!(PinnerError::Offline("".into()).is_fatal());
         assert!(!PinnerError::Registry("".into()).is_fatal());
+    }
+
+    #[test]
+    fn test_error_hint() {
+        let default_hint = PinnerError::PathNotFound(".github/workflows".into()).hint();
+        assert!(default_hint.unwrap().contains("repository root"));
+        assert_eq!(
+            PinnerError::PathNotFound(".forgejo/workflows".into()).hint(),
+            default_hint
+        );
+        assert_eq!(
+            PinnerError::PathNotFound("action.yml".into()).hint(),
+            default_hint
+        );
+
+        // A custom path that merely contains a default path is still a custom path.
+        let custom_hint = PinnerError::PathNotFound("sub/.github/workflows".into()).hint();
+        assert!(custom_hint.unwrap().contains("specified path exists"));
+
+        assert!(PinnerError::Config("".into()).hint().is_some());
+        assert!(PinnerError::Authentication("".into()).hint().is_some());
+        assert!(PinnerError::Offline("".into())
+            .hint()
+            .unwrap()
+            .contains("PINNER_OFFLINE=false"));
+
+        // Rate-limit messages already name the provider's token variable.
+        assert!(PinnerError::RateLimit("".into()).hint().is_none());
+        assert!(PinnerError::VerificationFailed("".into()).hint().is_none());
+        assert!(PinnerError::Api("".into()).hint().is_none());
     }
 
     #[tokio::test]
