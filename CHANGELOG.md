@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-10-21
+
 ### Security
 - 🔒 **`pr-create` commits only what pinner changed**: It used to stage every path in `git status`, so unrelated local edits and untracked files (such as `.env`) could be committed and force-pushed. It now refuses to run when tracked files have uncommitted changes, stages only tracked files, and pushes with `--force-with-lease`. Credentials embedded in the remote URL are no longer shown in error messages.
+- 🔒 **`rustls` 0.23.46**: Addresses RUSTSEC-2026-0346 through RUSTSEC-2026-0349.
 
 ### Changed
 - ✋ **`set` validates its input**: The hash must be a full 40-character commit SHA or a `sha256:` image digest; anything else used to be written into the workflow as-is. Naming an action that does not occur in the scanned files is now an error instead of a silent success.
 - 🦀 **Minimum supported Rust version is 1.90**: The declared 1.80 was out of date, since current dependencies need 1.90. CI now checks the build on the minimum version.
 - 💡 **Clearer errors**: Error hints now name every place a token can be set (flag, environment variable, `.pinner.toml`). The "no CI configuration found" hint appears only when you did not name the paths yourself. A failed interactive prompt suggests `--yes`, and git failures are reported as fatal git errors.
+- 📦 **Releases publish to crates.io automatically**: The release workflow publishes with crates.io trusted publishing (OIDC), so no long-lived registry token is stored.
+- 🛠️ **Dependency Bumps**: Upgraded `tokio` to `1.53.3`, `tree-sitter` to `0.27.1`, `serde_json` to `1.0.154`, and updated CI actions and toolchains.
 
 ### Fixed
 - 🩹 **Overlapping paths no longer corrupt files**: Passing a directory and a file inside it (`-w wf -w wf/ci.yml`), or two spellings of one directory, scanned the file twice and wrote mangled references such as `@<sha> # v3 # <sha> # v3`. Each file is now scanned once, and the patcher skips any update overlapping one it already applied.
