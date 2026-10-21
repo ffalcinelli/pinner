@@ -317,6 +317,11 @@ fn is_rate_limited(status: reqwest::StatusCode, headers: &HeaderMap) -> bool {
     }
 }
 
+/// The longest `RateLimitMiddleware` waits before retrying a rate-limited request.
+const MAX_RATE_LIMIT_WAIT_SECS: u64 = 15;
+
+/// Retries rate-limited requests (three attempts in total), waiting as long as `retry-after`
+/// or `x-ratelimit-reset` asks when that fits within `MAX_RATE_LIMIT_WAIT_SECS`.
 pub struct RateLimitMiddleware;
 
 #[async_trait]
@@ -363,7 +368,12 @@ impl reqwest_middleware::Middleware for RateLimitMiddleware {
                         }
                     }
 
-                    let delay_secs = std::cmp::min(delay_secs, 15);
+                    // A reset further away than we are willing to wait (e.g. an exhausted
+                    // hourly quota) will not clear between attempts: fail fast so the
+                    // caller can report when the limit resets.
+                    if delay_secs > MAX_RATE_LIMIT_WAIT_SECS {
+                        return res;
+                    }
 
                     tracing::warn!(
                         "Hit rate limit or abuse detection (HTTP {}). Retrying in {} seconds (attempt {}/3)...",
@@ -1894,6 +1904,31 @@ mod tests {
 
         let resp = client.get(server.url()).send().await.unwrap();
         assert_eq!(resp.status().as_u16(), 403);
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_middleware_distant_reset_fails_fast() {
+        let mut server = mockito::Server::new_async().await;
+        let reset = (chrono::Utc::now().timestamp() + 3600).to_string();
+        let m = server
+            .mock("GET", "/")
+            .with_status(403)
+            .with_header("x-ratelimit-remaining", "0")
+            .with_header("x-ratelimit-reset", &reset)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let reqwest_client = reqwest::Client::new();
+        let client = reqwest_middleware::ClientBuilder::new(reqwest_client)
+            .with(RateLimitMiddleware)
+            .build();
+
+        let start = std::time::Instant::now();
+        let resp = client.get(server.url()).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 403);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
         m.assert_async().await;
     }
 

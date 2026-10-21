@@ -1675,7 +1675,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "serde_yaml",
  "serial_test",
  "similar 3.2.0",
  "tempfile",

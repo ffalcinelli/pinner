@@ -48,6 +48,9 @@ pub enum PinnerError {
     /// An interactive prompt could not be shown (e.g. no terminal attached).
     #[error("Interactive prompt failed: {0}")]
     Prompt(String),
+    /// A git command failed, or the repository is not in a usable state.
+    #[error("Git error: {0}")]
+    Git(String),
 }
 
 impl PinnerError {
@@ -93,6 +96,7 @@ impl PinnerError {
             PinnerError::Unsupported(_) => true,
             PinnerError::Offline(_) => true,
             PinnerError::Prompt(_) => true,
+            PinnerError::Git(_) => true,
             // Generic API errors (like 404) or Registry errors for a single image are not fatal
             PinnerError::Api(_) => false,
             PinnerError::Registry(_) => false,
@@ -148,6 +152,7 @@ mod tests {
         assert!(PinnerError::Unsupported("".into()).is_fatal());
         assert!(PinnerError::Offline("".into()).is_fatal());
         assert!(PinnerError::Prompt("".into()).is_fatal());
+        assert!(PinnerError::Git("".into()).is_fatal());
         assert!(!PinnerError::Registry("".into()).is_fatal());
     }
 

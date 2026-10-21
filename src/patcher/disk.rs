@@ -53,6 +53,8 @@ impl Patcher {
     /// Crucially, it sorts updates by their start offset in reverse order.
     /// This ensures that applying an update (which might change the string length)
     /// does not invalidate the byte offsets of subsequent updates in the same file.
+    /// Updates overlapping one already applied (e.g. duplicates) are skipped, and the
+    /// patches are returned sorted by path.
     // PERF: By taking ownership of `file_contents`, we can `remove` strings instead of cloning them,
     // avoiding massive heap allocations for large file contents.
     pub fn calculate_patches(
@@ -92,8 +94,20 @@ impl Patcher {
             // Sort in reverse order of start byte to keep offsets valid during mutation.
             updates.sort_by_key(|a| std::cmp::Reverse(a.task.start));
 
+            // Start of the last update applied; an update reaching past it overlaps it.
+            let mut applied_start = usize::MAX;
             for res in updates {
+                if res.task.end > applied_start {
+                    tracing::warn!(
+                        "Skipping overlapping update for {} at {}:{}",
+                        res.action,
+                        path.display(),
+                        res.task.line
+                    );
+                    continue;
+                }
                 if let Some((old, new)) = apply_update(&mut content, &res)? {
+                    applied_start = res.task.start;
                     changes.push((old, new));
                     applied_results.push(res);
                 }
@@ -110,6 +124,8 @@ impl Patcher {
             }
         }
 
+        // Present files in a stable order regardless of map iteration order.
+        patches.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(patches)
     }
 
@@ -318,6 +334,75 @@ mod tests {
         assert_eq!(patches.len(), 1);
         assert!(patches[0].new_content.contains("a/b@sha1 # v1"));
         assert!(patches[0].new_content.contains("c/d@sha2 # v2"));
+    }
+
+    #[test]
+    fn test_calculate_patches_skips_overlapping_updates() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, false);
+
+        let path = PathBuf::from("ci.yml");
+        let mut file_contents = HashMap::new();
+        file_contents.insert(path.clone(), "uses: a/b@v1\n".to_string());
+
+        let res = UpdateResult {
+            task: UpdateTask {
+                path: path.clone(),
+                start: 6,
+                end: 12,
+                action: "a/b".into(),
+                current_tag: Some("v1".to_string()),
+                key: "uses".to_string(),
+                ..Default::default()
+            },
+            action: "a/b".into(),
+            path: path.clone(),
+            old_tag: Some("v1".to_string()),
+            new_sha: DependencyRef::GitSha("sha1".to_string()),
+            new_tag: Some("v1".to_string()),
+        };
+
+        let patches = patcher
+            .calculate_patches(vec![res.clone(), res], file_contents)
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].new_content, "uses: a/b@sha1 # v1\n");
+        assert_eq!(patches[0].changes.len(), 1);
+    }
+
+    #[test]
+    fn test_calculate_patches_sorted_by_path() {
+        let formatter = Formatter::new(OutputFormat::Text, false, vec![], vec![], true);
+        let ui = Arc::new(TestUi { response: true });
+        let patcher = Patcher::new(formatter, ui, false);
+
+        let mut file_contents = HashMap::new();
+        let mut results = Vec::new();
+        for name in ["c.yml", "a.yml", "b.yml"] {
+            let path = PathBuf::from(name);
+            file_contents.insert(path.clone(), "uses: a/b@v1".to_string());
+            results.push(UpdateResult {
+                task: UpdateTask {
+                    path: path.clone(),
+                    start: 6,
+                    end: 12,
+                    action: "a/b".into(),
+                    current_tag: Some("v1".to_string()),
+                    key: "uses".to_string(),
+                    ..Default::default()
+                },
+                action: "a/b".into(),
+                path,
+                old_tag: Some("v1".to_string()),
+                new_sha: DependencyRef::GitSha("sha1".to_string()),
+                new_tag: Some("v1".to_string()),
+            });
+        }
+
+        let patches = patcher.calculate_patches(results, file_contents).unwrap();
+        let paths: Vec<_> = patches.iter().map(|p| p.path.to_str().unwrap()).collect();
+        assert_eq!(paths, ["a.yml", "b.yml", "c.yml"]);
     }
 
     #[test]

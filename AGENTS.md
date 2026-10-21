@@ -39,7 +39,7 @@ To get deep contextual understanding of specific codebase components, refer to t
 ---
 
 ## 2. Technology Stack & Key Dependencies
-- **Language**: Rust (2021 Edition, MSRV 1.80)
+- **Language**: Rust (2021 Edition, MSRV 1.90)
 - **CLI Framework**: `clap` (v4 with derive)
 - **Runtime**: `tokio` (Async orchestration) + `rayon` (Data-parallel AST parsing)
 - **Syntax Parsing**: `tree-sitter` and `tree-sitter-yaml`

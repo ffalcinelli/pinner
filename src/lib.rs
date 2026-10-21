@@ -184,7 +184,15 @@ pub async fn run_with_config<G: RemoteProvider + 'static, R: RegistryProvider + 
         Commands::ExportSbom => pipeline.export_sbom(&paths).await?,
         Commands::Scan { .. } => pipeline.scan(&paths, cli.yes).await?,
         Commands::PrCreate { message, branch } => {
-            pipeline.pr_create(&paths, &branch, &message).await?;
+            let remote = crate::pipeline::pr::PrRemote {
+                github_url: cli.github_url.clone(),
+                gitlab_url: cli.gitlab_url.clone(),
+                github_token: cli.github_token.clone(),
+                gitlab_token: cli.gitlab_token.clone(),
+            };
+            pipeline
+                .pr_create(&paths, &branch, &message, &remote)
+                .await?;
         }
         Commands::GenerateCompletion { .. } => {}
     }
@@ -287,26 +295,28 @@ mod tests {
             .set(
                 std::slice::from_ref(&f),
                 "actions/checkout",
-                "newhash",
+                "1111111111111111111111111111111111111111",
                 None,
             )
             .await
             .unwrap();
         let content = fs::read_to_string(&f).unwrap();
-        assert!(content.contains("actions/checkout@newhash # v3"));
+        assert!(content.contains("actions/checkout@1111111111111111111111111111111111111111 # v3"));
 
         // Test with explicit tag override
         pipeline
             .set(
                 std::slice::from_ref(&f),
                 "actions/checkout",
-                "anotherhash",
+                "2222222222222222222222222222222222222222",
                 Some("v4.0.0"),
             )
             .await
             .unwrap();
         let content2 = fs::read_to_string(&f).unwrap();
-        assert!(content2.contains("actions/checkout@anotherhash # v4.0.0"));
+        assert!(
+            content2.contains("actions/checkout@2222222222222222222222222222222222222222 # v4.0.0")
+        );
     }
 
     #[tokio::test]

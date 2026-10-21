@@ -174,13 +174,82 @@ fn test_cli_set_with_tag() {
         .arg("--yes")
         .arg("set")
         .arg("actions/checkout")
-        .arg("abc123hash")
+        .arg("8f4b7f84864484a7bf31766abe9204da3cbe65b3")
         .arg("--tag")
         .arg("v4.5.6");
     cmd.assert().success();
 
     let content = fs::read_to_string(&wf).unwrap();
-    assert!(content.contains("actions/checkout@abc123hash # v4.5.6"));
+    assert!(content.contains("actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4.5.6"));
+}
+
+#[test]
+fn test_cli_set_overlapping_workflow_paths() {
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3\n").unwrap();
+
+    // The directory and a file inside it both name ci.yml; it must be patched once.
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .arg("-w")
+        .arg(dir.path())
+        .arg("-w")
+        .arg(&wf)
+        .arg("--yes")
+        .arg("set")
+        .arg("actions/checkout")
+        .arg("8f4b7f84864484a7bf31766abe9204da3cbe65b3");
+    cmd.assert().success();
+
+    let content = fs::read_to_string(&wf).unwrap();
+    assert_eq!(
+        content,
+        "uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v3\n"
+    );
+}
+
+#[test]
+fn test_cli_set_rejects_invalid_hash() {
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .arg("-w")
+        .arg(&wf)
+        .arg("--yes")
+        .arg("set")
+        .arg("actions/checkout")
+        .arg("not a sha!");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("not a full commit SHA"));
+
+    assert_eq!(
+        fs::read_to_string(&wf).unwrap(),
+        "uses: actions/checkout@v3\n"
+    );
+}
+
+#[test]
+fn test_cli_set_unknown_action_fails() {
+    let dir = tempdir().unwrap();
+    let wf = dir.path().join("ci.yml");
+    fs::write(&wf, "uses: actions/checkout@v3\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .arg("-w")
+        .arg(&wf)
+        .arg("--yes")
+        .arg("set")
+        .arg("actions/nope")
+        .arg("8f4b7f84864484a7bf31766abe9204da3cbe65b3");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("No occurrences of actions/nope"));
 }
 
 #[test]

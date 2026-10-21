@@ -229,6 +229,9 @@ impl Pipeline {
     }
 
     /// Forcibly sets a specific action to a provided hash across all files, optionally overriding the tag comment.
+    ///
+    /// Fails if `action` does not occur in `paths`, or if `hash` is not an immutable
+    /// reference (a full commit SHA or OCI digest) for every occurrence.
     pub async fn set(
         &self,
         paths: &[PathBuf],
@@ -237,23 +240,40 @@ impl Pipeline {
         tag_override: Option<&str>,
     ) -> Result<(), PinnerError> {
         let (tasks, file_contents) = self.scanner.collect_tasks(paths).await?;
-        let mut results = Vec::new();
+        let matching: Vec<_> = tasks.into_iter().filter(|t| t.action.0 == action).collect();
 
-        for task in tasks {
-            if task.action.0 == action {
-                let new_tag = tag_override
-                    .map(String::from)
-                    .or_else(|| task.logical_tag());
-                results.push(crate::core::UpdateResult {
-                    action: task.action.clone(),
-                    path: task.path.clone(),
-                    old_tag: task.current_tag.clone(),
-                    task: task.clone(),
-                    new_sha: crate::core::DependencyRef::from(hash.to_string()),
-                    new_tag,
-                });
-            }
+        if matching.is_empty() {
+            return Err(PinnerError::Config(format!(
+                "No occurrences of {} found in the scanned files (the name must match exactly, e.g. actions/checkout)",
+                action
+            )));
         }
+        if let Some(task) = matching
+            .iter()
+            .find(|t| !crate::core::is_immutable_ref(hash, &t.key))
+        {
+            return Err(PinnerError::Config(format!(
+                "{} is not a full commit SHA (40 hex characters) or image digest (sha256:<64 hex characters>), as required for {} at {}:{}",
+                hash,
+                action,
+                task.path.display(),
+                task.line
+            )));
+        }
+
+        let results = matching
+            .into_iter()
+            .map(|task| crate::core::UpdateResult {
+                action: task.action.clone(),
+                path: task.path.clone(),
+                old_tag: task.current_tag.clone(),
+                new_sha: crate::core::DependencyRef::from(hash.to_string()),
+                new_tag: tag_override
+                    .map(String::from)
+                    .or_else(|| task.logical_tag()),
+                task,
+            })
+            .collect();
 
         self.patcher.apply_changes(results, file_contents).await
     }
@@ -334,6 +354,57 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    fn set_pipeline() -> Pipeline {
+        let resolver = Resolver::new(
+            Arc::new(MockRemoteProvider::new()),
+            Arc::new(MockRegistryProvider::new()),
+            Arc::new(crate::resolver::OsvClient::new(
+                None,
+                false,
+                Duration::from_secs(0),
+            )),
+            UpgradeStrategy::Latest,
+            1,
+        );
+        let patcher = Patcher::new(
+            Formatter::new(crate::cli::OutputFormat::Text, true, vec![], vec![], true),
+            Arc::new(crate::patcher::ui::TestUi { response: true }),
+            false,
+        );
+        Pipeline::new(Scanner::new(vec![]), resolver, patcher)
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_set_rejects_invalid_hash_and_unknown_action() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("f.yml");
+        let original = "uses: actions/checkout@v3\nimage: alpine:3.20\n";
+        fs::write(&f, original).unwrap();
+        let pipeline = set_pipeline();
+        let paths = std::slice::from_ref(&f);
+
+        let err = pipeline
+            .set(paths, "actions/checkout", "not-a-sha", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PinnerError::Config(_)));
+        assert!(err.to_string().contains("not a full commit SHA"));
+
+        // A truncated SHA is not accepted either.
+        assert!(pipeline
+            .set(paths, "actions/checkout", "1111111", None)
+            .await
+            .is_err());
+
+        let err = pipeline
+            .set(paths, "actions/nope", &"1".repeat(40), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("No occurrences of actions/nope"));
+
+        assert_eq!(fs::read_to_string(&f).unwrap(), original);
+    }
 
     #[tokio::test]
     async fn test_pipeline_verify_github_format() {

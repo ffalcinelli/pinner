@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- 🔒 **`pr-create` commits only what pinner changed**: It used to stage every path in `git status`, so unrelated local edits and untracked files (such as `.env`) could be committed and force-pushed. It now refuses to run when tracked files have uncommitted changes, stages only tracked files, and pushes with `--force-with-lease`. Credentials embedded in the remote URL are no longer shown in error messages.
+
+### Changed
+- ✋ **`set` validates its input**: The hash must be a full 40-character commit SHA or a `sha256:` image digest; anything else used to be written into the workflow as-is. Naming an action that does not occur in the scanned files is now an error instead of a silent success.
+- 🦀 **Minimum supported Rust version is 1.90**: The declared 1.80 was out of date, since current dependencies need 1.90. CI now checks the build on the minimum version.
+- 💡 **Clearer errors**: Error hints now name every place a token can be set (flag, environment variable, `.pinner.toml`). The "no CI configuration found" hint appears only when you did not name the paths yourself. A failed interactive prompt suggests `--yes`, and git failures are reported as fatal git errors.
+
 ### Fixed
+- 🩹 **Overlapping paths no longer corrupt files**: Passing a directory and a file inside it (`-w wf -w wf/ci.yml`), or two spellings of one directory, scanned the file twice and wrote mangled references such as `@<sha> # v3 # <sha> # v3`. Each file is now scanned once, and the patcher skips any update overlapping one it already applied.
+- 🔢 **Stable output order**: Files are scanned and patched in path order, so diffs, prompts and `verify` reports are identical from run to run.
+- ⏱️ **Rate limits**: GitHub secondary rate limits (a `403` that only says so in its body) are reported as rate limits instead of authentication failures. Permission `403`s are no longer retried. When the limit resets more than 15 seconds away, pinner reports the reset time at once instead of retrying in vain. A blank token (e.g. an unset CI secret) counts as no token.
+- 🔀 **`pr-create` honours your configuration**: It reads tokens from `--github-token`/`--gitlab-token` and `.pinner.toml` as well as the environment. It uses `--gitlab-url` the same way as the rest of pinner (`/api/v4` is appended), so self-hosted GitLab works. GitHub Enterprise and self-hosted GitLab remotes are recognized from the configured API URL.
 - 🧭 **Provider detection no longer matches inside unrelated names**: The CI provider was picked by searching the whole path for substrings such as `k8s` or `tekton`, so a file in a directory like `/tmp/.tmpAk8sZq/` was treated as a Kubernetes manifest and its `uses:` references were silently skipped. Patterns now match whole path components, or whole words within a component (`k8s-manifests/` and `buildspec-prod.yml` still match).
 
 ## [0.0.19] - 2026-10-10
