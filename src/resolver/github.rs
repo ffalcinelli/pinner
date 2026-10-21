@@ -43,7 +43,7 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(DependencyRef::from(res.sha))
         } else {
-            Err(self.base.handle_error(resp, action))
+            Err(self.base.handle_error(resp, action).await)
         }
     }
 
@@ -72,7 +72,7 @@ impl RemoteProvider for ReqwestGithubProvider {
             let default_branch = self.get_default_branch(action, key).await?;
             Ok(default_branch.0)
         } else {
-            Err(self.base.handle_error(resp, action))
+            Err(self.base.handle_error(resp, action).await)
         }
     }
 
@@ -103,7 +103,7 @@ impl RemoteProvider for ReqwestGithubProvider {
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(tags.into_iter().map(|t| t.name).collect())
         } else {
-            Err(self.base.handle_error(resp, action))
+            Err(self.base.handle_error(resp, action).await)
         }
     }
 

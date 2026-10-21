@@ -10,7 +10,8 @@ The scanner recursively walks target paths looking for workflow configurations. 
 
 1.  **Ignore Patterns**: Uses the `ignore` crate (specifically `WalkBuilder` and `OverrideBuilder`) to respect `.gitignore` rules and process custom ignore lists configured in `.pinner.toml` or CLI args.
 2.  **YAML File Filtering**: Filters files matching `.yml` or `.yaml` extensions.
-3.  **Parallel Parsing via Rayon**:
+3.  **Deduplication & Stable Order**: Each file is queued once, by canonical path, even when inputs overlap (a directory plus a file inside it, or `wf` and `./wf`). The first spelling is the one kept. Parsing the same file twice would yield duplicate tasks at the same offsets. Traversal is sorted by file name, so tasks, reports and diffs come out in the same order on every run.
+4.  **Parallel Parsing via Rayon**:
     *   To keep the async tokio runtime responsive, directory walking and parsing run inside a `tokio::task::spawn_blocking` pool.
     *   Paths are parsed concurrently using `Rayon` (`into_par_iter`).
     *   **Thread-Local Parsers**: Tree-Sitter parsers are not thread-safe. To prevent expensive instantiation and lock contention, a thread-local parser (`static PARSER: RefCell<TSParser>`) is maintained and reset for each file.

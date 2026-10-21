@@ -301,6 +301,27 @@ impl<T: RemoteProvider> RemoteProvider for CachedProvider<T> {
     }
 }
 
+/// Returns true if the status and headers mark the response as rate limited:
+/// a 429, or a 403 with an exhausted quota or a `retry-after` header. Other
+/// 403s are permission errors and are not worth retrying.
+fn is_rate_limited(status: reqwest::StatusCode, headers: &HeaderMap) -> bool {
+    match status.as_u16() {
+        429 => true,
+        403 => {
+            headers.contains_key("retry-after")
+                || ["x-ratelimit-remaining", "ratelimit-remaining"]
+                    .iter()
+                    .any(|h| headers.get(*h).is_some_and(|v| v == "0"))
+        }
+        _ => false,
+    }
+}
+
+/// The longest `RateLimitMiddleware` waits before retrying a rate-limited request.
+const MAX_RATE_LIMIT_WAIT_SECS: u64 = 15;
+
+/// Retries rate-limited requests (three attempts in total), waiting as long as `retry-after`
+/// or `x-ratelimit-reset` asks when that fits within `MAX_RATE_LIMIT_WAIT_SECS`.
 pub struct RateLimitMiddleware;
 
 #[async_trait]
@@ -321,7 +342,7 @@ impl reqwest_middleware::Middleware for RateLimitMiddleware {
 
             let res = next.clone().run(req_to_send, extensions).await;
             match &res {
-                Ok(resp) if resp.status().as_u16() == 403 || resp.status().as_u16() == 429 => {
+                Ok(resp) if is_rate_limited(resp.status(), resp.headers()) => {
                     attempts += 1;
                     if attempts >= 3 {
                         return res;
@@ -347,7 +368,12 @@ impl reqwest_middleware::Middleware for RateLimitMiddleware {
                         }
                     }
 
-                    let delay_secs = std::cmp::min(delay_secs, 15);
+                    // A reset further away than we are willing to wait (e.g. an exhausted
+                    // hourly quota) will not clear between attempts: fail fast so the
+                    // caller can report when the limit resets.
+                    if delay_secs > MAX_RATE_LIMIT_WAIT_SECS {
+                        return res;
+                    }
 
                     tracing::warn!(
                         "Hit rate limit or abuse detection (HTTP {}). Retrying in {} seconds (attempt {}/3)...",
@@ -392,9 +418,12 @@ impl BaseHttpClient {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static("pinner"));
 
-        // Precedence: explicit token > environment variable.
-        let token = token.or_else(|| std::env::var(env_var).ok());
-        let has_token = token.is_some();
+        // Precedence: explicit token > environment variable. Blank tokens (e.g. an
+        // unset CI secret) count as no token.
+        let token = token
+            .or_else(|| std::env::var(env_var).ok())
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
 
         if let Some(t) = token {
             let auth_val = if token_prefix.is_empty() {
@@ -402,10 +431,17 @@ impl BaseHttpClient {
             } else {
                 format!("{} {}", token_prefix, t)
             };
-            if let Ok(auth) = HeaderValue::from_str(&auth_val) {
-                h.insert(AUTHORIZATION, auth);
+            match HeaderValue::from_str(&auth_val) {
+                Ok(auth) => {
+                    h.insert(AUTHORIZATION, auth);
+                }
+                Err(_) => tracing::warn!(
+                    "Ignoring {} token: it contains characters not allowed in an HTTP header",
+                    env_var
+                ),
             }
         }
+        let has_token = h.contains_key(AUTHORIZATION);
 
         let reqwest_client = reqwest::Client::builder()
             .default_headers(h)
@@ -427,24 +463,39 @@ impl BaseHttpClient {
         })
     }
 
+    /// Describes where the token can be configured, e.g.
+    /// `--github-token, GITHUB_TOKEN or github_token in .pinner.toml`.
+    fn token_sources(&self) -> String {
+        let key = self.token_env_var.to_lowercase();
+        format!(
+            "--{}, {} or {} in .pinner.toml",
+            key.replace('_', "-"),
+            self.token_env_var,
+            key
+        )
+    }
+
     /// Converts a `reqwest::Response` into a `PinnerError`.
     ///
-    /// It specifically detects rate limiting (429, or 403 with an exhausted quota or
-    /// `retry-after`) and attempts to parse the `x-ratelimit-reset` or `retry-after`
-    /// headers to provide helpful feedback. Other 401/403 responses are reported as
-    /// authentication failures.
-    pub fn handle_error(&self, resp: reqwest::Response, action: &DependencyName) -> PinnerError {
+    /// It specifically detects rate limiting (429, a 403 with an exhausted quota or
+    /// `retry-after`, or a 403 whose body mentions a rate limit, as GitHub's secondary
+    /// limits may send no headers) and attempts to parse the `x-ratelimit-reset` or
+    /// `retry-after` headers to provide helpful feedback. Other 401/403 responses are
+    /// reported as authentication failures.
+    pub async fn handle_error(
+        &self,
+        resp: reqwest::Response,
+        action: &DependencyName,
+    ) -> PinnerError {
         use std::fmt::Write;
         let status = resp.status();
-        let headers = resp.headers();
-        let quota_exhausted = ["x-ratelimit-remaining", "ratelimit-remaining"]
-            .iter()
-            .any(|h| headers.get(*h).is_some_and(|v| v == "0"));
-        let is_rate_limit = match status.as_u16() {
-            429 => true,
-            403 => quota_exhausted || headers.contains_key("retry-after"),
-            _ => false,
-        };
+        let headers = resp.headers().clone();
+        let is_rate_limit = is_rate_limited(status, &headers)
+            || (status.as_u16() == 403
+                && resp
+                    .text()
+                    .await
+                    .is_ok_and(|body| body.to_lowercase().contains("rate limit")));
         match status.as_u16() {
             _ if is_rate_limit => {
                 let mut msg = format!(
@@ -479,8 +530,11 @@ impl BaseHttpClient {
                 PinnerError::RateLimit(msg)
             }
             401 | 403 if self.has_token => PinnerError::Authentication(format!(
-                "HTTP {} at {}: the configured token ({}) was rejected for {}",
-                status, self.base_url, self.token_env_var, action
+                "HTTP {} at {}: the token (from {}) was rejected for {}",
+                status,
+                self.base_url,
+                self.token_sources(),
+                action
             )),
             401 | 403 => PinnerError::Authentication(format!(
                 "HTTP {} at {}: {} requires authentication. Set {}",
@@ -858,7 +912,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
         assert!(format!("{}", err).contains("https://api.github.com"));
@@ -872,7 +926,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::Authentication(_)));
         assert!(format!("{}", err).contains("requires authentication. Set GITHUB_TOKEN"));
 
@@ -883,9 +937,22 @@ mod tests {
                 .unwrap(),
         );
         provider.base.has_token = true;
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::Authentication(_)));
-        assert!(format!("{}", err).contains("configured token (GITHUB_TOKEN) was rejected"));
+        assert!(format!("{}", err).contains(
+            "token (from --github-token, GITHUB_TOKEN or github_token in .pinner.toml) was rejected"
+        ));
+
+        // GitHub secondary rate limits can be a bare 403 that says so in the body.
+        let resp = Response::from(
+            http::Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .header("x-ratelimit-remaining", "4900")
+                .body(r#"{"message":"You have exceeded a secondary rate limit."}"#)
+                .unwrap(),
+        );
+        let err = provider.base.handle_error(resp, &action).await;
+        assert!(matches!(err, PinnerError::RateLimit(_)));
 
         // With a token, the rate-limit message does not suggest setting one.
         let resp = Response::from(
@@ -894,7 +961,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(!format!("{}", err).contains("Set GITHUB_TOKEN"));
         provider.base.has_token = false;
@@ -905,7 +972,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(format!("{}", err).contains("rate limit exceeded"));
         assert!(format!("{}", err).contains("https://api.github.com"));
@@ -916,7 +983,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 404"));
         assert!(format!("{}", err).contains("o/r"));
@@ -928,10 +995,68 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(format!("{}", err).contains("HTTP 500"));
         assert!(format!("{}", err).contains("https://api.github.com"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_blank_token_is_no_token() {
+        std::env::set_var("GITLAB_TOKEN", "");
+        let base = BaseHttpClient::new("https://gitlab.com".into(), None, "Bearer", "GITLAB_TOKEN")
+            .unwrap();
+        std::env::remove_var("GITLAB_TOKEN");
+        assert!(!base.has_token);
+
+        let base = BaseHttpClient::new(
+            "https://gitlab.com".into(),
+            Some("  ".into()),
+            "Bearer",
+            "GITLAB_TOKEN",
+        )
+        .unwrap();
+        assert!(!base.has_token);
+
+        // A token that cannot be sent as a header is not sent, so it does not count.
+        let base = BaseHttpClient::new(
+            "https://gitlab.com".into(),
+            Some("bad\ntoken".into()),
+            "Bearer",
+            "GITLAB_TOKEN",
+        )
+        .unwrap();
+        assert!(!base.has_token);
+
+        let base = BaseHttpClient::new(
+            "https://gitlab.com".into(),
+            Some("token\r\n".into()),
+            "Bearer",
+            "GITLAB_TOKEN",
+        )
+        .unwrap();
+        assert!(base.has_token);
+    }
+
+    #[tokio::test]
+    async fn test_permission_403_is_not_retried() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/repos/o/r/commits/v1")
+            .with_status(403)
+            .with_header("x-ratelimit-remaining", "4999")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let provider = ReqwestGithubProvider::new(server.url(), Some("t".into())).unwrap();
+        let err = provider
+            .get_commit_sha(&DependencyName::from("o/r"), "v1", "uses")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PinnerError::Authentication(_)));
+        m.assert_async().await;
     }
 
     #[tokio::test]
@@ -948,12 +1073,12 @@ mod tests {
 
         let mut gitlab = ReqwestGitLabProvider::new("https://gitlab.com".into(), None).unwrap();
         gitlab.base.has_token = false;
-        let err = gitlab.base.handle_error(resp(), &action);
+        let err = gitlab.base.handle_error(resp(), &action).await;
         assert!(format!("{}", err).contains("Set GITLAB_TOKEN"));
 
         let mut forgejo = ReqwestForgejoProvider::new("https://codeberg.org".into(), None).unwrap();
         forgejo.base.has_token = false;
-        let err = forgejo.base.handle_error(resp(), &action);
+        let err = forgejo.base.handle_error(resp(), &action).await;
         assert!(format!("{}", err).contains("Set FORGEJO_TOKEN"));
     }
 
@@ -971,7 +1096,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(format!("{}", err).contains("Rate limit resets at 2024-06-14 14:13:20 UTC"));
 
         // Test retry-after
@@ -982,7 +1107,7 @@ mod tests {
                 .body("")
                 .unwrap(),
         );
-        let err = provider.base.handle_error(resp, &action);
+        let err = provider.base.handle_error(resp, &action).await;
         assert!(format!("{}", err).contains("Retry after 60 seconds"));
     }
 
@@ -1660,8 +1785,8 @@ mod tests {
         assert_eq!(sha2.to_string(), "bitbucketsha");
     }
 
-    #[test]
-    fn test_handle_error_rate_limit() {
+    #[tokio::test]
+    async fn test_handle_error_rate_limit() {
         let base = BaseHttpClient::new(
             "https://api.github.com".to_string(),
             None,
@@ -1678,7 +1803,7 @@ mod tests {
         let resp = builder.body("").unwrap();
         let reqwest_resp = reqwest::Response::from(resp);
 
-        let err = base.handle_error(reqwest_resp, &action);
+        let err = base.handle_error(reqwest_resp, &action).await;
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(err
             .to_string()
@@ -1690,14 +1815,14 @@ mod tests {
         let resp = builder.body("").unwrap();
         let reqwest_resp = reqwest::Response::from(resp);
 
-        let err = base.handle_error(reqwest_resp, &action);
+        let err = base.handle_error(reqwest_resp, &action).await;
         assert!(matches!(err, PinnerError::RateLimit(_)));
         assert!(err.to_string().contains("Retry after 60 seconds"));
 
         // Test generic error
         let resp = http::Response::builder().status(500).body("").unwrap();
         let reqwest_resp = reqwest::Response::from(resp);
-        let err = base.handle_error(reqwest_resp, &action);
+        let err = base.handle_error(reqwest_resp, &action).await;
         assert!(matches!(err, PinnerError::Api(_)));
         assert!(err.to_string().contains("HTTP 500"));
     }
@@ -1766,6 +1891,7 @@ mod tests {
         let m = server
             .mock("GET", "/")
             .with_status(403)
+            .with_header("x-ratelimit-remaining", "0")
             .with_header("x-ratelimit-reset", "0")
             .expect(3)
             .create_async()
@@ -1778,6 +1904,31 @@ mod tests {
 
         let resp = client.get(server.url()).send().await.unwrap();
         assert_eq!(resp.status().as_u16(), 403);
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_middleware_distant_reset_fails_fast() {
+        let mut server = mockito::Server::new_async().await;
+        let reset = (chrono::Utc::now().timestamp() + 3600).to_string();
+        let m = server
+            .mock("GET", "/")
+            .with_status(403)
+            .with_header("x-ratelimit-remaining", "0")
+            .with_header("x-ratelimit-reset", &reset)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let reqwest_client = reqwest::Client::new();
+        let client = reqwest_middleware::ClientBuilder::new(reqwest_client)
+            .with(RateLimitMiddleware)
+            .build();
+
+        let start = std::time::Instant::now();
+        let resp = client.get(server.url()).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 403);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
         m.assert_async().await;
     }
 

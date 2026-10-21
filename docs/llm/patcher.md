@@ -38,6 +38,8 @@ Line 25: uses: actions/setup-node@v2 (Offset: 500)
 3. Second update checkout at offset 200 -> Offset remains valid because length changes occurred downstream.
 ```
 
+As a safeguard, an update whose `[start, end)` range reaches into the update applied just before it (for example, a duplicate task) is skipped with a warning instead of being applied to already modified text. The returned patches are sorted by path, so files are always shown, confirmed and written in the same order.
+
 ---
 
 ## Verification Reports (`report.rs`)

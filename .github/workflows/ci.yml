@@ -41,6 +41,9 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets --all-features
 
+      - name: Verify own workflows are pinned
+        run: cargo run --quiet -- verify
+
       - name: Install tools
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
@@ -59,13 +62,32 @@ jobs:
           files: cobertura.xml
           fail_ci_if_error: true
 
+  msrv:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          # Keep in sync with `rust-version` in Cargo.toml.
+          toolchain: "1.90"
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Library and binary only: dev-dependencies may require a newer toolchain.
+      - name: Check MSRV build
+        run: cargo check --locked
+
   advisories:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
 

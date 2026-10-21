@@ -5,7 +5,7 @@
 [![Codecov](https://img.shields.io/codecov/c/gh/ffalcinelli/pinner?style=flat)](https://codecov.io/gh/ffalcinelli/pinner)
 [![Docs.rs](https://img.shields.io/docsrs/pinner?style=flat)](https://docs.rs/pinner)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat)](https://github.com/ffalcinelli/pinner/blob/main/LICENSE)
-[![Rust Version](https://img.shields.io/badge/rust-1.80%2B-blue?style=flat)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.90%2B-blue?style=flat)](https://www.rust-lang.org)
 
 A high-performance Rust CLI utility to **hash-pin your CI/CD dependencies**. Secure your supply chain by converting volatile, mutable tags (like `@v2`) into immutable, cryptographic commit SHAs (like `@df4cb1c...`).
 
@@ -103,7 +103,7 @@ pinner install-hook
 ```
 
 ### 5. Manual Set
-Forcibly update a specific action to a provided hash across all workflows (preserves existing tag comments by default).
+Forcibly update a specific action to a provided hash across all workflows (preserves existing tag comments by default). The hash must be a full 40-character commit SHA or, for images, a `sha256:` digest. The command fails if the action does not occur in the scanned files.
 ```bash
 # Set hash while preserving the existing tag comment
 pinner set actions/checkout 8f4b7f84864484a7bf31766abe9204da3cbe65b3
@@ -126,6 +126,8 @@ pinner export-sbom
 
 ### 8. Automated Pull/Merge Request
 Automatically run pinning, create a new local git branch, commit changes, push to origin, and open a Pull Request (GitHub) or Merge Request (GitLab) using your API tokens.
+
+Tracked files must have no uncommitted changes, so the commit contains only what pinner changed; untracked files are never committed. The token comes from `--github-token`/`--gitlab-token`, `GITHUB_TOKEN`/`GITLAB_TOKEN` or `.pinner.toml`. For GitHub Enterprise or self-hosted GitLab, set `--github-url`/`--gitlab-url` to your instance.
 ```bash
 pinner pr-create --branch pinner/pin-dependencies --message "security: pin dependencies to secure commit hashes"
 ```

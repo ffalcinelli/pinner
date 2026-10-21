@@ -48,7 +48,7 @@ impl RemoteProvider for ReqwestGitLabProvider {
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(DependencyRef::from(res.id))
         } else {
-            Err(self.base.handle_error(resp, action))
+            Err(self.base.handle_error(resp, action).await)
         }
     }
 

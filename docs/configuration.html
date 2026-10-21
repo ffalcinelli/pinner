@@ -168,7 +168,7 @@
 
                 <div class="border-l-2 border-blue-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">set &lt;ACTION&gt; &lt;HASH&gt;</h3>
-                    <p class="text-gray-400">Forcibly sets a specific action or image to a provided hash across all matching occurrences in your workflows.</p>
+                    <p class="text-gray-400">Forcibly sets a specific action or image to a provided hash across all matching occurrences in your workflows. The hash must be a full commit SHA or a <code>sha256:</code> image digest, and the command fails if the action is not found.</p>
                 </div>
 
                 <div class="border-l-2 border-orange-500/30 pl-6">
@@ -194,7 +194,7 @@
 
                 <div class="border-l-2 border-violet-500/30 pl-6">
                     <h3 class="text-xl font-bold text-white mb-2">pr-create</h3>
-                    <p class="text-gray-400 mb-2">Automatically runs pinning on your workflows, creates a new git branch locally, commits changes, pushes to remote origin, and opens a Pull Request/Merge Request on GitHub/GitLab using configured API tokens.</p>
+                    <p class="text-gray-400 mb-2">Automatically runs pinning on your workflows, creates a new git branch locally, commits changes, pushes to remote origin, and opens a Pull Request/Merge Request on GitHub/GitLab using configured API tokens. Tracked files must have no uncommitted changes; only files changed by pinner are committed, and the branch is pushed with <code>--force-with-lease</code>.</p>
                     <div class="text-xs text-gray-400">
                         Options:
                         <ul class="list-disc pl-5 mt-1 space-y-1">

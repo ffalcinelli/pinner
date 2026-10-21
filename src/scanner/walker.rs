@@ -3,7 +3,7 @@ use crate::error::PinnerError;
 use crate::scanner::parser::find_tasks;
 use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use tree_sitter::Parser as TSParser;
@@ -45,6 +45,9 @@ impl Scanner {
         paths: &[PathBuf],
     ) -> Result<(Vec<UpdateTask>, HashMap<PathBuf, String>), PinnerError> {
         let mut all_paths = Vec::new();
+        // Canonical paths already queued, so overlapping inputs (e.g. a directory and a
+        // file inside it, or `wf` and `./wf`) never yield the same file twice.
+        let mut seen = HashSet::new();
 
         for path in paths {
             if !path.exists() {
@@ -70,11 +73,19 @@ impl Scanner {
                 .map_err(|e| PinnerError::Parse(format!("Failed to build overrides: {}", e)))?;
 
             // Walk the directory and collect paths to YAML files.
-            for entry in WalkBuilder::new(path).overrides(overrides).build() {
+            // Sorted traversal keeps tasks, reports and diffs in a stable order.
+            for entry in WalkBuilder::new(path)
+                .overrides(overrides)
+                .sort_by_file_name(|a, b| a.cmp(b))
+                .build()
+            {
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "yml" || e == "yaml") {
-                    all_paths.push(path.to_path_buf());
+                    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                    if seen.insert(canonical) {
+                        all_paths.push(path.to_path_buf());
+                    }
                 }
             }
         }
@@ -161,6 +172,44 @@ mod tests {
 
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].action.0, "actions/checkout");
+    }
+
+    #[tokio::test]
+    async fn test_scanner_overlapping_paths_scanned_once() {
+        let dir = tempdir().unwrap();
+        let wf = dir.path().join("ci.yml");
+        fs::write(&wf, "uses: actions/checkout@v3").unwrap();
+
+        let scanner = Scanner::new(vec![]);
+        let dotted = dir.path().join(".");
+        let (tasks, contents) = scanner
+            .collect_tasks(&[dir.path().to_path_buf(), wf.clone(), dotted])
+            .await
+            .unwrap();
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(contents.len(), 1);
+        assert!(contents.contains_key(&wf));
+    }
+
+    #[tokio::test]
+    async fn test_scanner_sorted_order() {
+        let dir = tempdir().unwrap();
+        for name in ["c.yml", "a.yml", "b.yml"] {
+            fs::write(dir.path().join(name), "uses: actions/checkout@v3").unwrap();
+        }
+
+        let scanner = Scanner::new(vec![]);
+        let (tasks, _) = scanner
+            .collect_tasks(&[dir.path().to_path_buf()])
+            .await
+            .unwrap();
+
+        let names: Vec<_> = tasks
+            .iter()
+            .map(|t| t.path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(names, ["a.yml", "b.yml", "c.yml"]);
     }
 
     #[tokio::test]

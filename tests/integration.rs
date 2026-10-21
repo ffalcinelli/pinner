@@ -311,7 +311,7 @@ async fn test_set_command() {
         "--yes",
         "set",
         "actions/checkout",
-        "fixedhash",
+        "8f4b7f84864484a7bf31766abe9204da3cbe65b3",
     ])
     .unwrap();
 
@@ -323,7 +323,7 @@ async fn test_set_command() {
         .unwrap();
 
     let content = fs::read_to_string(&wf).unwrap();
-    assert!(content.contains("actions/checkout@fixedhash # v3"));
+    assert!(content.contains("actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v3"));
 }
 
 #[tokio::test]

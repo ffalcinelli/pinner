@@ -110,7 +110,7 @@ fn contains_word(component: &str, pattern: &str) -> bool {
     component.match_indices(pattern).any(|(i, m)| {
         let before = component[..i].chars().next_back();
         let after = component[i + m.len()..].chars().next();
-        before.map_or(true, is_sep) && after.map_or(true, is_sep)
+        before.is_none_or(is_sep) && after.is_none_or(is_sep)
     })
 }
 

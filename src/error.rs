@@ -45,6 +45,12 @@ pub enum PinnerError {
     /// Network operations are disabled in offline mode.
     #[error("Offline error: {0}")]
     Offline(String),
+    /// An interactive prompt could not be shown (e.g. no terminal attached).
+    #[error("Interactive prompt failed: {0}")]
+    Prompt(String),
+    /// A git command failed, or the repository is not in a usable state.
+    #[error("Git error: {0}")]
+    Git(String),
 }
 
 impl PinnerError {
@@ -56,26 +62,19 @@ impl PinnerError {
     /// Returns an actionable suggestion to show the user alongside the error, if any.
     pub fn hint(&self) -> Option<&'static str> {
         match self {
-            PinnerError::PathNotFound(path) => {
-                let path = std::path::Path::new(path);
-                if crate::DEFAULT_WORKFLOW_PATHS
-                    .iter()
-                    .any(|d| path == std::path::Path::new(d))
-                {
-                    Some("No CI configuration found. Run pinner from the repository root, or pass the files to process with `-w <path>`.")
-                } else {
-                    Some("Ensure the specified path exists and is accessible.")
-                }
+            PinnerError::PathNotFound(_) => {
+                Some("Ensure the specified path exists and is accessible.")
             }
             PinnerError::Config(_) => {
                 Some("Check .pinner.toml, PINNER_* environment variables and command-line flags.")
             }
             PinnerError::Authentication(_) => Some(
-                "Check that the token is valid, not expired, and authorized for the repository (e.g. SSO approval).",
+                "Use a token that is valid, not expired, and authorized for the repository (e.g. SSO approval).",
             ),
             PinnerError::Offline(_) => Some(
-                "Offline mode is enabled (via --offline, PINNER_OFFLINE or `offline` in .pinner.toml). Set PINNER_OFFLINE=false to go online; an online run also fills the cache for later offline runs.",
+                "Offline mode is enabled by --offline, PINNER_OFFLINE or `offline = true` in .pinner.toml; remove that setting to go online. An online run also fills the cache for later offline runs.",
             ),
+            PinnerError::Prompt(_) => Some("Pass --yes to run without prompting."),
             _ => None,
         }
     }
@@ -96,6 +95,8 @@ impl PinnerError {
             PinnerError::Ignore(_) => true,
             PinnerError::Unsupported(_) => true,
             PinnerError::Offline(_) => true,
+            PinnerError::Prompt(_) => true,
+            PinnerError::Git(_) => true,
             // Generic API errors (like 404) or Registry errors for a single image are not fatal
             PinnerError::Api(_) => false,
             PinnerError::Registry(_) => false,
@@ -150,32 +151,28 @@ mod tests {
         assert!(PinnerError::Authentication("".into()).is_fatal());
         assert!(PinnerError::Unsupported("".into()).is_fatal());
         assert!(PinnerError::Offline("".into()).is_fatal());
+        assert!(PinnerError::Prompt("".into()).is_fatal());
+        assert!(PinnerError::Git("".into()).is_fatal());
         assert!(!PinnerError::Registry("".into()).is_fatal());
     }
 
     #[test]
     fn test_error_hint() {
-        let default_hint = PinnerError::PathNotFound(".github/workflows".into()).hint();
-        assert!(default_hint.unwrap().contains("repository root"));
-        assert_eq!(
-            PinnerError::PathNotFound(".forgejo/workflows".into()).hint(),
-            default_hint
-        );
-        assert_eq!(
-            PinnerError::PathNotFound("action.yml".into()).hint(),
-            default_hint
-        );
-
-        // A custom path that merely contains a default path is still a custom path.
-        let custom_hint = PinnerError::PathNotFound("sub/.github/workflows".into()).hint();
-        assert!(custom_hint.unwrap().contains("specified path exists"));
+        assert!(PinnerError::PathNotFound("ci.yml".into())
+            .hint()
+            .unwrap()
+            .contains("specified path exists"));
 
         assert!(PinnerError::Config("".into()).hint().is_some());
         assert!(PinnerError::Authentication("".into()).hint().is_some());
         assert!(PinnerError::Offline("".into())
             .hint()
             .unwrap()
-            .contains("PINNER_OFFLINE=false"));
+            .contains("offline = true"));
+        assert!(PinnerError::Prompt("".into())
+            .hint()
+            .unwrap()
+            .contains("--yes"));
 
         // Rate-limit messages already name the provider's token variable.
         assert!(PinnerError::RateLimit("".into()).hint().is_none());
