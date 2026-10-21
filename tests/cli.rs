@@ -125,15 +125,41 @@ fn test_cli_unhandled_error_styling() {
 
 #[test]
 fn test_cli_offline_error_hint() {
+    let dir = tempdir().unwrap();
     let mut cmd = Command::cargo_bin("pinner").unwrap();
-    cmd.env("PINNER_NO_GLOBAL_CONFIG", "1")
+    cmd.current_dir(dir.path())
+        .env("PINNER_NO_GLOBAL_CONFIG", "1")
         .env("PINNER_OFFLINE", "true")
         .arg("scan");
 
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("Cannot run scan in offline mode"))
-        .stderr(predicate::str::contains("PINNER_OFFLINE=false"));
+        .stderr(predicate::str::contains("offline = true"));
+}
+
+#[test]
+fn test_cli_no_ci_configuration_hint() {
+    let dir = tempdir().unwrap();
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.current_dir(dir.path())
+        .env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .arg("verify");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("No CI configuration found"));
+
+    // Naming a default path explicitly does not suggest passing `-w`.
+    let mut cmd = Command::cargo_bin("pinner").unwrap();
+    cmd.current_dir(dir.path())
+        .env("PINNER_NO_GLOBAL_CONFIG", "1")
+        .arg("-w")
+        .arg(".github/workflows")
+        .arg("verify");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("specified path exists"))
+        .stderr(predicate::str::contains("No CI configuration found").not());
 }
 
 #[test]

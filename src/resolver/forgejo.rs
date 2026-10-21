@@ -48,7 +48,7 @@ impl RemoteProvider for ReqwestForgejoProvider {
                 .map_err(|e| PinnerError::Api(e.to_string()))?;
             Ok(DependencyRef::from(res.sha))
         } else {
-            Err(self.base.handle_error(resp, action))
+            Err(self.base.handle_error(resp, action).await)
         }
     }
 

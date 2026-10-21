@@ -5,7 +5,7 @@ use colored::Colorize;
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use pinner::{resolver::OciRegistryProvider, run_with_config, Cli};
+use pinner::{error::PinnerError, resolver::OciRegistryProvider, run_with_config, Cli};
 use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -26,23 +26,32 @@ async fn main() -> ExitCode {
         }
     };
     let cli = config.clone().merge_with_cli(cli);
+    let implicit_workflows = cli.workflows.is_empty();
 
     if let Err(e) = run_app(cli, config).await {
-        let pinner_error = e.root_cause().downcast_ref::<pinner::error::PinnerError>();
+        let pinner_error = e.root_cause().downcast_ref::<PinnerError>();
 
         // Verification failures have already printed their details.
-        if !matches!(
-            pinner_error,
-            Some(pinner::error::PinnerError::VerificationFailed(_))
-        ) {
+        if !matches!(pinner_error, Some(PinnerError::VerificationFailed(_))) {
             eprintln!("{} {:#}", "error:".red().bold(), e);
-            if let Some(hint) = pinner_error.and_then(|pe| pe.hint()) {
+            if let Some(hint) = pinner_error.and_then(|pe| error_hint(pe, implicit_workflows)) {
                 eprintln!("{} {}", "hint:".blue(), hint);
             }
         }
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// Returns the hint to show for `err`. `implicit_workflows` is true when neither `-w`
+/// nor `.pinner.toml` named the paths, so a missing path is pinner's own default.
+fn error_hint(err: &PinnerError, implicit_workflows: bool) -> Option<&'static str> {
+    match err {
+        PinnerError::PathNotFound(_) if implicit_workflows => Some(
+            "No CI configuration found. Run pinner from the repository root, or pass the files to process with `-w <path>`.",
+        ),
+        _ => err.hint(),
+    }
 }
 
 pub async fn run_app(cli: Cli, config: pinner::config::Config) -> anyhow::Result<()> {
@@ -191,6 +200,20 @@ mod tests {
         } else {
             std::env::remove_var("SHELL");
         }
+    }
+
+    #[test]
+    fn test_error_hint_path_not_found() {
+        let err = PinnerError::PathNotFound(".github/workflows".into());
+        assert!(error_hint(&err, true)
+            .unwrap()
+            .contains("No CI configuration found"));
+        // A path the user named gets the generic hint, even if it is a default path.
+        assert_eq!(error_hint(&err, false), err.hint());
+        assert_eq!(
+            error_hint(&PinnerError::Config("".into()), true),
+            PinnerError::Config("".into()).hint()
+        );
     }
 
     #[test]

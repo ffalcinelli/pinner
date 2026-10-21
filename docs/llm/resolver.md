@@ -21,9 +21,10 @@ Used for OCI container image resolution:
 *   `verify_provenance`: Checks for a cosign signature manifest (`sha256-<hex>.sig`). `Ok(false)` means *unsigned*, which callers report as a warning, never as compromised.
 
 ### HTTP Error Classification (`BaseHttpClient::handle_error`)
-The GitHub, GitLab and Forgejo providers share `BaseHttpClient`, which records the provider's token variable (`GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN`) and whether a token is set:
-*   `429`, or `403` with `x-ratelimit-remaining: 0` / `ratelimit-remaining: 0` / `retry-after`, becomes `PinnerError::RateLimit`. The message includes the reset time when known and, if no token is set, names the provider's token variable.
-*   Any other `401`/`403` becomes `PinnerError::Authentication`, saying whether the configured token was rejected or a token is required.
+The GitHub, GitLab and Forgejo providers share `BaseHttpClient`, which records the provider's token variable (`GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN`) and whether a token is actually sent (blank tokens, and tokens that are not valid header values, count as no token):
+*   `429`, or `403` with `x-ratelimit-remaining: 0` / `ratelimit-remaining: 0` / `retry-after`, becomes `PinnerError::RateLimit`. So does a `403` whose body mentions a rate limit (GitHub secondary rate limits may send no headers). The message includes the reset time when known and, if no token is set, names the provider's token variable.
+*   Any other `401`/`403` becomes `PinnerError::Authentication` (fatal). It says either that a token is required or that the token was rejected; in the second case it lists every place the token can be set (flag, environment variable, `.pinner.toml`).
+*   `RateLimitMiddleware` uses the same header check to decide what to retry, so permission `403`s are not retried.
 *   Everything else becomes `PinnerError::Api` (non-fatal).
 
 ---
