@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-11-12
+
+### Security
+- 🔒 **`rustix` 1.1.6**: Upgraded from `1.1.4` to `1.1.6` to address unsoundness advisory [RUSTSEC-2026-0486](https://rustsec.org/advisories/RUSTSEC-2026-0486).
+
+### Changed
+- 🧹 **Clean up obsolete security advisories**: Removed `RUSTSEC-2023-0071` from `deny.toml` and `.cargo/audit.toml` since `rsa` is no longer a dependency.
+- 🛠️ **Dependency Bumps**: Upgraded `tree-sitter` to `0.27.2` and updated CI dependencies.
+
 ## [0.0.20] - 2026-10-21
 
 ### Security
