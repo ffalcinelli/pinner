@@ -327,7 +327,10 @@ impl Pipeline {
             let mut vetted_list = config.vetted.unwrap_or_default();
             let mut compromised_list = config.compromised.unwrap_or_default();
 
-            let now_ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            // RFC 3339 in UTC with whole-second precision, e.g. `2026-01-01T00:00:00Z`.
+            let now_ts = jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%SZ")
+                .to_string();
 
             for (action, sha, tag) in clean_to_vet {
                 let full_ref = format!("{}@{}", action, sha);

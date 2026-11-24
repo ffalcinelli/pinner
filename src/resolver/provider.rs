@@ -359,8 +359,7 @@ impl reqwest_middleware::Middleware for RateLimitMiddleware {
                     } else if let Some(reset) = resp.headers().get("x-ratelimit-reset") {
                         if let Ok(reset_str) = reset.to_str() {
                             if let Ok(ts) = reset_str.parse::<i64>() {
-                                use chrono::Utc;
-                                let now = Utc::now().timestamp();
+                                let now = jiff::Timestamp::now().as_second();
                                 if ts > now {
                                     delay_secs = (ts - now) as u64;
                                 }
@@ -507,12 +506,11 @@ impl BaseHttpClient {
                 if let Some(reset) = headers.get("x-ratelimit-reset") {
                     if let Ok(reset_str) = reset.to_str() {
                         if let Ok(ts) = reset_str.parse::<i64>() {
-                            use chrono::{TimeZone, Utc};
-                            if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
+                            if let Ok(dt) = jiff::Timestamp::from_second(ts) {
                                 let _ = write!(
                                     msg,
                                     " Rate limit resets at {}.",
-                                    dt.format("%Y-%m-%d %H:%M:%S UTC")
+                                    dt.strftime("%Y-%m-%d %H:%M:%S UTC")
                                 );
                             }
                         }
@@ -1910,7 +1908,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limit_middleware_distant_reset_fails_fast() {
         let mut server = mockito::Server::new_async().await;
-        let reset = (chrono::Utc::now().timestamp() + 3600).to_string();
+        let reset = (jiff::Timestamp::now().as_second() + 3600).to_string();
         let m = server
             .mock("GET", "/")
             .with_status(403)
